@@ -1,0 +1,16 @@
+[package]
+name = "threecrate-examples"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Examples for 3DCrate"
+publish = false
+
+[dependencies]
+threecrate-core = { path = "../threecrate-core" }
+anyhow = { workspace = true }
+
+[[bin]]
+name = "basic_usage"
+path = "basic_usage.rs" 
