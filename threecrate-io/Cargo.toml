@@ -1,0 +1,21 @@
+[package]
+name = "threecrate-io"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+description = "I/O operations for point clouds and meshes in 3DCrate"
+
+[dependencies]
+threecrate-core = { path = "../threecrate-core" }
+ply-rs = { workspace = true }
+obj-rs = { workspace = true }
+serde = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+approx = { workspace = true } 
