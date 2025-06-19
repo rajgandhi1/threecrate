@@ -1,0 +1,24 @@
+[package]
+name = "threecrate-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+description = "Core data structures and traits for 3DCrate"
+
+[dependencies]
+nalgebra = { workspace = true, features = ["serde-serialize"] }
+glam = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+bytemuck = { workspace = true, optional = true }
+
+[features]
+default = []
+gpu = ["bytemuck"]
+
+[dev-dependencies]
+approx = { workspace = true } 
