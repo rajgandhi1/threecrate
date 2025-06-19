@@ -1,0 +1,22 @@
+[package]
+name = "threecrate-visualization"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+description = "Visualization and rendering for 3DCrate point clouds and meshes"
+
+[dependencies]
+threecrate-core = { path = "../threecrate-core", features = ["gpu"] }
+wgpu = { workspace = true }
+winit = { workspace = true }
+bytemuck = { workspace = true }
+nalgebra = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+pollster = "0.3" 
