@@ -1,0 +1,22 @@
+[package]
+name = "threecrate-gpu"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+description = "GPU-accelerated algorithms for 3DCrate using wgpu"
+
+[dependencies]
+threecrate-core = { path = "../threecrate-core", features = ["gpu"] }
+wgpu = { workspace = true }
+bytemuck = { workspace = true }
+nalgebra = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+approx = { workspace = true }
+pollster = "0.3" 
