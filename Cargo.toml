@@ -14,11 +14,10 @@ members = [
 
 [workspace.package]
 version = "0.1.0"
-edition = "2021"
-authors = ["Your Name <your.email@example.com>"]
+edition = "2024"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/yourusername/rust3d"
-homepage = "https://github.com/yourusername/rust3d"
+repository = "https://github.com/rajgandhi1/rust3D"
+homepage = "https://github.com/rajgandhi1/rust3D"
 documentation = "https://docs.rs/rust3d"
 description = "A comprehensive 3D point cloud processing library for Rust"
 keywords = ["3d", "point-cloud", "graphics", "geometry", "visualization"]
