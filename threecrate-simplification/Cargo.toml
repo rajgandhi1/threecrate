@@ -1,0 +1,21 @@
+[package]
+name = "threecrate-simplification"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+description = "Mesh simplification and decimation algorithms for 3DCrate"
+
+[dependencies]
+threecrate-core = { path = "../threecrate-core" }
+nalgebra = { workspace = true }
+rayon = { workspace = true }
+itertools = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+approx = { workspace = true } 
