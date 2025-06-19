@@ -1,10 +1,10 @@
-# Rust3D
+# 3DCrate
 
 A comprehensive 3D point cloud processing library for Rust, providing high-performance algorithms for point cloud manipulation, analysis, and visualization.
 
 ## Overview
 
-Rust3D is a modular library designed for 3D point cloud processing with a focus on performance, safety, and ease of use. The library is organized into several specialized crates:
+3DCrate is a modular library designed for 3D point cloud processing with a focus on performance, safety, and ease of use. The library is organized into several specialized crates:
 
 **Note**: This project is in early development. Most algorithms are currently skeleton implementations with `todo!()` placeholders. See the implementation status below.
 
@@ -62,7 +62,7 @@ Rust3D is a modular library designed for 3D point cloud processing with a focus 
 
 ## Quick Start
 
-Add Rust3D to your `Cargo.toml`:
+Add 3DCrate to your `Cargo.toml`:
 
 ```toml
 [dependencies]
@@ -150,7 +150,7 @@ cargo check --workspace
 
 ## Performance Goals
 
-Rust3D aims for high performance through:
+3DCrate aims for high performance through:
 
 - **Zero-cost abstractions**: Minimal runtime overhead
 - **SIMD optimization**: Vectorized operations where possible
@@ -180,8 +180,8 @@ We welcome contributions! This project is in early development and there are man
 ### Development Setup
 
 ```bash
-git clone https://github.com/yourusername/rust3d.git
-cd rust3d
+git clone https://github.com/yourusername/3DCrate.git
+cd 3DCrate
 cargo build --workspace
 cargo check --workspace
 ```
