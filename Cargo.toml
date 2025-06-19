@@ -1,1 +1,56 @@
- 
+[workspace]
+resolver = "2"
+
+members = [
+    "threecrate-core",
+    "threecrate-algorithms", 
+    "threecrate-gpu",
+    "threecrate-io",
+    "threecrate-reconstruction",
+    "threecrate-simplification",
+    "threecrate-visualization",
+    "examples"
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["Your Name <your.email@example.com>"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/yourusername/rust3d"
+homepage = "https://github.com/yourusername/rust3d"
+documentation = "https://docs.rs/rust3d"
+description = "A comprehensive 3D point cloud processing library for Rust"
+keywords = ["3d", "point-cloud", "graphics", "geometry", "visualization"]
+categories = ["graphics", "mathematics", "science"]
+
+[workspace.dependencies]
+# Core dependencies
+nalgebra = "0.32"
+glam = "0.24"
+bytemuck = { version = "1.0", features = ["derive"] }
+serde = { version = "1.0", features = ["derive"] }
+thiserror = "1.0"
+anyhow = "1.0"
+approx = "0.5"
+
+# Algorithms
+rayon = "1.10"
+kdtree = "0.7"
+kiddo = "4.2"
+ndarray = "0.15"
+itertools = "0.12"
+
+# GPU computing
+wgpu = "0.19"
+pollster = "0.3"
+
+# I/O
+obj-rs = { version = "0.7", features = ["serde"] }
+ply-rs = "0.1"
+
+# Visualization
+winit = "0.28"
+
+# Development
+criterion = { version = "0.5", features = ["html_reports"] } 
