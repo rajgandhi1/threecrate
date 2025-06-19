@@ -1,0 +1,25 @@
+[package]
+name = "threecrate-algorithms"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+description = "Algorithms for 3D point cloud and mesh processing"
+
+[dependencies]
+threecrate-core = { path = "../threecrate-core" }
+nalgebra = { workspace = true }
+kdtree = { workspace = true }
+kiddo = { workspace = true }
+rayon = { workspace = true }
+itertools = { workspace = true }
+ndarray = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+approx = { workspace = true }
+criterion = { workspace = true } 
