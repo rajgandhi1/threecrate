@@ -22,4 +22,7 @@ pub enum Error {
     
     #[error("Unsupported operation: {0}")]
     Unsupported(String),
+    
+    #[error("Unsupported format: {0}")]
+    UnsupportedFormat(String),
 }
