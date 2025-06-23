@@ -12,7 +12,9 @@ description = "I/O operations for point clouds and meshes in 3DCrate"
 [dependencies]
 threecrate-core = { path = "../threecrate-core" }
 ply-rs = { workspace = true }
-obj-rs = { workspace = true }
+obj = { workspace = true }
+pasture-core = { workspace = true }
+pasture-io = { workspace = true }
 serde = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }

@@ -14,11 +14,11 @@ nalgebra = { workspace = true, features = ["serde-serialize"] }
 glam = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
-bytemuck = { workspace = true, optional = true }
+bytemuck = { workspace = true }
 
 [features]
 default = []
-gpu = ["bytemuck"]
+gpu = []
 
 [dev-dependencies]
 approx = { workspace = true } 
