@@ -9,6 +9,7 @@ publish = false
 
 [dependencies]
 threecrate-core = { path = "../threecrate-core" }
+threecrate-io = { path = "../threecrate-io" }
 anyhow = { workspace = true }
 
 [[bin]]
