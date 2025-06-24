@@ -14,9 +14,11 @@ threecrate-core = { path = "../threecrate-core" }
 nalgebra = { workspace = true }
 kdtree = { workspace = true }
 kiddo = { workspace = true }
+rstar = { workspace = true }
 rayon = { workspace = true }
 itertools = { workspace = true }
 ndarray = { workspace = true }
+rand = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 

@@ -18,6 +18,7 @@ rayon = { workspace = true }
 itertools = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
+spade = { workspace = true }
 
 [dev-dependencies]
 approx = { workspace = true } 

@@ -10,11 +10,12 @@ documentation.workspace = true
 description = "Core data structures and traits for 3DCrate"
 
 [dependencies]
-nalgebra = { workspace = true, features = ["serde-serialize"] }
-glam = { workspace = true }
+nalgebra = { workspace = true, features = ["serde-serialize", "rand", "mint"] }
+glam = { workspace = true, features = ["mint", "rand"] }
 serde = { workspace = true }
 thiserror = { workspace = true }
 bytemuck = { workspace = true }
+rand = { workspace = true }
 
 [features]
 default = []

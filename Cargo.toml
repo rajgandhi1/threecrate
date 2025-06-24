@@ -40,6 +40,11 @@ kdtree = "0.7"
 kiddo = "4.2"
 ndarray = "0.15"
 itertools = "0.12"
+rand = "0.8"
+
+# Additional spatial data structures
+rstar = "0.12"  # R*-tree for spatial indexing
+spade = "2.7"   # Delaunay triangulation and Voronoi diagrams
 
 # GPU computing
 wgpu = "0.19"
