@@ -19,6 +19,8 @@ itertools = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 spade = { workspace = true }
+poisson_reconstruction = { workspace = true }
+rstar = { workspace = true }
 
 [dev-dependencies]
 approx = { workspace = true } 

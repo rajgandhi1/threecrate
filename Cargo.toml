@@ -46,6 +46,9 @@ rand = "0.8"
 rstar = "0.12"  # R*-tree for spatial indexing
 spade = "2.7"   # Delaunay triangulation and Voronoi diagrams
 
+# Surface reconstruction
+poisson_reconstruction = "0.4"  # Poisson surface reconstruction
+
 # GPU computing
 wgpu = "0.19"
 pollster = "0.3"
