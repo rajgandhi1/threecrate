@@ -8,7 +8,7 @@ A comprehensive 3D point cloud processing library for Rust, providing high-perfo
 ![image](https://github.com/user-attachments/assets/ecf23d60-0bb3-431d-9894-bf3356493a28)
 
 
-**Note**: This project is in early development. Most algorithms are currently skeleton implementations with `todo!()` placeholders. See the implementation status below.
+**Note**: This project has core algorithms implemented including normals estimation, ICP registration, RANSAC segmentation, and surface reconstruction. See the implementation status below.
 
 ## Architecture
 
@@ -37,20 +37,23 @@ A comprehensive 3D point cloud processing library for Rust, providing high-perfo
 - **Visualization**: Camera, renderer, and shader infrastructure (basic structure ready)
 - **GPU Infrastructure**: Device management and compute pipeline setup
 
-###  **Planned Features**
+###  **Recently Implemented**
 
 #### Point Cloud Processing
-- **Filtering**: Statistical outlier removal, voxel grid downsampling
-- **Normal Estimation**: Surface normal computation with neighborhood search
-- **Registration**: ICP (Iterative Closest Point) alignment
-- **Segmentation**: Plane detection and clustering algorithms
-- **Feature Detection**: Keypoint extraction and descriptors
+- ✅ **Normal Estimation**: k-NN based surface normal computation with PCA
+- ✅ **Registration**: ICP (Iterative Closest Point) alignment algorithm
+- ✅ **Segmentation**: RANSAC plane detection and clustering
+- **Filtering**: Statistical outlier removal, voxel grid downsampling (planned)
+- **Feature Detection**: Keypoint extraction and descriptors (planned)
 
 #### Surface Reconstruction
-- **Poisson Reconstruction**: Robust surface reconstruction from oriented points
-- **Ball Pivoting**: Fast triangulation for dense point clouds
-- **Alpha Shapes**: Boundary detection and shape reconstruction
-- **Delaunay Triangulation**: 2D/3D triangulation algorithms
+- ✅ **Ball Pivoting**: Simplified ball pivoting algorithm for surface reconstruction
+- ✅ **Alpha Shapes**: CGAL-style alpha complex with multiple computation modes
+- ✅ **Poisson Reconstruction**: Integration ready (external crate wrapper)
+- **Delaunay Triangulation**: 2D/3D triangulation algorithms (planned)
+
+#### Mesh Processing
+- ✅ **Quadric Error Decimation**: Garland-Heckbert mesh simplification algorithm
 
 #### GPU Acceleration
 - **Parallel Processing**: GPU-accelerated algorithms using WGPU
@@ -69,7 +72,9 @@ Add 3DCrate to your `Cargo.toml`:
 ```toml
 [dependencies]
 threecrate-core = "0.1.0"
-threecrate-algorithms = "0.1.0"
+threecrate-algorithms = "0.1.0"        # Normals, ICP, RANSAC
+threecrate-reconstruction = "0.1.0"     # Surface reconstruction
+threecrate-simplification = "0.1.0"     # Mesh simplification
 threecrate-io = "0.1.0"
 ```
 
@@ -77,6 +82,8 @@ threecrate-io = "0.1.0"
 
 ```rust
 use threecrate_core::{PointCloud, Point3f, Transform3D};
+use threecrate_algorithms::{estimate_normals, segment_plane, icp};
+use threecrate_reconstruction::ball_pivoting_reconstruction;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create a point cloud
@@ -90,11 +97,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut cloud = PointCloud::from_points(points);
     println!("Created point cloud with {} points", cloud.len());
     
-    // Apply transformation
-    let transform = Transform3D::identity();
-    cloud.transform(&transform);
+    // Estimate surface normals
+    let normals_cloud = estimate_normals(&cloud, 3)?;
+    println!("Estimated normals for {} points", normals_cloud.len());
     
-    println!("Transformation applied successfully!");
+    // Detect planes with RANSAC
+    let plane_result = segment_plane(&cloud, 0.01, 1000)?;
+    println!("Found plane with {} inliers", plane_result.inliers.len());
+    
+    // Surface reconstruction
+    let mesh = ball_pivoting_reconstruction(&cloud, 0.1)?;
+    println!("Reconstructed mesh with {} triangles", mesh.face_count());
+    
     Ok(())
 }
 ```
@@ -133,10 +147,12 @@ cargo check --workspace
 - [ ] Basic algorithms (filtering, normals)
 
 ### Phase 2: Algorithm Implementation
-- [ ] Point cloud filtering algorithms
-- [ ] Normal estimation
-- [ ] Registration (ICP)
-- [ ] Segmentation algorithms
+- ✅ Point cloud filtering algorithms (partial)
+- ✅ Normal estimation (k-NN with PCA)
+- ✅ Registration (ICP)
+- ✅ Segmentation algorithms (RANSAC plane detection)
+- ✅ Surface reconstruction (Ball pivoting, Alpha shapes)
+- ✅ Mesh simplification (Quadric error decimation)
 
 ### Phase 3: GPU Acceleration
 - [ ] WGPU compute pipeline setup
@@ -145,8 +161,8 @@ cargo check --workspace
 - [ ] GPU-accelerated ICP
 
 ### Phase 4: Advanced Features
-- [ ] Surface reconstruction
-- [ ] Mesh simplification
+- ✅ Surface reconstruction (Ball pivoting, Alpha shapes, Poisson wrapper)
+- ✅ Mesh simplification (Quadric error decimation)
 - [ ] Real-time visualization
 - [ ] Advanced file format support
 
