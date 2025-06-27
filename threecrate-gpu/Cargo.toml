@@ -16,6 +16,8 @@ bytemuck = { workspace = true }
 nalgebra = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
+winit = { workspace = true }
+futures-intrusive = "0.5"
 
 [dev-dependencies]
 approx = { workspace = true }
