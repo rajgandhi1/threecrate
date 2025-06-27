@@ -280,7 +280,7 @@ impl GpuContext {
     }
 
     /// Simple neighbor computation (brute force - could be replaced with KD-tree)
-    fn compute_neighbors_simple(&self, points: &[[f32; 3]], k: usize) -> Vec<[u32; 64]> {
+    pub fn compute_neighbors_simple(&self, points: &[[f32; 3]], k: usize) -> Vec<[u32; 64]> {
         let mut neighbors = vec![[0u32; 64]; points.len()];
         let k = k.min(64).min(points.len()); // Limit to 64 neighbors and available points
         
