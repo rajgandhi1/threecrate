@@ -9,9 +9,17 @@ publish = false
 
 [dependencies]
 threecrate-core = { path = "../threecrate-core" }
+threecrate-gpu = { path = "../threecrate-gpu" }
 threecrate-io = { path = "../threecrate-io" }
 anyhow = { workspace = true }
+nalgebra = { workspace = true }
+tokio = { version = "1.0", features = ["full"] }
+rand = { workspace = true }
 
 [[bin]]
 name = "basic_usage"
-path = "basic_usage.rs" 
+path = "basic_usage.rs"
+
+[[bin]]
+name = "gpu_example"
+path = "gpu_example.rs" 
