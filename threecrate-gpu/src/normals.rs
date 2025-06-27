@@ -2,7 +2,7 @@
 
 use threecrate_core::{PointCloud, Result, Point3f, NormalPoint3f};
 use crate::GpuContext;
-use wgpu::util::DeviceExt;
+// use wgpu::util::DeviceExt; // Used in device.rs
 
 const NORMALS_SHADER: &str = r#"
 @group(0) @binding(0) var<storage, read> input_points: array<vec3<f32>>;
