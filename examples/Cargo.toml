@@ -22,4 +22,8 @@ path = "basic_usage.rs"
 
 [[bin]]
 name = "gpu_example"
-path = "gpu_example.rs" 
+path = "gpu_example.rs"
+
+[[bin]]
+name = "comprehensive_gpu_example"
+path = "comprehensive_gpu_example.rs" 
