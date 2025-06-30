@@ -5,6 +5,7 @@ use wgpu::util::DeviceExt;
 
 /// GPU context for managing compute and rendering operations
 pub struct GpuContext {
+    pub instance: wgpu::Instance,
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
     pub adapter: wgpu::Adapter,
@@ -42,6 +43,7 @@ impl GpuContext {
             .map_err(|e| threecrate_core::Error::Gpu(format!("Failed to create device: {}", e)))?;
 
         Ok(Self {
+            instance,
             device,
             queue,
             adapter,
@@ -74,6 +76,7 @@ impl GpuContext {
             layout: None,
             module: shader,
             entry_point,
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
         })
     }
 
