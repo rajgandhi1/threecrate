@@ -178,6 +178,7 @@ impl GpuContext {
             })),
             module: &shader,
             entry_point: "main",
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
         });
 
         // Create bind group
