@@ -50,7 +50,7 @@ spade = "2.13"   # Delaunay triangulation and Voronoi diagrams
 poisson_reconstruction = "0.4"  # Poisson surface reconstruction
 
 # GPU computing
-wgpu = "0.19"
+wgpu = "0.20"
 pollster = "0.3"
 
 # I/O
@@ -60,7 +60,7 @@ pasture-core = "0.4"
 pasture-io = "0.4"
 
 # Visualization
-winit = "0.28"
+winit = "0.29"
 
 # Development
 criterion = { version = "0.5", features = ["html_reports"] }
