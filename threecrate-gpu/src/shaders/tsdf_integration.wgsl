@@ -4,7 +4,9 @@ struct TsdfVoxel {
     color_r: u32,
     color_g: u32,
     color_b: u32,
-    _padding: u32,
+    _padding1: u32,
+    _padding2: u32,
+    _padding3: u32,
 }
 
 struct CameraIntrinsics {
@@ -34,82 +36,85 @@ struct TsdfParams {
 @group(0) @binding(2) var<uniform> camera_transform: mat4x4<f32>;
 @group(0) @binding(3) var<uniform> intrinsics: CameraIntrinsics;
 @group(0) @binding(4) var<uniform> params: TsdfParams;
-@group(0) @binding(5) var<storage, read> color_image: array<u32>; // Optional RGB color data
+@group(0) @binding(5) var<storage, read> color_image: array<u32>; // RGB color data as bytes
 
 fn voxel_to_world(voxel_coord: vec3<u32>) -> vec3<f32> {
-    let world_coord = params.origin + vec3<f32>(voxel_coord) * params.voxel_size;
-    return world_coord;
+    // Convert voxel coordinate to world space
+    return vec3<f32>(voxel_coord) * params.voxel_size + params.origin;
 }
 
 fn world_to_camera(world_pos: vec3<f32>) -> vec3<f32> {
     let homogeneous_pos = vec4<f32>(world_pos, 1.0);
+    // Need to use inverse of camera_transform to go from world to camera space
+    // For now, assume camera_transform is already the world-to-camera matrix
+    // (This should be passed as the inverse of the camera pose from Rust)
     let camera_pos = camera_transform * homogeneous_pos;
     return camera_pos.xyz;
 }
 
-fn camera_to_image(camera_pos: vec3<f32>) -> vec2<i32> {
-    if camera_pos.z <= 0.0 {
-        return vec2<i32>(-1, -1); // Behind camera
-    }
+fn camera_to_image(camera_pos: vec3<f32>) -> vec2<u32> {
+    // Project point to image space
+    let px = (camera_pos.x / camera_pos.z) * intrinsics.fx + intrinsics.cx;
+    let py = (camera_pos.y / camera_pos.z) * intrinsics.fy + intrinsics.cy;
     
-    let x = (camera_pos.x * intrinsics.fx / camera_pos.z) + intrinsics.cx;
-    let y = (camera_pos.y * intrinsics.fy / camera_pos.z) + intrinsics.cy;
-    
-    let pixel_x = i32(x);
-    let pixel_y = i32(y);
-    
-    if pixel_x < 0 || pixel_x >= i32(intrinsics.width) || 
-       pixel_y < 0 || pixel_y >= i32(intrinsics.height) {
-        return vec2<i32>(-1, -1); // Outside image bounds
-    }
-    
-    return vec2<i32>(pixel_x, pixel_y);
+    // Round to nearest pixel
+    return vec2<u32>(u32(px + 0.5), u32(py + 0.5));
 }
 
-fn get_depth_value(pixel: vec2<i32>) -> f32 {
-    if pixel.x < 0 || pixel.y < 0 {
+fn get_depth_value(pixel: vec2<u32>) -> f32 {
+    // Check image bounds
+    if pixel.x >= intrinsics.width || pixel.y >= intrinsics.height {
         return 0.0;
     }
     
-    let index = u32(pixel.y) * intrinsics.width + u32(pixel.x);
+    // Get depth value from image
+    let index = pixel.y * intrinsics.width + pixel.x;
     if index >= arrayLength(&depth_image) {
         return 0.0;
     }
     
-    return depth_image[index] * intrinsics.depth_scale;
+    return depth_image[index];
 }
 
-fn get_color_value(pixel: vec2<i32>) -> vec3<u32> {
-    if pixel.x < 0 || pixel.y < 0 {
-        return vec3<u32>(0u, 0u, 0u);
+fn get_color_value(pixel: vec2<u32>) -> vec3<u32> {
+    // Check image bounds
+    if pixel.x >= intrinsics.width || pixel.y >= intrinsics.height {
+        return vec3<u32>(0u);
     }
     
-    let index = (u32(pixel.y) * intrinsics.width + u32(pixel.x)) * 3u;
-    if index + 2u >= arrayLength(&color_image) {
-        return vec3<u32>(0u, 0u, 0u);
+    // Get color value from image (packed RGB format from Rust)
+    let index = pixel.y * intrinsics.width + pixel.x;
+    if index >= arrayLength(&color_image) {
+        return vec3<u32>(0u);
     }
     
+    // Unpack RGB from the packed u32 value: (r << 16) | (g << 8) | b
+    let packed_color = color_image[index];
     return vec3<u32>(
-        color_image[index],
-        color_image[index + 1u],
-        color_image[index + 2u]
+        (packed_color >> 16u) & 0xFFu,  // Extract red
+        (packed_color >> 8u) & 0xFFu,   // Extract green
+        packed_color & 0xFFu             // Extract blue
     );
 }
 
 fn compute_tsdf_value(world_pos: vec3<f32>, depth_value: f32, camera_pos: vec3<f32>) -> f32 {
     if depth_value <= 0.0 {
-        return 1.0; // No measurement, assume outside surface
+        return params.truncation_distance;
     }
     
-    let camera_depth = length(camera_pos);
-    let sdf = depth_value - camera_depth;
+    // Use camera-space Z depth
+    let voxel_depth = camera_pos.z;
     
-    // Truncate the SDF
-    let truncated_sdf = clamp(sdf, -params.truncation_distance, params.truncation_distance);
-    return truncated_sdf / params.truncation_distance;
+    // Compute SDF with object-relative sign convention:
+    // - Negative values = inside object (closer to camera than measured surface)
+    // - Positive values = outside object (further from camera than measured surface)
+    let sdf = depth_value - voxel_depth;
+    
+    // Truncate the SDF to the specified range
+    return clamp(sdf, -params.truncation_distance, params.truncation_distance);
 }
 
-@compute @workgroup_size(8, 8, 8)
+@compute @workgroup_size(4, 4, 4)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let voxel_coord = global_id;
     
@@ -152,7 +157,9 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let current_weight = current_voxel.weight;
     let new_weight = min(current_weight + 1.0, params.max_weight);
     
-    let updated_tsdf = (current_voxel.tsdf_value * current_weight + tsdf_value) / new_weight;
+    // Use exponential moving average for better stability
+    let alpha = 1.0 / new_weight;
+    let updated_tsdf = (1.0 - alpha) * current_voxel.tsdf_value + alpha * tsdf_value;
     
     // Update color if available
     var updated_color = vec3<u32>(
@@ -164,21 +171,24 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if arrayLength(&color_image) > 0u {
         let color_value = get_color_value(pixel);
         if color_value.x > 0u || color_value.y > 0u || color_value.z > 0u {
+            // Use exponential moving average for color too
             updated_color = vec3<u32>(
-                u32((f32(current_voxel.color_r) * current_weight + f32(color_value.x)) / new_weight),
-                u32((f32(current_voxel.color_g) * current_weight + f32(color_value.y)) / new_weight),
-                u32((f32(current_voxel.color_b) * current_weight + f32(color_value.z)) / new_weight)
+                u32(clamp((1.0 - alpha) * f32(current_voxel.color_r) + alpha * f32(color_value.x), 0.0, 255.0)),
+                u32(clamp((1.0 - alpha) * f32(current_voxel.color_g) + alpha * f32(color_value.y), 0.0, 255.0)),
+                u32(clamp((1.0 - alpha) * f32(current_voxel.color_b) + alpha * f32(color_value.z), 0.0, 255.0))
             );
         }
     }
     
-    // Write updated voxel
+    // Update voxel
     voxels[voxel_index] = TsdfVoxel(
         updated_tsdf,
         new_weight,
         updated_color.x,
         updated_color.y,
         updated_color.z,
+        0u,
+        0u,
         0u
     );
 } 
