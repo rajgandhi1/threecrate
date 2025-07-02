@@ -22,4 +22,5 @@ flume = "0.11"
 
 [dev-dependencies]
 approx = { workspace = true }
-pollster = "0.3" 
+pollster = "0.3"
+rand = { workspace = true } 

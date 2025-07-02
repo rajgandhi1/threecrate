@@ -16,10 +16,11 @@ serde = { workspace = true }
 thiserror = { workspace = true }
 bytemuck = { workspace = true }
 rand = { workspace = true }
+wgpu = { workspace = true, optional = true }
 
 [features]
 default = []
-gpu = []
+gpu = ["dep:wgpu"]
 
 [dev-dependencies]
 approx = { workspace = true } 

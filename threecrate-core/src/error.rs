@@ -26,3 +26,13 @@ pub enum Error {
     #[error("Unsupported format: {0}")]
     UnsupportedFormat(String),
 }
+
+/// Result type alias for 3DCrate operations
+pub type Result<T> = std::result::Result<T, Error>;
+
+#[cfg(feature = "gpu")]
+impl From<wgpu::BufferAsyncError> for Error {
+    fn from(e: wgpu::BufferAsyncError) -> Self {
+        Error::Gpu(e.to_string())
+    }
+}
