@@ -37,6 +37,6 @@ pub use filtering::gpu_remove_statistical_outliers;
 pub use normals::gpu_estimate_normals;
 pub use nearest_neighbor::*;
 pub use icp::gpu_icp;
-pub use tsdf::{gpu_tsdf_integrate, gpu_tsdf_extract_surface, create_tsdf_volume, TsdfVolume, TsdfVoxel, CameraIntrinsics};
+pub use tsdf::{gpu_tsdf_integrate, gpu_tsdf_extract_surface, create_tsdf_volume, TsdfVolume, TsdfVoxel, CameraIntrinsics, TsdfVolumeGpu};
 pub use renderer::{PointCloudRenderer, PointVertex, RenderConfig, point_cloud_to_vertices, point_cloud_to_vertices_colored};
 pub use utils::*; 
