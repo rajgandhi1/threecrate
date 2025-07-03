@@ -1,7 +1,8 @@
 use threecrate_gpu::{
     GpuContext, gpu_estimate_normals, gpu_icp, gpu_remove_statistical_outliers,
     gpu_tsdf_integrate, gpu_tsdf_extract_surface, create_tsdf_volume,
-    RenderConfig, CameraIntrinsics, point_cloud_to_vertices_colored
+    RenderConfig, RenderParams, CameraIntrinsics, point_cloud_to_vertices_colored,
+    colored_point_cloud_to_vertices
 };
 use threecrate_core::{PointCloud, Point3f};
 use nalgebra::{Matrix4, Vector3, Point3, Isometry3};
@@ -120,15 +121,43 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  ─────────────────────────────");
     println!("  Total GPU processing: {:.2}ms", total_time.as_millis());
     
-    // 6. GPU Rendering (Optional - commented out for non-interactive runs)
-    println!("\n6. GPU Point Cloud Rendering");
-    println!("----------------------------");
-    println!("✓ Rendering pipeline ready");
+    // 6. GPU Point Cloud Rendering with Splatting
+    println!("\n6. GPU Point Cloud Rendering with Splatting");
+    println!("-------------------------------------------");
+    println!("✓ Enhanced splatting rendering pipeline ready");
     
-    // Demonstrate vertex conversion
-    let render_config = RenderConfig::default();
-    let vertices = point_cloud_to_vertices_colored(&filtered_cloud, render_config.point_size);
-    println!("✓ Converted {} points to render vertices", vertices.len());
+    // Demonstrate different rendering modes
+    let render_config = RenderConfig {
+        render_params: RenderParams {
+            point_size: 8.0,
+            alpha_threshold: 0.05,
+            enable_splatting: 1.0,
+            enable_lighting: 1.0,
+            ambient_strength: 0.2,
+            diffuse_strength: 0.8,
+            specular_strength: 0.3,
+            shininess: 64.0,
+        },
+        enable_multisampling: true,
+        enable_depth_test: true,
+        enable_alpha_blending: true,
+        background_color: [0.05, 0.05, 0.1, 1.0],
+    };
+    
+    // Convert point clouds to vertices with automatic normal estimation
+    let filtered_vertices = point_cloud_to_vertices_colored(&filtered_cloud, render_config.render_params.point_size);
+    let surface_vertices = colored_point_cloud_to_vertices(&surface_cloud, render_config.render_params.point_size);
+    
+    println!("✓ Converted {} filtered points to render vertices", filtered_vertices.len());
+    println!("✓ Converted {} surface points to render vertices", surface_vertices.len());
+    
+    // Different rendering modes demonstration
+    println!("\n  Rendering Modes:");
+    println!("  • Gaussian Splatting: Enabled (smooth circular splats)");
+    println!("  • Phong Lighting: Enabled (realistic shading)");
+    println!("  • MSAA: {}x (anti-aliasing)", if render_config.enable_multisampling { "4" } else { "1" });
+    println!("  • Point Size: {:.1}px", render_config.render_params.point_size);
+    println!("  • Alpha Threshold: {:.2}", render_config.render_params.alpha_threshold);
     
     // Camera setup for rendering
     let _view_matrix = Matrix4::look_at_rh(
@@ -139,11 +168,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _proj_matrix = Matrix4::new_perspective(16.0 / 9.0, 45.0f32.to_radians(), 0.1, 100.0);
     let _camera_pos = Vector3::new(2.0, 2.0, 2.0);
     
-    println!("✓ Camera matrices configured");
+    println!("✓ Camera matrices configured for 3D perspective rendering");
     println!("  Note: Use 'cargo run --example interactive_gpu_demo' for live rendering");
+    
+    // Demonstrate different splatting modes
+    let _standard_params = RenderParams {
+        enable_splatting: 0.0,
+        enable_lighting: 0.0,
+        ..render_config.render_params
+    };
+    
+    let gaussian_params = RenderParams {
+        enable_splatting: 1.0,
+        enable_lighting: 1.0,
+        ..render_config.render_params
+    };
+    
+    println!("\n  Splatting Comparison:");
+    println!("  • Standard Mode: Simple circular points with distance-based brightness");
+    println!("  • Gaussian Mode: Smooth gaussian splats with Phong lighting");
+    println!("  • Point Size Range: 1.0 - 64.0px (distance-based scaling)");
+    println!("  • Lighting: Ambient({:.1}) + Diffuse({:.1}) + Specular({:.1})", 
+             gaussian_params.ambient_strength, 
+             gaussian_params.diffuse_strength, 
+             gaussian_params.specular_strength);
     
     println!("\nGPU acceleration demo completed successfully! 🚀");
     println!("All algorithms executed on GPU with excellent performance.");
+    println!("Enhanced point cloud splatting provides high-quality rendering!");
     
     Ok(())
 }
