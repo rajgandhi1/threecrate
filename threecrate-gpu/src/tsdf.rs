@@ -108,13 +108,18 @@ impl GpuContext {
                 packed_colors.push(packed);
             }
             
-            Some(self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("TSDF Color Buffer"),
                 contents: bytemuck::cast_slice(&packed_colors),
                 usage: wgpu::BufferUsages::STORAGE,
-            }))
+            })
         } else {
-            None
+            // Create empty buffer if no color data
+            self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("TSDF Empty Color Buffer"),
+                contents: bytemuck::cast_slice(&[0u32; 4]), // Small dummy buffer
+                usage: wgpu::BufferUsages::STORAGE,
+            })
         };
 
         // Initialize TSDF volume if needed
@@ -190,7 +195,7 @@ impl GpuContext {
         });
 
         // Create bind group
-        let mut bind_group_entries = vec![
+        let bind_group_entries = vec![
             wgpu::BindGroupEntry {
                 binding: 0,
                 resource: voxel_buffer.as_entire_binding(),
@@ -211,14 +216,11 @@ impl GpuContext {
                 binding: 4,
                 resource: params_buffer.as_entire_binding(),
             },
-        ];
-
-        if let Some(ref color_buf) = color_buffer {
-            bind_group_entries.push(wgpu::BindGroupEntry {
+            wgpu::BindGroupEntry {
                 binding: 5,
-                resource: color_buf.as_entire_binding(),
-            });
-        }
+                resource: color_buffer.as_entire_binding(),
+            },
+        ];
 
         let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("TSDF Integration Bind Group"),
@@ -294,7 +296,7 @@ impl GpuContext {
         iso_value: f32,
     ) -> Result<PointCloud<ColoredPoint3f>> {
         let total_voxels = (volume.resolution[0] * volume.resolution[1] * volume.resolution[2]) as usize;
-        let max_points = total_voxels * 3; // Maximum possible points (3 per voxel)
+        let max_points = std::cmp::min(total_voxels, 1_000_000); // Limit to reasonable size
         
         // Create voxel buffer
         let voxel_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -524,7 +526,7 @@ impl TsdfVolumeGpu {
             gpu.create_buffer_init("TSDF Color Buffer", data, wgpu::BufferUsages::STORAGE)
         } else {
             // Create a dummy buffer if no color image is provided
-            gpu.create_buffer("TSDF Dummy Color Buffer", 4, wgpu::BufferUsages::STORAGE)
+            gpu.create_buffer_init("TSDF Dummy Color Buffer", &[0u32; 4], wgpu::BufferUsages::STORAGE)
         };
 
         // Convert camera transform to world-to-camera matrix (inverse of camera pose)
@@ -573,7 +575,7 @@ impl TsdfVolumeGpu {
         });
 
         // Create bind group
-        let mut bind_group_entries = vec![
+        let bind_group_entries = vec![
             wgpu::BindGroupEntry {
                 binding: 0,
                 resource: self.voxel_buffer.as_entire_binding(),
@@ -594,12 +596,11 @@ impl TsdfVolumeGpu {
                 binding: 4,
                 resource: params_buffer.as_entire_binding(),
             },
+            wgpu::BindGroupEntry {
+                binding: 5,
+                resource: color_buffer.as_entire_binding(),
+            },
         ];
-
-        bind_group_entries.push(wgpu::BindGroupEntry {
-            binding: 5,
-            resource: color_buffer.as_entire_binding(),
-        });
 
         let bind_group = gpu.create_bind_group("TSDF Integration Bind Group", &pipeline.get_bind_group_layout(0), &bind_group_entries);
 
