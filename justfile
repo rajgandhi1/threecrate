@@ -1,4 +1,4 @@
-# Rust3D Development Commands
+# 3DCrate Development Commands
 # Install just: cargo install just
 # Usage: just <command>
 
