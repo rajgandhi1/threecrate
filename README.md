@@ -1,10 +1,10 @@
-# ThreeCrate
+# 3DCrate
 
 **[Examples](#running-examples)** | **[Documentation](https://docs.rs/threecrate-core)** | **[Contribution Guide](CONTRIBUTING.md)**
 
 ## About
 
-ThreeCrate is a **comprehensive 3D point cloud processing library** for Rust, providing **high-performance algorithms** for point cloud manipulation, analysis, and visualization. Built with a focus on **GPU acceleration** and **modular architecture**.
+3DCrate is a **comprehensive 3D point cloud processing library** for Rust, providing **high-performance algorithms** for point cloud manipulation, analysis, and visualization. Built with a focus on **GPU acceleration** and **modular architecture**.
 
 As a 3D processing library, the project's main goal is to provide **a solid foundation for developers to build on top of**, whether for robotics applications, 3D scanning pipelines, computer vision systems, or specialized point cloud processing tools.
 
@@ -20,7 +20,7 @@ ThreeCrate is actively developed and suitable for production use in specialized 
 
 ## Status
 
-ThreeCrate is usable for a wide range of point cloud processing tasks including normals estimation, ICP registration, RANSAC segmentation, and surface reconstruction. GPU acceleration is available for core algorithms with ongoing expansion to additional operations.
+3DCrate is usable for a wide range of point cloud processing tasks including normals estimation, ICP registration, RANSAC segmentation, and surface reconstruction. GPU acceleration is available for core algorithms with ongoing expansion to additional operations.
 
 Current capabilities support:
 - Point clouds up to millions of points with GPU acceleration
@@ -30,7 +30,7 @@ Current capabilities support:
 
 ## Overview
 
-ThreeCrate features a modular architecture, allowing you to pick and choose which parts of it you want to use. It is made up of the following libraries:
+3DCrate features a modular architecture, allowing you to pick and choose which parts of it you want to use. It is made up of the following libraries:
 
 * **threecrate-core**: Core data structures (`PointCloud`, `TriangleMesh`, `Point3f`) and fundamental traits
 * **threecrate-algorithms**: CPU-based point cloud processing algorithms (normals, ICP, RANSAC, filtering)
@@ -42,7 +42,7 @@ ThreeCrate features a modular architecture, allowing you to pick and choose whic
 
 ## Usage
 
-ThreeCrate is a set of Rust libraries (see list above). Add the components you need to your `Cargo.toml`:
+3DCrate is a set of Rust libraries (see list above). Add the components you need to your `Cargo.toml`:
 
 ```toml
 [dependencies]
@@ -132,11 +132,11 @@ cargo check --workspace
 
 ## Community
 
-If you are interested in ThreeCrate, please consider joining the community. We'd love to have you!
+If you are interested in 3DCrate, please consider joining the community. We'd love to have you!
 
 * **Issues**: Report bugs and request features on GitHub
 * **Discussions**: Share your projects and ask questions
-* **Examples**: Check out community projects using ThreeCrate
+* **Examples**: Check out community projects using 3DCrate
 
 ## Get Involved
 
