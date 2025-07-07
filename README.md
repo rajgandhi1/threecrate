@@ -1,6 +1,6 @@
 # ThreeCrate
 
-**Examples** | **Documentation** | **Contribution Guide**
+**[Examples](#running-examples)** | **[Documentation](https://docs.rs/threecrate-core)** | **[Contribution Guide](CONTRIBUTING.md)**
 
 ## About
 
