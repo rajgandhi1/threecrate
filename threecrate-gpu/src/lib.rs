@@ -29,6 +29,7 @@ pub mod nearest_neighbor;
 pub mod icp;
 pub mod tsdf;
 pub mod renderer;
+pub mod mesh;
 pub mod utils;
 
 // Re-export commonly used items
@@ -41,5 +42,9 @@ pub use tsdf::{gpu_tsdf_integrate, gpu_tsdf_extract_surface, create_tsdf_volume,
 pub use renderer::{
     PointCloudRenderer, PointVertex, RenderConfig, RenderParams, CameraUniform,
     point_cloud_to_vertices, point_cloud_to_vertices_colored, colored_point_cloud_to_vertices
+};
+pub use mesh::{
+    MeshRenderer, MeshVertex, MeshCameraUniform, PbrMaterial, FlatMaterial, 
+    MeshLightingParams, MeshRenderConfig, GpuMesh, ShadingMode, mesh_to_gpu_mesh
 };
 pub use utils::*; 
