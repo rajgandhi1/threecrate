@@ -10,7 +10,7 @@ documentation.workspace = true
 description = "GPU-accelerated algorithms for 3DCrate using wgpu"
 
 [dependencies]
-threecrate-core = { path = "../threecrate-core", features = ["gpu"] }
+threecrate-core = { version = "0.1.0", features = ["gpu"] }
 wgpu = { workspace = true }
 bytemuck = { workspace = true }
 nalgebra = { workspace = true }
