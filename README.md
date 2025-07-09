@@ -1,160 +1,235 @@
 # 3DCrate
 
-**[Examples](#running-examples)** | **[Documentation](https://docs.rs/threecrate-core)** | **[Contribution Guide](CONTRIBUTING.md)**
+A comprehensive 3D point cloud processing library for Rust.
 
-## About
-
-3DCrate is a **comprehensive 3D point cloud processing library** for Rust, providing **high-performance algorithms** for point cloud manipulation, analysis, and visualization. Built with a focus on **GPU acceleration** and **modular architecture**.
-
-As a 3D processing library, the project's main goal is to provide **a solid foundation for developers to build on top of**, whether for robotics applications, 3D scanning pipelines, computer vision systems, or specialized point cloud processing tools.
-
-In doing so, ThreeCrate follows these principles:
-
-* **GPU-first design** - Leverage modern graphics hardware for maximum performance using WGPU compute shaders
-* **Modular architecture** - Pick and choose only the components you need for your specific use case  
-* **Safety and reliability** - Rust's memory safety guarantees combined with comprehensive error handling
-* **Cross-platform compatibility** - Support for Windows, macOS, Linux, and WebAssembly through WGPU
-* **Real-time performance** - Designed for interactive applications requiring low-latency processing
-
-ThreeCrate is actively developed and suitable for production use in specialized applications, though some advanced features are still being implemented.
-
-## Status
-
-3DCrate is usable for a wide range of point cloud processing tasks including normals estimation, ICP registration, RANSAC segmentation, and surface reconstruction. GPU acceleration is available for core algorithms with ongoing expansion to additional operations.
-
-Current capabilities support:
-- Point clouds up to millions of points with GPU acceleration
-- Real-time normal estimation and surface reconstruction  
-- Multi-format I/O (PLY, OBJ with more planned)
-- Cross-platform deployment including WebAssembly
+[![Crates.io](https://img.shields.io/crates/v/threecrate.svg)](https://crates.io/crates/threecrate)
+[![Documentation](https://docs.rs/threecrate/badge.svg)](https://docs.rs/threecrate)
+[![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](https://github.com/rajgandhi1/3DCrate)
 
 ## Overview
 
-3DCrate features a modular architecture, allowing you to pick and choose which parts of it you want to use. It is made up of the following libraries:
+3DCrate is a modular, high-performance library for 3D point cloud and mesh processing. This umbrella crate provides convenient access to all 3DCrate functionality in one place.
 
-* **threecrate-core**: Core data structures (`PointCloud`, `TriangleMesh`, `Point3f`) and fundamental traits
-* **threecrate-algorithms**: CPU-based point cloud processing algorithms (normals, ICP, RANSAC, filtering)
-* **threecrate-gpu**: GPU-accelerated computing using WGPU with compute shaders for high-performance operations
-* **threecrate-io**: File I/O support for 3D formats (PLY, OBJ, with PCD and LAS/LAZ planned)
-* **threecrate-reconstruction**: Surface reconstruction algorithms (Ball Pivoting, Alpha Shapes, Poisson)
-* **threecrate-simplification**: Mesh and point cloud simplification algorithms (Quadric Error Decimation)
-* **threecrate-visualization**: Real-time 3D visualization and rendering capabilities
+## Features
 
-## Usage
+- 🔧 **Core**: Basic 3D data structures (Point, PointCloud, Mesh, Transform)
+- 🧠 **Algorithms**: Point cloud processing (filtering, registration, segmentation, normals)
+- 🚀 **GPU**: GPU-accelerated processing using wgpu
+- 📁 **I/O**: File format support (PLY, OBJ, LAS, Pasture formats)
+- 🎯 **Simplification**: Mesh and point cloud simplification algorithms
+- 🏗️ **Reconstruction**: Surface reconstruction from point clouds
+- 👁️ **Visualization**: Interactive 3D visualization tools
 
-3DCrate is a set of Rust libraries (see list above). Add the components you need to your `Cargo.toml`:
+## Quick Start
+
+Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-threecrate-core = "0.1.0"
-threecrate-algorithms = "0.1.0"        # CPU algorithms
-threecrate-gpu = "0.1.0"               # GPU acceleration  
-threecrate-reconstruction = "0.1.0"     # Surface reconstruction
-threecrate-io = "0.1.0"                # File I/O
+threecrate = "0.1.0"
 ```
 
-### Basic Example
+Basic usage:
 
 ```rust
-use threecrate_core::{PointCloud, Point3f};
-use threecrate_algorithms::{estimate_normals, segment_plane};
-use threecrate_reconstruction::ball_pivoting_reconstruction;
+use threecrate::prelude::*;
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Create a point cloud
-    let points = vec![
-        Point3f::new(0.0, 0.0, 0.0),
-        Point3f::new(1.0, 0.0, 0.0),
-        Point3f::new(0.0, 1.0, 0.0),
-        Point3f::new(0.0, 0.0, 1.0),
-    ];
-    
-    let cloud = PointCloud::from_points(points);
-    
-    // Estimate surface normals
-    let normals_cloud = estimate_normals(&cloud, 3)?;
-    
-    // Detect planes with RANSAC
-    let plane_result = segment_plane(&cloud, 0.01, 1000)?;
-    
-    // Surface reconstruction
-    let mesh = ball_pivoting_reconstruction(&cloud, 0.1)?;
-    
-    Ok(())
-}
+// Create a point cloud
+let points = vec![
+    Point3f::new(0.0, 0.0, 0.0),
+    Point3f::new(1.0, 0.0, 0.0),
+    Point3f::new(0.0, 1.0, 0.0),
+];
+let cloud = PointCloud::from_points(points);
+
+// Apply algorithms (many still in development)
+println!("Point cloud with {} points", cloud.len());
 ```
 
-### GPU-Accelerated Example
+## Installation Options
+
+### Option 1: Umbrella Crate (Recommended for most users)
+
+```toml
+[dependencies]
+threecrate = "0.1.0"
+```
+
+### Option 2: Individual Crates (For minimal dependencies)
+
+```toml
+[dependencies]
+threecrate-core = "0.1.0"         # Core data structures
+threecrate-algorithms = "0.1.0"   # Processing algorithms
+threecrate-gpu = "0.1.0"          # GPU acceleration
+threecrate-io = "0.1.0"           # File I/O
+threecrate-simplification = "0.1.0"  # Simplification
+threecrate-reconstruction = "0.1.0"  # Surface reconstruction
+threecrate-visualization = "0.1.0"  # Visualization
+```
+
+## Feature Flags
+
+The umbrella crate supports granular feature control:
+
+```toml
+[dependencies]
+threecrate = { version = "0.1.0", features = ["all"] }
+```
+
+Available features:
+- `default`: core, algorithms, io, simplification
+- `core`: Core data structures (always enabled)
+- `algorithms`: Point cloud processing algorithms
+- `gpu`: GPU-accelerated processing
+- `io`: File format support
+- `simplification`: Mesh and point cloud simplification
+- `reconstruction`: Surface reconstruction
+- `visualization`: Interactive visualization
+- `all`: All features
+
+## Individual Crates
+
+### [`threecrate-core`](https://crates.io/crates/threecrate-core)
+Core data structures and traits for 3D processing.
+
+**Key types:**
+- `Point3f`: 3D point with floating-point coordinates
+- `PointCloud`: Collection of 3D points with spatial operations
+- `TriangleMesh`: 3D mesh with vertices, faces, and normals
+- `Transform3D`: 3D transformations (rotation, translation, scaling)
+
+### [`threecrate-algorithms`](https://crates.io/crates/threecrate-algorithms)
+Algorithms for point cloud and mesh processing.
+
+**Features:**
+- **Filtering**: Statistical, radius, voxel grid filters
+- **Registration**: ICP (Iterative Closest Point) algorithm
+- **Segmentation**: RANSAC plane detection
+- **Normals**: Normal estimation and orientation
+- **Nearest Neighbor**: Efficient spatial queries
+
+### [`threecrate-gpu`](https://crates.io/crates/threecrate-gpu)
+GPU-accelerated processing using wgpu.
+
+**Features:**
+- GPU-accelerated filtering and processing
+- Parallel normal computation
+- GPU-based ICP registration
+- Efficient mesh rendering
+
+### [`threecrate-io`](https://crates.io/crates/threecrate-io)
+File format support for point clouds and meshes.
+
+**Supported formats:**
+- PLY (Stanford Polygon format)
+- OBJ (Wavefront OBJ)
+- LAS/LAZ (LiDAR formats)
+- Pasture formats
+
+### [`threecrate-simplification`](https://crates.io/crates/threecrate-simplification)
+Mesh and point cloud simplification algorithms.
+
+**Features:**
+- Quadric error metrics
+- Edge collapse simplification
+- Clustering-based simplification
+
+### [`threecrate-reconstruction`](https://crates.io/crates/threecrate-reconstruction)
+Surface reconstruction from point clouds.
+
+**Features:**
+- Poisson surface reconstruction
+- Ball pivoting algorithm
+- Delaunay triangulation
+- Alpha shapes
+
+### [`threecrate-visualization`](https://crates.io/crates/threecrate-visualization)
+Interactive 3D visualization tools.
+
+**Features:**
+- Real-time point cloud visualization
+- Interactive mesh rendering
+- Camera controls (orbit, pan, zoom)
+- Cross-platform support
+
+## Examples
+
+### Point Cloud Processing
 
 ```rust
-use threecrate_gpu::{GpuContext, gpu_estimate_normals, gpu_icp};
-use threecrate_core::PointCloud;
+use threecrate::prelude::*;
 
-#[tokio::main] 
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize GPU context
-    let gpu_context = GpuContext::new().await?;
-    
-    // GPU-accelerated normal estimation
-    let mut cloud = PointCloud::from_file("model.ply")?;
-    let normals_cloud = gpu_estimate_normals(&gpu_context, &mut cloud, 10).await?;
-    
-    // GPU-accelerated ICP registration
-    let transform = gpu_icp(&gpu_context, &source_cloud, &target_cloud, 50, 0.001, 0.1).await?;
-    
-    Ok(())
-}
+// Create a point cloud
+let points = vec![
+    Point3f::new(0.0, 0.0, 0.0),
+    Point3f::new(1.0, 0.0, 0.0),
+    Point3f::new(0.0, 1.0, 0.0),
+];
+let cloud = PointCloud::from_points(points);
+
+// Save processed cloud
+// cloud.save("output.ply")?; // I/O functionality
 ```
 
-### Running Examples
+### Mesh Processing
 
-* To run basic examples: `cargo run --bin basic_usage`
-* To run GPU examples: `cargo run --bin comprehensive_gpu_example`  
-* To see all available examples: `ls examples/`
+```rust
+use threecrate::prelude::*;
 
-## Building
+// Create a mesh
+let vertices = vec![
+    Point3f::new(0.0, 0.0, 0.0),
+    Point3f::new(1.0, 0.0, 0.0),
+    Point3f::new(0.0, 1.0, 0.0),
+];
+let faces = vec![[0, 1, 2]];
+let mesh = TriangleMesh::from_vertices_and_faces(vertices, faces);
 
-```bash
-# Build all crates
-cargo build --workspace
-
-# Run tests
-cargo test --workspace
-
-# Check compilation  
-cargo check --workspace
+// Simplify mesh (algorithms in development)
+println!("Mesh with {} vertices", mesh.vertices.len());
 ```
 
-**Requirements:**
-- Rust 1.70+
-- GPU with Vulkan 1.1+, DirectX 11+, or Metal 2.0+ (for GPU features)
+### GPU Acceleration
 
-## Community
+```rust
+use threecrate::prelude::*;
 
-If you are interested in 3DCrate, please consider joining the community. We'd love to have you!
+// Initialize GPU context
+let gpu_context = GpuContext::new().await?;
 
-* **Issues**: Report bugs and request features on GitHub
-* **Discussions**: Share your projects and ask questions
-* **Examples**: Check out community projects using 3DCrate
+// GPU-accelerated processing (in development)
+println!("GPU context initialized");
+```
 
-## Get Involved
+## Performance
 
-If you are interested in helping out, just fork the GitHub repository and submit a pull request:
+3DCrate is designed for high performance:
 
-* **Main repository**: Submit PRs for new features, bug fixes, or improvements
-* **Good first issues**: Look for issues labeled "good first issue" for contribution ideas
-
-If you don't know what to work on, check out our roadmap in the issues or ask in discussions. Areas where we especially welcome contributions:
-
-* GPU shader optimization
-* New file format support  
-* Algorithm implementations
-* Performance benchmarks
-* Documentation and examples
+- **Parallel processing**: Uses `rayon` for CPU parallelism
+- **GPU acceleration**: Optional wgpu-based GPU processing
+- **Efficient data structures**: Optimized for cache locality
+- **Spatial indexing**: KD-tree and other spatial data structures
 
 ## License
 
-This project is open source, licensed under the terms of the MIT License. This means you can use it in both open source and commercial projects.
+Licensed under either of
 
-See `LICENSE` for full details.
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)
+- MIT license ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
+
+at your option.
+
+## Contributing
+
+Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+## Changelog
+
+### v0.1.0
+
+- Initial release with core functionality
+- Point cloud and mesh processing algorithms
+- GPU acceleration support
+- File I/O for common formats
+- Interactive visualization tools
