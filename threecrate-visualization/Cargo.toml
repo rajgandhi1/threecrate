@@ -11,12 +11,23 @@ description = "Visualization and rendering for 3DCrate point clouds and meshes"
 
 [dependencies]
 threecrate-core = { path = "../threecrate-core", features = ["gpu"] }
+threecrate-algorithms = { path = "../threecrate-algorithms" }
+threecrate-gpu = { path = "../threecrate-gpu" }
+threecrate-io = { path = "../threecrate-io" }
 wgpu = { workspace = true }
 winit = { workspace = true }
 bytemuck = { workspace = true }
 nalgebra = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
+egui = "0.28"
+egui-winit = "0.28"
+egui-wgpu = "0.28"
+pollster = { workspace = true }
+tokio = { version = "1.0", features = ["rt-multi-thread"] }
+image = "0.24"
+rfd = "0.14"  # Native file dialogs
+instant = "0.1"
 
 [dev-dependencies]
 pollster = "0.3" 

@@ -11,6 +11,8 @@ publish = false
 threecrate-core = { path = "../threecrate-core" }
 threecrate-gpu = { path = "../threecrate-gpu" }
 threecrate-io = { path = "../threecrate-io" }
+threecrate-algorithms = { path = "../threecrate-algorithms" }
+threecrate-visualization = { path = "../threecrate-visualization" }
 anyhow = { workspace = true }
 nalgebra = { workspace = true }
 tokio = { version = "1.0", features = ["full"] }
@@ -26,4 +28,8 @@ path = "gpu_example.rs"
 
 [[bin]]
 name = "comprehensive_gpu_example"
-path = "comprehensive_gpu_example.rs" 
+path = "comprehensive_gpu_example.rs"
+
+[[bin]]
+name = "interactive_viewer_example"
+path = "interactive_viewer_example.rs" 

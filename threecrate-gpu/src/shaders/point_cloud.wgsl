@@ -28,8 +28,7 @@ struct VertexOutput {
     @location(1) world_pos: vec3<f32>,
     @location(2) view_pos: vec3<f32>,
     @location(3) normal: vec3<f32>,
-    @location(4) point_coord: vec2<f32>,
-    @builtin(point_size) point_size: f32,
+    @location(4) point_size: f32,
 }
 
 @group(0) @binding(0)
@@ -107,8 +106,8 @@ fn calculate_phong_lighting(
 
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
-    // Get point coordinates (from -0.5 to 0.5)
-    let point_coord = (input.clip_position.xy / input.point_size) - vec2<f32>(0.5);
+    // Create circular point rendering without point_size builtin
+    let point_coord = (input.clip_position.xy / input.clip_position.w) * 0.5;
     
     var alpha: f32;
     var final_color: vec3<f32>;

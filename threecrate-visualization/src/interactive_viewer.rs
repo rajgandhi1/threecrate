@@ -1,0 +1,309 @@
+//! Interactive 3D viewer with UI controls
+//! 
+//! This module provides a simplified interactive viewer for 3D data
+
+use std::sync::Arc;
+use winit::{
+    event::{Event, WindowEvent, ElementState, MouseButton},
+    event_loop::{EventLoop, ControlFlow},
+    window::WindowBuilder,
+    keyboard::{Key, NamedKey},
+    dpi::PhysicalPosition,
+};
+
+use threecrate_core::{PointCloud, TriangleMesh, Result, Point3f, ColoredPoint3f, Error};
+use threecrate_gpu::{PointCloudRenderer, RenderConfig, PointVertex};
+use threecrate_algorithms::{ICPResult, PlaneSegmentationResult};
+use crate::camera::Camera;
+
+use nalgebra::{Vector3, Point3};
+
+/// Types of data that can be displayed
+#[derive(Debug, Clone)]
+pub enum ViewData {
+    Empty,
+    PointCloud(PointCloud<Point3f>),
+    ColoredPointCloud(PointCloud<ColoredPoint3f>),
+    Mesh(TriangleMesh),
+}
+
+/// Camera control modes
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum CameraMode {
+    Orbit,
+    Pan,
+    Zoom,
+}
+
+/// Pipeline processing type
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum PipelineType {
+    Cpu,
+    Gpu,
+}
+
+/// ICP algorithm parameters
+#[derive(Debug, Clone)]
+pub struct ICPParams {
+    pub max_iterations: usize,
+    pub convergence_threshold: f32,
+    pub max_correspondence_distance: f32,
+}
+
+impl Default for ICPParams {
+    fn default() -> Self {
+        Self {
+            max_iterations: 50,
+            convergence_threshold: 0.001,
+            max_correspondence_distance: 1.0,
+        }
+    }
+}
+
+/// RANSAC algorithm parameters
+#[derive(Debug, Clone)]
+pub struct RANSACParams {
+    pub max_iterations: usize,
+    pub distance_threshold: f32,
+}
+
+impl Default for RANSACParams {
+    fn default() -> Self {
+        Self {
+            max_iterations: 1000,
+            distance_threshold: 0.1,
+        }
+    }
+}
+
+/// UI state for all panels and controls
+#[derive(Debug)]
+pub struct UIState {
+    pub render_panel_open: bool,
+    pub algorithm_panel_open: bool,
+    pub camera_panel_open: bool,
+    pub stats_panel_open: bool,
+    pub icp_params: ICPParams,
+    pub ransac_params: RANSACParams,
+    pub source_cloud: Option<PointCloud<Point3f>>,
+    pub target_cloud: Option<PointCloud<Point3f>>,
+    pub icp_result: Option<ICPResult>,
+    pub ransac_result: Option<PlaneSegmentationResult>,
+}
+
+impl Default for UIState {
+    fn default() -> Self {
+        Self {
+            render_panel_open: false,
+            algorithm_panel_open: false,
+            camera_panel_open: false,
+            stats_panel_open: false,
+            icp_params: ICPParams::default(),
+            ransac_params: RANSACParams::default(),
+            source_cloud: None,
+            target_cloud: None,
+            icp_result: None,
+            ransac_result: None,
+        }
+    }
+}
+
+/// Interactive 3D viewer with comprehensive UI controls
+pub struct InteractiveViewer {
+    current_data: ViewData,
+    ui_state: UIState,
+    camera: Camera,
+    camera_mode: CameraMode,
+    pipeline_type: PipelineType,
+    last_mouse_pos: Option<PhysicalPosition<f64>>,
+    mouse_pressed: bool,
+    right_mouse_pressed: bool,
+}
+
+impl InteractiveViewer {
+    /// Create a new interactive viewer
+    pub fn new() -> Result<Self> {
+        let camera = Camera::new(
+            Point3::new(5.0, 5.0, 5.0),
+            Point3::new(0.0, 0.0, 0.0),
+            Vector3::new(0.0, 1.0, 0.0),
+            45.0,
+            1.0,
+            0.1,
+            100.0,
+        );
+
+        Ok(Self {
+            current_data: ViewData::Empty,
+            ui_state: UIState::default(),
+            camera,
+            camera_mode: CameraMode::Orbit,
+            pipeline_type: PipelineType::Gpu,
+            last_mouse_pos: None,
+            mouse_pressed: false,
+            right_mouse_pressed: false,
+        })
+    }
+
+    /// Set point cloud data
+    pub fn set_point_cloud(&mut self, cloud: &PointCloud<Point3f>) {
+        self.current_data = ViewData::PointCloud(cloud.clone());
+    }
+
+    /// Set colored point cloud data
+    pub fn set_colored_point_cloud(&mut self, cloud: &PointCloud<ColoredPoint3f>) {
+        self.current_data = ViewData::ColoredPointCloud(cloud.clone());
+    }
+
+    /// Set mesh data
+    pub fn set_mesh(&mut self, mesh: &TriangleMesh) {
+        self.current_data = ViewData::Mesh(mesh.clone());
+    }
+
+    /// Run the interactive viewer
+    pub fn run(mut self) -> Result<()> {
+        println!("Starting 3DCrate Interactive Viewer...");
+        
+        // Create event loop and window
+        let event_loop = EventLoop::new().map_err(|e| Error::Io(std::io::Error::new(std::io::ErrorKind::Other, format!("Failed to create event loop: {}", e))))?;
+        let window = Arc::new(
+            WindowBuilder::new()
+                .with_title("3DCrate Interactive Viewer")
+                .with_inner_size(winit::dpi::LogicalSize::new(1200.0, 800.0))
+                .build(&event_loop)
+                .map_err(|e| Error::Io(std::io::Error::new(std::io::ErrorKind::Other, format!("Failed to create window: {}", e))))?
+        );
+
+        // Initialize renderer
+        let config = RenderConfig::default();
+        let window_clone = window.clone();
+        let mut renderer = pollster::block_on(PointCloudRenderer::new(&window_clone, config))?;
+
+        // Update camera aspect ratio
+        let size = window.inner_size();
+        self.camera.aspect_ratio = size.width as f32 / size.height as f32;
+
+        println!("Viewer initialized successfully. Window should now be visible.");
+
+        // Main event loop
+        event_loop.run(move |event, target| {
+            target.set_control_flow(ControlFlow::Poll);
+
+            match event {
+                Event::WindowEvent { event, .. } => {
+                    match event {
+                        WindowEvent::CloseRequested => {
+                            target.exit();
+                        }
+                        WindowEvent::Resized(new_size) => {
+                            renderer.resize(new_size);
+                            self.camera.aspect_ratio = new_size.width as f32 / new_size.height as f32;
+                        }
+                        WindowEvent::MouseInput { state, button, .. } => {
+                            match button {
+                                MouseButton::Left => {
+                                    self.mouse_pressed = state == ElementState::Pressed;
+                                }
+                                MouseButton::Right => {
+                                    self.right_mouse_pressed = state == ElementState::Pressed;
+                                }
+                                _ => {}
+                            }
+                        }
+                        WindowEvent::CursorMoved { position, .. } => {
+                            if let Some(last_pos) = self.last_mouse_pos {
+                                let delta_x = position.x - last_pos.x;
+                                let delta_y = position.y - last_pos.y;
+
+                                if self.mouse_pressed {
+                                    match self.camera_mode {
+                                        CameraMode::Orbit => {
+                                            self.camera.orbit(delta_x as f32 * 0.01, delta_y as f32 * 0.01);
+                                        }
+                                        CameraMode::Pan => {
+                                            self.camera.pan(delta_x as f32 * 0.01, delta_y as f32 * 0.01);
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                            }
+                            self.last_mouse_pos = Some(position);
+                        }
+                        WindowEvent::MouseWheel { delta, .. } => {
+                            let scroll_delta = match delta {
+                                winit::event::MouseScrollDelta::LineDelta(_, y) => y,
+                                winit::event::MouseScrollDelta::PixelDelta(pos) => pos.y as f32 / 100.0,
+                            };
+                            self.camera.zoom(scroll_delta * 0.1);
+                        }
+                        WindowEvent::KeyboardInput { event, .. } => {
+                            if event.state == ElementState::Pressed {
+                                match &event.logical_key {
+                                    Key::Character(c) => {
+                                        match c.as_str() {
+                                            "o" | "O" => self.camera_mode = CameraMode::Orbit,
+                                            "p" | "P" => self.camera_mode = CameraMode::Pan,
+                                            "z" | "Z" => self.camera_mode = CameraMode::Zoom,
+                                            "r" | "R" => self.camera.reset(),
+                                            _ => {}
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                        WindowEvent::RedrawRequested => {
+                            // Update camera matrices
+                            let view_matrix = self.camera.view_matrix();
+                            let proj_matrix = self.camera.projection_matrix();
+                            let camera_pos = self.camera.position.coords;
+                            renderer.update_camera(view_matrix, proj_matrix, camera_pos);
+
+                            // Convert current data to vertices
+                            let vertices = match &self.current_data {
+                                ViewData::PointCloud(cloud) => {
+                                    cloud.iter().map(|point| {
+                                        PointVertex::from_point(point, [0.8, 0.8, 0.8], 4.0, [0.0, 0.0, 1.0])
+                                    }).collect::<Vec<_>>()
+                                }
+                                ViewData::ColoredPointCloud(cloud) => {
+                                    cloud.iter().map(|point| {
+                                        PointVertex::from_colored_point(point, 4.0, [0.0, 0.0, 1.0])
+                                    }).collect::<Vec<_>>()
+                                }
+                                ViewData::Mesh(_mesh) => {
+                                    // For now, just create vertices from mesh vertices
+                                    // TODO: Proper mesh rendering
+                                    vec![]
+                                }
+                                ViewData::Empty => vec![],
+                            };
+
+                            // Render points if we have any
+                            if !vertices.is_empty() {
+                                if let Err(e) = renderer.render(&vertices) {
+                                    eprintln!("Render error: {}", e);
+                                }
+                            }
+
+                            // Request next frame
+                            window.request_redraw();
+                        }
+                        _ => {}
+                    }
+                }
+                _ => {}
+            }
+        }).map_err(|e| Error::Io(std::io::Error::new(std::io::ErrorKind::Other, format!("Event loop error: {}", e))))?;
+
+        Ok(())
+    }
+}
+
+impl Default for InteractiveViewer {
+    fn default() -> Self {
+        Self::new().expect("Failed to create InteractiveViewer")
+    }
+}
+
+ 
