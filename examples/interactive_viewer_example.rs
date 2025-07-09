@@ -11,7 +11,6 @@
 
 use threecrate_core::{PointCloud, Point3f, ColoredPoint3f, TriangleMesh, Result};
 use threecrate_visualization::InteractiveViewer;
-use nalgebra::Point3;
 use std::f32::consts::PI;
 
 fn main() -> Result<()> {

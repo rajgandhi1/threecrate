@@ -7,7 +7,7 @@ use winit::{
     event::{Event, WindowEvent, ElementState, MouseButton},
     event_loop::{EventLoop, ControlFlow},
     window::WindowBuilder,
-    keyboard::{Key, NamedKey},
+    keyboard::Key,
     dpi::PhysicalPosition,
 };
 
@@ -76,7 +76,7 @@ impl Default for RANSACParams {
     }
 }
 
-/// UI state for all panels and controls
+/// UI state for all panels and controls (kept for future use)
 #[derive(Debug)]
 pub struct UIState {
     pub render_panel_open: bool,
@@ -111,13 +111,12 @@ impl Default for UIState {
 /// Interactive 3D viewer with comprehensive UI controls
 pub struct InteractiveViewer {
     current_data: ViewData,
-    ui_state: UIState,
     camera: Camera,
     camera_mode: CameraMode,
-    pipeline_type: PipelineType,
     last_mouse_pos: Option<PhysicalPosition<f64>>,
     mouse_pressed: bool,
     right_mouse_pressed: bool,
+    debug_frame_count: usize,
 }
 
 impl InteractiveViewer {
@@ -135,29 +134,31 @@ impl InteractiveViewer {
 
         Ok(Self {
             current_data: ViewData::Empty,
-            ui_state: UIState::default(),
             camera,
             camera_mode: CameraMode::Orbit,
-            pipeline_type: PipelineType::Gpu,
             last_mouse_pos: None,
             mouse_pressed: false,
             right_mouse_pressed: false,
+            debug_frame_count: 0,
         })
     }
 
     /// Set point cloud data
     pub fn set_point_cloud(&mut self, cloud: &PointCloud<Point3f>) {
         self.current_data = ViewData::PointCloud(cloud.clone());
+        println!("Set point cloud with {} points", cloud.len());
     }
 
     /// Set colored point cloud data
     pub fn set_colored_point_cloud(&mut self, cloud: &PointCloud<ColoredPoint3f>) {
         self.current_data = ViewData::ColoredPointCloud(cloud.clone());
+        println!("Set colored point cloud with {} points", cloud.len());
     }
 
     /// Set mesh data
     pub fn set_mesh(&mut self, mesh: &TriangleMesh) {
         self.current_data = ViewData::Mesh(mesh.clone());
+        println!("Set mesh with {} vertices and {} faces", mesh.vertices.len(), mesh.faces.len());
     }
 
     /// Run the interactive viewer
@@ -241,10 +242,22 @@ impl InteractiveViewer {
                                 match &event.logical_key {
                                     Key::Character(c) => {
                                         match c.as_str() {
-                                            "o" | "O" => self.camera_mode = CameraMode::Orbit,
-                                            "p" | "P" => self.camera_mode = CameraMode::Pan,
-                                            "z" | "Z" => self.camera_mode = CameraMode::Zoom,
-                                            "r" | "R" => self.camera.reset(),
+                                            "o" | "O" => {
+                                                self.camera_mode = CameraMode::Orbit;
+                                                println!("Switched to Orbit mode");
+                                            }
+                                            "p" | "P" => {
+                                                self.camera_mode = CameraMode::Pan;
+                                                println!("Switched to Pan mode");
+                                            }
+                                            "z" | "Z" => {
+                                                self.camera_mode = CameraMode::Zoom;
+                                                println!("Switched to Zoom mode");
+                                            }
+                                            "r" | "R" => {
+                                                self.camera.reset();
+                                                println!("Reset camera");
+                                            }
                                             _ => {}
                                         }
                                     }
@@ -259,25 +272,84 @@ impl InteractiveViewer {
                             let camera_pos = self.camera.position.coords;
                             renderer.update_camera(view_matrix, proj_matrix, camera_pos);
 
-                            // Convert current data to vertices
+                            // Convert current data to vertices (create quads for each point)
                             let vertices = match &self.current_data {
                                 ViewData::PointCloud(cloud) => {
-                                    cloud.iter().map(|point| {
-                                        PointVertex::from_point(point, [0.8, 0.8, 0.8], 4.0, [0.0, 0.0, 1.0])
-                                    }).collect::<Vec<_>>()
+                                    let mut vertices = Vec::new();
+                                    for point in cloud.iter() {
+                                        // Create a quad (2 triangles) for each point
+                                        let size = 0.02; // Size of each point quad
+                                        let pos = [point.x, point.y, point.z];
+                                        let color = [1.0, 1.0, 1.0];
+                                        let normal = [0.0, 0.0, 1.0];
+                                        
+                                        // Create 4 vertices for a quad
+                                        let v1 = PointVertex::from_point(&Point3f::new(pos[0] - size, pos[1] - size, pos[2]), color, 16.0, normal);
+                                        let v2 = PointVertex::from_point(&Point3f::new(pos[0] + size, pos[1] - size, pos[2]), color, 16.0, normal);
+                                        let v3 = PointVertex::from_point(&Point3f::new(pos[0] + size, pos[1] + size, pos[2]), color, 16.0, normal);
+                                        let v4 = PointVertex::from_point(&Point3f::new(pos[0] - size, pos[1] + size, pos[2]), color, 16.0, normal);
+                                        
+                                        // First triangle (v1, v2, v3)
+                                        vertices.push(v1);
+                                        vertices.push(v2);
+                                        vertices.push(v3);
+                                        
+                                        // Second triangle (v1, v3, v4)
+                                        vertices.push(v1);
+                                        vertices.push(v3);
+                                        vertices.push(v4);
+                                    }
+                                    vertices
                                 }
                                 ViewData::ColoredPointCloud(cloud) => {
-                                    cloud.iter().map(|point| {
-                                        PointVertex::from_colored_point(point, 4.0, [0.0, 0.0, 1.0])
-                                    }).collect::<Vec<_>>()
+                                    let mut vertices = Vec::new();
+                                    for point in cloud.iter() {
+                                        // Create a quad (2 triangles) for each point
+                                        let size = 0.02; // Size of each point quad
+                                        let pos = [point.position.x, point.position.y, point.position.z];
+                                        let color = [
+                                            point.color[0] as f32 / 255.0,
+                                            point.color[1] as f32 / 255.0,
+                                            point.color[2] as f32 / 255.0,
+                                        ];
+                                        let normal = [0.0, 0.0, 1.0];
+                                        
+                                        // Create 4 vertices for a quad
+                                        let v1 = PointVertex::from_point(&Point3f::new(pos[0] - size, pos[1] - size, pos[2]), color, 16.0, normal);
+                                        let v2 = PointVertex::from_point(&Point3f::new(pos[0] + size, pos[1] - size, pos[2]), color, 16.0, normal);
+                                        let v3 = PointVertex::from_point(&Point3f::new(pos[0] + size, pos[1] + size, pos[2]), color, 16.0, normal);
+                                        let v4 = PointVertex::from_point(&Point3f::new(pos[0] - size, pos[1] + size, pos[2]), color, 16.0, normal);
+                                        
+                                        // First triangle (v1, v2, v3)
+                                        vertices.push(v1);
+                                        vertices.push(v2);
+                                        vertices.push(v3);
+                                        
+                                        // Second triangle (v1, v3, v4)
+                                        vertices.push(v1);
+                                        vertices.push(v3);
+                                        vertices.push(v4);
+                                    }
+                                    vertices
                                 }
                                 ViewData::Mesh(_mesh) => {
                                     // For now, just create vertices from mesh vertices
                                     // TODO: Proper mesh rendering
                                     vec![]
                                 }
-                                ViewData::Empty => vec![],
+                                ViewData::Empty => {
+                                    println!("No data to render - ViewData is Empty");
+                                    vec![]
+                                }
                             };
+
+                            // Debug: Print vertex count periodically
+                            if !vertices.is_empty() {
+                                if self.debug_frame_count % 60 == 0 {  // Print every 60 frames
+                                    println!("Rendering {} vertices", vertices.len());
+                                }
+                            }
+                            self.debug_frame_count += 1;
 
                             // Render points if we have any
                             if !vertices.is_empty() {

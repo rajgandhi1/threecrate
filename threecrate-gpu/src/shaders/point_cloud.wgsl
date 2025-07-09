@@ -64,19 +64,6 @@ fn vs_main(input: VertexInput) -> VertexOutput {
     return out;
 }
 
-// Gaussian splat function for smooth circular points
-fn gaussian_splat(coord: vec2<f32>, radius: f32) -> f32 {
-    let r = length(coord);
-    let sigma = radius * 0.5;
-    return exp(-(r * r) / (2.0 * sigma * sigma));
-}
-
-// Improved circular point with anti-aliasing
-fn circular_point(coord: vec2<f32>, radius: f32, smoothness: f32) -> f32 {
-    let r = length(coord);
-    return 1.0 - smoothstep(radius - smoothness, radius, r);
-}
-
 // Phong lighting calculation
 fn calculate_phong_lighting(
     world_pos: vec3<f32>,
@@ -106,42 +93,23 @@ fn calculate_phong_lighting(
 
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
-    // Create circular point rendering without point_size builtin
-    let point_coord = (input.clip_position.xy / input.clip_position.w) * 0.5;
-    
-    var alpha: f32;
     var final_color: vec3<f32>;
     
-    // Choose rendering mode based on parameters
-    if render_params.enable_splatting > 0.5 {
-        // Gaussian splatting mode
-        alpha = gaussian_splat(point_coord, 0.5);
-        
-        // Apply lighting if enabled
-        if render_params.enable_lighting > 0.5 {
-            final_color = calculate_phong_lighting(
-                input.world_pos,
-                input.normal,
-                input.view_pos,
-                input.color
-            );
-        } else {
-            final_color = input.color;
-        }
+    // Apply lighting if enabled
+    if render_params.enable_lighting > 0.5 {
+        final_color = calculate_phong_lighting(
+            input.world_pos,
+            input.normal,
+            input.view_pos,
+            input.color
+        );
     } else {
-        // Standard circular point mode
-        alpha = circular_point(point_coord, 0.5, 0.1);
-        
         // Simple distance-based brightness
         let distance_to_camera = length(input.world_pos - input.view_pos);
         let distance_factor = 1.0 / (1.0 + distance_to_camera * 0.01);
         final_color = input.color * (0.7 + 0.3 * distance_factor);
     }
     
-    // Apply alpha threshold
-    if alpha < render_params.alpha_threshold {
-        discard;
-    }
-    
-    return vec4<f32>(final_color, alpha);
+    // Use full alpha for points (no fancy shapes for now)
+    return vec4<f32>(final_color, 1.0);
 } 
