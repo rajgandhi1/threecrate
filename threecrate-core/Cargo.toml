@@ -7,7 +7,7 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 documentation.workspace = true
-description = "Core data structures and traits for 3DCrate"
+description = "Core data structures and traits for threecrate"
 
 [dependencies]
 nalgebra = { workspace = true, features = ["serde-serialize", "rand", "mint"] }

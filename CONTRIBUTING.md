@@ -1,4 +1,4 @@
-# Contributing to 3DCrate
+# Contributing to threecrate
 
 Thank you for your interest in contributing! This project is in early development with many `todo!()` algorithms waiting for implementation.
 
@@ -6,9 +6,9 @@ Thank you for your interest in contributing! This project is in early developmen
 
 1. **Fork and Clone**
    ```bash
-   git clone https://github.com/YOUR_USERNAME/3DCrate.git
-   cd 3DCrate
-   git remote add upstream https://github.com/ORIGINAL_OWNER/3DCrate.git
+   git clone https://github.com/YOUR_USERNAME/threecrate.git
+cd threecrate
+git remote add upstream https://github.com/ORIGINAL_OWNER/threecrate.git
    ```
 
 2. **Build and Test**
@@ -29,7 +29,7 @@ Thank you for your interest in contributing! This project is in early developmen
 ## Project Structure
 
 ```
-3DCrate/
+threecrate/
 ├── threecrate-core/           # Core data structures
 ├── threecrate-algorithms/     # Point cloud algorithms (filtering, normals, ICP)
 ├── threecrate-gpu/           # GPU acceleration

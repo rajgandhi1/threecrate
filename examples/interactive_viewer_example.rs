@@ -1,6 +1,6 @@
 //! Interactive Viewer Example
 //!
-//! This example demonstrates the comprehensive interactive viewer for 3DCrate.
+//! This example demonstrates the comprehensive interactive viewer for threecrate.
 //! It shows how to:
 //! - Load point clouds and meshes
 //! - Use interactive UI controls
@@ -9,12 +9,12 @@
 //! - Take screenshots
 //! - Navigate with camera controls
 
-use threecrate_core::{PointCloud, Point3f, ColoredPoint3f, TriangleMesh, Result};
+use threecrate_core::{PointCloud, Point3f, ColoredPoint3f, TriangleMesh};
 use threecrate_visualization::InteractiveViewer;
 use std::f32::consts::PI;
 
-fn main() -> Result<()> {
-    println!("3DCrate Interactive Viewer Example");
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    println!("threecrate Interactive Viewer Example");
     println!("==================================");
     
     // Create a simple point cloud for demonstration
@@ -34,7 +34,7 @@ fn main() -> Result<()> {
     let cloud = PointCloud::from_points(points);
     
     // Create and configure the viewer
-    let mut viewer = InteractiveViewer::new()?;
+    let mut viewer = InteractiveViewer::new().map_err(|e| format!("Failed to create viewer: {}", e))?;
     viewer.set_point_cloud(&cloud);
     
     println!("Controls:");
@@ -47,7 +47,7 @@ fn main() -> Result<()> {
     println!("  Close window to exit");
     
     // Run the viewer
-    viewer.run()?;
+    viewer.run().map_err(|e| format!("Viewer error: {}", e))?;
     
     Ok(())
 }
@@ -104,20 +104,20 @@ fn create_simple_mesh() -> TriangleMesh {
 
 /// Run algorithm demonstration
 #[allow(dead_code)]
-fn run_algorithm_demo(_point_cloud: &PointCloud<Point3f>) -> Result<()> {
+fn run_algorithm_demo(_point_cloud: &PointCloud<Point3f>) -> Result<(), Box<dyn std::error::Error>> {
     println!("Algorithm demonstrations would go here");
     println!("This is a simplified version for basic viewing");
     Ok(())
 }
 
 #[allow(dead_code)]
-fn run_icp_demo() -> Result<()> {
+fn run_icp_demo() -> Result<(), Box<dyn std::error::Error>> {
     println!("ICP algorithm demonstration would go here");
     Ok(())
 }
 
 #[allow(dead_code)]
-fn run_ransac_demo() -> Result<()> {
+fn run_ransac_demo() -> Result<(), Box<dyn std::error::Error>> {
     println!("RANSAC algorithm demonstration would go here");
     Ok(())
 }

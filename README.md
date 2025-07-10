@@ -1,14 +1,14 @@
-# 3DCrate
+# threecrate
 
 A comprehensive 3D point cloud processing library for Rust.
 
 [![Crates.io](https://img.shields.io/crates/v/threecrate.svg)](https://crates.io/crates/threecrate)
 [![Documentation](https://docs.rs/threecrate/badge.svg)](https://docs.rs/threecrate)
-[![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](https://github.com/rajgandhi1/3DCrate)
+[![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](https://github.com/rajgandhi1/threecrate)
 
 ## Overview
 
-3DCrate is a modular, high-performance library for 3D point cloud and mesh processing. This umbrella crate provides convenient access to all 3DCrate functionality in one place.
+threecrate is a modular, high-performance library for 3D point cloud and mesh processing. This umbrella crate provides convenient access to all threecrate functionality in one place.
 
 ## Features
 
@@ -204,7 +204,7 @@ println!("GPU context initialized");
 
 ## Performance
 
-3DCrate is designed for high performance:
+threecrate is designed for high performance:
 
 - **Parallel processing**: Uses `rayon` for CPU parallelism
 - **GPU acceleration**: Optional wgpu-based GPU processing

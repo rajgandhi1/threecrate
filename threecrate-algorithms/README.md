@@ -2,7 +2,7 @@
 
 [![Crates.io](https://img.shields.io/crates/v/threecrate-algorithms.svg)](https://crates.io/crates/threecrate-algorithms)
 [![Documentation](https://docs.rs/threecrate-algorithms/badge.svg)](https://docs.rs/threecrate-algorithms)
-[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](https://github.com/rajgandhi1/3DCrate#license)
+[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](https://github.com/rajgandhi1/threecrate#license)
 
 High-performance algorithms for 3D point cloud and mesh processing.
 

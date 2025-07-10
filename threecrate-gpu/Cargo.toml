@@ -7,10 +7,10 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 documentation.workspace = true
-description = "GPU-accelerated algorithms for 3DCrate using wgpu"
+description = "GPU-accelerated algorithms for threecrate using wgpu"
 
 [dependencies]
-threecrate-core = { version = "0.1.0", features = ["gpu"] }
+threecrate-core = { path = "../threecrate-core", features = ["gpu"] }
 wgpu = { workspace = true }
 bytemuck = { workspace = true }
 nalgebra = { workspace = true }

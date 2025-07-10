@@ -1,4 +1,4 @@
-//! Core data structures and traits for 3DCrate
+//! Core data structures and traits for threecrate
 //! 
 //! This crate provides fundamental types for 3D point cloud and mesh processing,
 //! including points, point clouds, meshes, and essential traits.
@@ -20,7 +20,7 @@ pub use error::*;
 /// Re-export commonly used types from nalgebra
 pub use nalgebra::{Point3, Vector3, Matrix3, Matrix4, Isometry3, Transform3};
 
-/// Common result type for 3DCrate operations
+/// Common result type for threecrate operations
 pub type Result<T> = std::result::Result<T, Error>;
 
 // Type aliases for easier imports

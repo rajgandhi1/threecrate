@@ -1,4 +1,4 @@
-//! Core traits for 3DCrate
+//! Core traits for threecrate
 
 use crate::{point::*, point_cloud::*, mesh::*, transform::Transform3D};
 

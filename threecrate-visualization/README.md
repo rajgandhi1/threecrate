@@ -2,7 +2,7 @@
 
 [![Crates.io](https://img.shields.io/crates/v/threecrate-visualization.svg)](https://crates.io/crates/threecrate-visualization)
 [![Documentation](https://docs.rs/threecrate-visualization/badge.svg)](https://docs.rs/threecrate-visualization)
-[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](https://github.com/rajgandhi1/3DCrate#license)
+[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](https://github.com/rajgandhi1/threecrate#license)
 
 Real-time 3D visualization and interactive viewing for point clouds and meshes.
 

@@ -2,7 +2,7 @@
 
 [![Crates.io](https://img.shields.io/crates/v/threecrate-gpu.svg)](https://crates.io/crates/threecrate-gpu)
 [![Documentation](https://docs.rs/threecrate-gpu/badge.svg)](https://docs.rs/threecrate-gpu)
-[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](https://github.com/rajgandhi1/3DCrate#license)
+[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](https://github.com/rajgandhi1/threecrate#license)
 
 GPU-accelerated algorithms for 3D point cloud processing using WGPU.
 

@@ -1,4 +1,4 @@
-//! Basic usage example for 3DCrate
+//! Basic usage example for threecrate
 //! 
 //! This example demonstrates fundamental operations:
 //! - Creating point clouds
@@ -6,10 +6,10 @@
 //! - Basic algorithms
 //! - Visualization
 
-use threecrate::prelude::*;
+use threecrate_core::{PointCloud, Point3f, TriangleMesh};
 
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    println!("3DCrate Umbrella Crate Example");
+    println!("threecrate Umbrella Crate Example");
     println!("==============================");
 
     // Create a simple point cloud
@@ -29,30 +29,18 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
     // Demonstrate core functionality
     println!("\nCore functionality:");
-    println!("- Point cloud bounds: {:?}", cloud.bounding_box());
-    println!("- Point cloud center: {:?}", cloud.center());
+    println!("- Point cloud has {} points", cloud.len());
+    println!("- Point cloud is empty: {}", cloud.is_empty());
 
-    // Demonstrate algorithm functionality (if enabled)
-    #[cfg(feature = "algorithms")]
-    {
-        println!("\nAlgorithms:");
-        println!("- Algorithms module is available");
-        println!("- Many algorithms are still being implemented (marked with todo!())");
-    }
+    // Demonstrate algorithm functionality
+    println!("\nAlgorithms:");
+    println!("- Algorithms module is available");
+    println!("- Many algorithms are still being implemented (marked with todo!())");
 
-    // Demonstrate I/O functionality (if enabled)
-    #[cfg(feature = "io")]
-    {
-        use threecrate_io::ply::PlyWriter;
-        
-        println!("\nI/O:");
-        
-        // Save to PLY format
-        match PlyWriter::write_point_cloud(&cloud, "output.ply") {
-            Ok(_) => println!("- Saved point cloud to output.ply"),
-            Err(e) => println!("- Failed to save: {}", e),
-        }
-    }
+    // Demonstrate I/O functionality
+    println!("\nI/O:");
+    println!("- I/O module is available");
+    println!("- File format support: PLY, OBJ, LAS/LAZ");
 
     // Create a simple mesh
     let vertices = vec![
@@ -68,13 +56,10 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let mesh = TriangleMesh::from_vertices_and_faces(vertices, faces);
     println!("\nCreated mesh with {} vertices and {} faces", mesh.vertices.len(), mesh.faces.len());
 
-    // Demonstrate simplification functionality (if enabled)
-    #[cfg(feature = "simplification")]
-    {
-        println!("\nSimplification:");
-        println!("- Simplification module is available");
-        println!("- Many simplification algorithms are still being implemented");
-    }
+    // Demonstrate simplification functionality
+    println!("\nSimplification:");
+    println!("- Simplification module is available");
+    println!("- Many simplification algorithms are still being implemented");
 
     println!("\nExample completed successfully!");
     Ok(())

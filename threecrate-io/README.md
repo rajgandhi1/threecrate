@@ -2,9 +2,9 @@
 
 [![Crates.io](https://img.shields.io/crates/v/threecrate-io.svg)](https://crates.io/crates/threecrate-io)
 [![Documentation](https://docs.rs/threecrate-io/badge.svg)](https://docs.rs/threecrate-io)
-[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](https://github.com/rajgandhi1/3DCrate#license)
+[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](https://github.com/rajgandhi1/threecrate#license)
 
-File I/O operations for point clouds and meshes in the 3DCrate ecosystem.
+File I/O operations for point clouds and meshes in the threecrate ecosystem.
 
 ## Features
 

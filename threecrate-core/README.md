@@ -2,9 +2,9 @@
 
 [![Crates.io](https://img.shields.io/crates/v/threecrate-core.svg)](https://crates.io/crates/threecrate-core)
 [![Documentation](https://docs.rs/threecrate-core/badge.svg)](https://docs.rs/threecrate-core)
-[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](https://github.com/rajgandhi1/3DCrate#license)
+[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](https://github.com/rajgandhi1/threecrate#license)
 
-Core data structures and traits for the 3DCrate library ecosystem.
+Core data structures and traits for the threecrate library ecosystem.
 
 ## Features
 

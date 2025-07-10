@@ -7,13 +7,13 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 documentation.workspace = true
-description = "Visualization and rendering for 3DCrate point clouds and meshes"
+description = "Visualization and rendering for threecrate point clouds and meshes"
 
 [dependencies]
-threecrate-core = { version = "0.1.0", features = ["gpu"] }
-threecrate-algorithms = { version = "0.1.0" }
-threecrate-gpu = { version = "0.1.0" }
-threecrate-io = { version = "0.1.0" }
+threecrate-core = { path = "../threecrate-core", features = ["gpu"] }
+threecrate-algorithms = { path = "../threecrate-algorithms" }
+threecrate-gpu = { path = "../threecrate-gpu" }
+threecrate-io = { path = "../threecrate-io" }
 wgpu = { workspace = true }
 winit = { workspace = true }
 bytemuck = { workspace = true }

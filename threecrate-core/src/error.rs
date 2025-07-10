@@ -1,8 +1,8 @@
-//! Error types for 3DCrate
+//! Error types for threecrate
 
 use thiserror::Error;
 
-/// Main error type for 3DCrate operations
+/// Main error type for threecrate operations
 #[derive(Error, Debug)]
 pub enum Error {
     #[error("I/O error: {0}")]
@@ -27,7 +27,7 @@ pub enum Error {
     UnsupportedFormat(String),
 }
 
-/// Result type alias for 3DCrate operations
+/// Result type alias for threecrate operations
 pub type Result<T> = std::result::Result<T, Error>;
 
 #[cfg(feature = "gpu")]

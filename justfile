@@ -1,4 +1,4 @@
-# 3DCrate Development Commands
+# threecrate Development Commands
 # Install just: cargo install just
 # Usage: just <command>
 

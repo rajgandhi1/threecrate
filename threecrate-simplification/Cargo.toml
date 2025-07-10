@@ -7,7 +7,7 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 documentation.workspace = true
-description = "Mesh simplification and decimation algorithms for 3DCrate"
+description = "Mesh simplification and decimation algorithms for threecrate"
 
 [dependencies]
 threecrate-core = "0.1.0"

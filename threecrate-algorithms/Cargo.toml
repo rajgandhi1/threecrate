@@ -10,7 +10,7 @@ documentation.workspace = true
 description = "Algorithms for 3D point cloud and mesh processing"
 
 [dependencies]
-threecrate-core = "0.1.0"
+threecrate-core = { path = "../threecrate-core" }
 nalgebra = { workspace = true }
 kdtree = { workspace = true }
 kiddo = { workspace = true }

@@ -163,13 +163,13 @@ impl InteractiveViewer {
 
     /// Run the interactive viewer
     pub fn run(mut self) -> Result<()> {
-        println!("Starting 3DCrate Interactive Viewer...");
+        println!("Starting threecrate Interactive Viewer...");
         
         // Create event loop and window
         let event_loop = EventLoop::new().map_err(|e| Error::Io(std::io::Error::new(std::io::ErrorKind::Other, format!("Failed to create event loop: {}", e))))?;
         let window = Arc::new(
             WindowBuilder::new()
-                .with_title("3DCrate Interactive Viewer")
+                .with_title("threecrate Interactive Viewer")
                 .with_inner_size(winit::dpi::LogicalSize::new(1200.0, 800.0))
                 .build(&event_loop)
                 .map_err(|e| Error::Io(std::io::Error::new(std::io::ErrorKind::Other, format!("Failed to create window: {}", e))))?

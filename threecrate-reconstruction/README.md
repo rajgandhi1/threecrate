@@ -2,7 +2,7 @@
 
 [![Crates.io](https://img.shields.io/crates/v/threecrate-reconstruction.svg)](https://crates.io/crates/threecrate-reconstruction)
 [![Documentation](https://docs.rs/threecrate-reconstruction/badge.svg)](https://docs.rs/threecrate-reconstruction)
-[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](https://github.com/rajgandhi1/3DCrate#license)
+[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](https://github.com/rajgandhi1/threecrate#license)
 
 Surface reconstruction algorithms for generating meshes from point clouds.
 

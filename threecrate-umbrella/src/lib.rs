@@ -1,8 +1,8 @@
-//! # 3DCrate
+//! # threecrate
 //!
 //! A comprehensive 3D point cloud processing library for Rust.
 //!
-//! This is the umbrella crate that provides convenient access to all 3DCrate functionality.
+//! This is the umbrella crate that provides convenient access to all threecrate functionality.
 //! You can use this crate to get everything in one place, or use individual crates for
 //! more granular control over dependencies.
 //!
