@@ -1,0 +1,38 @@
+[package]
+name = "threecrate"
+version = "0.1.0"
+edition = "2021"
+authors = ["rajgandhi1"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/rajgandhi1/3DCrate.git"
+homepage = "https://github.com/rajgandhi1/3DCrate.git"
+documentation = "https://docs.rs/threecrate"
+description = "A comprehensive 3D point cloud processing library for Rust - umbrella crate"
+keywords = ["3d", "point-cloud", "graphics", "geometry", "visualization"]
+categories = ["graphics", "mathematics", "science"]
+readme = "README.md"
+
+[features]
+default = ["algorithms", "io", "simplification"]
+algorithms = ["dep:threecrate-algorithms"]
+gpu = ["dep:threecrate-gpu"]
+io = ["dep:threecrate-io"]
+simplification = ["dep:threecrate-simplification"]
+reconstruction = ["dep:threecrate-reconstruction"]
+visualization = ["dep:threecrate-visualization"]
+all = ["algorithms", "gpu", "io", "simplification", "reconstruction", "visualization"]
+
+[dependencies]
+# Core is always included
+threecrate-core = { version = "0.1.0" }
+
+# Optional dependencies controlled by features
+threecrate-algorithms = { version = "0.1.0", optional = true }
+threecrate-gpu = { version = "0.1.0", optional = true }
+threecrate-io = { version = "0.1.0", optional = true }
+threecrate-simplification = { version = "0.1.0", optional = true }
+threecrate-reconstruction = { version = "0.1.0", optional = true }
+threecrate-visualization = { version = "0.1.0", optional = true }
+
+[dev-dependencies]
+anyhow = "1.0" 
