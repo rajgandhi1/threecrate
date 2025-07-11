@@ -12,13 +12,13 @@ threecrate is a modular, high-performance library for 3D point cloud and mesh pr
 
 ## Features
 
-- 🔧 **Core**: Basic 3D data structures (Point, PointCloud, Mesh, Transform)
-- 🧠 **Algorithms**: Point cloud processing (filtering, registration, segmentation, normals)
-- 🚀 **GPU**: GPU-accelerated processing using wgpu
-- 📁 **I/O**: File format support (PLY, OBJ, LAS, Pasture formats)
-- 🎯 **Simplification**: Mesh and point cloud simplification algorithms
-- 🏗️ **Reconstruction**: Surface reconstruction from point clouds
-- 👁️ **Visualization**: Interactive 3D visualization tools
+- **Core**: Basic 3D data structures (Point, PointCloud, Mesh, Transform)
+- **Algorithms**: Point cloud processing (filtering, registration, segmentation, normals)
+- **GPU**: GPU-accelerated processing using wgpu
+- **I/O**: File format support (PLY, OBJ, LAS, Pasture formats)
+- **Simplification**: Mesh and point cloud simplification algorithms
+- **Reconstruction**: Surface reconstruction from point clouds
+- **Visualization**: Interactive 3D visualization tools
 
 ## Quick Start
 
