@@ -6,61 +6,63 @@
 //! - Basic algorithms
 //! - Visualization
 
-use threecrate_core::{PointCloud, Point3f, TriangleMesh};
+use threecrate_core::{PointCloud, Point3f, Drawable};
+use threecrate_algorithms::statistical_outlier_removal;
+use rand::prelude::*;
 
-fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    println!("threecrate Umbrella Crate Example");
+fn main() -> threecrate_core::Result<()> {
+    println!("ThreeCrate Basic Usage Example");
     println!("==============================");
 
-    // Create a simple point cloud
-    let points = vec![
-        Point3f::new(0.0, 0.0, 0.0),
-        Point3f::new(1.0, 0.0, 0.0),
-        Point3f::new(0.0, 1.0, 0.0),
-        Point3f::new(0.0, 0.0, 1.0),
-        Point3f::new(1.0, 1.0, 0.0),
-        Point3f::new(1.0, 0.0, 1.0),
-        Point3f::new(0.0, 1.0, 1.0),
-        Point3f::new(1.0, 1.0, 1.0),
-    ];
+    // Create a point cloud with some outliers
+    let mut points = Vec::new();
+    let mut rng = rand::thread_rng();
+
+    // Generate main cluster of points
+    for _ in 0..100 {
+        points.push(Point3f::new(
+            rng.gen_range(-1.0..1.0),
+            rng.gen_range(-1.0..1.0),
+            rng.gen_range(-1.0..1.0),
+        ));
+    }
+
+    // Add some outliers
+    for _ in 0..10 {
+        points.push(Point3f::new(
+            rng.gen_range(-10.0..-5.0),
+            rng.gen_range(-10.0..-5.0),
+            rng.gen_range(-10.0..-5.0),
+        ));
+    }
+
+    for _ in 0..10 {
+        points.push(Point3f::new(
+            rng.gen_range(5.0..10.0),
+            rng.gen_range(5.0..10.0),
+            rng.gen_range(5.0..10.0),
+        ));
+    }
 
     let cloud = PointCloud::from_points(points);
-    println!("Created point cloud with {} points", cloud.len());
+    println!("Original point cloud: {} points", cloud.len());
 
-    // Demonstrate core functionality
-    println!("\nCore functionality:");
-    println!("- Point cloud has {} points", cloud.len());
-    println!("- Point cloud is empty: {}", cloud.is_empty());
+    // Apply statistical outlier removal
+    println!("\nApplying statistical outlier removal...");
+    let filtered_cloud = statistical_outlier_removal(&cloud, 10, 1.0)?;
+    println!("Filtered point cloud: {} points", filtered_cloud.len());
+    println!("Removed {} outliers", cloud.len() - filtered_cloud.len());
 
-    // Demonstrate algorithm functionality
-    println!("\nAlgorithms:");
-    println!("- Algorithms module is available");
-    println!("- Many algorithms are still being implemented (marked with todo!())");
+    // Show some statistics
+    let (min, max) = cloud.bounding_box();
+    println!("\nOriginal cloud bounding box:");
+    println!("  Min: ({:.2}, {:.2}, {:.2})", min.x, min.y, min.z);
+    println!("  Max: ({:.2}, {:.2}, {:.2})", max.x, max.y, max.z);
 
-    // Demonstrate I/O functionality
-    println!("\nI/O:");
-    println!("- I/O module is available");
-    println!("- File format support: PLY, OBJ, LAS/LAZ");
+    let (min_filtered, max_filtered) = filtered_cloud.bounding_box();
+    println!("\nFiltered cloud bounding box:");
+    println!("  Min: ({:.2}, {:.2}, {:.2})", min_filtered.x, min_filtered.y, min_filtered.z);
+    println!("  Max: ({:.2}, {:.2}, {:.2})", max_filtered.x, max_filtered.y, max_filtered.z);
 
-    // Create a simple mesh
-    let vertices = vec![
-        Point3f::new(0.0, 0.0, 0.0),
-        Point3f::new(1.0, 0.0, 0.0),
-        Point3f::new(0.0, 1.0, 0.0),
-    ];
-    
-    let faces = vec![
-        [0, 1, 2],
-    ];
-    
-    let mesh = TriangleMesh::from_vertices_and_faces(vertices, faces);
-    println!("\nCreated mesh with {} vertices and {} faces", mesh.vertices.len(), mesh.faces.len());
-
-    // Demonstrate simplification functionality
-    println!("\nSimplification:");
-    println!("- Simplification module is available");
-    println!("- Many simplification algorithms are still being implemented");
-
-    println!("\nExample completed successfully!");
     Ok(())
 } 
