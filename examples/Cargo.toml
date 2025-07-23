@@ -32,4 +32,8 @@ path = "comprehensive_gpu_example.rs"
 
 [[bin]]
 name = "interactive_viewer_example"
-path = "interactive_viewer_example.rs" 
+path = "interactive_viewer_example.rs"
+
+[[bin]]
+name = "normal_estimation_example"
+path = "normal_estimation_example.rs" 
