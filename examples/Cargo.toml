@@ -40,4 +40,8 @@ path = "normal_estimation_example.rs"
 
 [[bin]]
 name = "ransac_plane_example"
-path = "ransac_plane_example.rs" 
+path = "ransac_plane_example.rs"
+
+[[bin]]
+name = "k_nearest_neighbors_example"
+path = "k_nearest_neighbors_example.rs" 
