@@ -10,7 +10,7 @@ documentation.workspace = true
 description = "I/O operations for point clouds and meshes in threecrate"
 
 [dependencies]
-threecrate-core = "0.1.0"
+threecrate-core = { path = "../threecrate-core" }
 ply-rs = { workspace = true }
 obj = { workspace = true }
 pasture-core = { workspace = true }
