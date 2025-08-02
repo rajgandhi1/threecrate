@@ -6,6 +6,7 @@ use threecrate_core::{PointCloud, Point3f, Vector3f};
 use threecrate_algorithms::{icp_point_to_point, icp_point_to_point_default};
 use nalgebra::{Isometry3, UnitQuaternion, Translation3};
 use std::f32::consts::PI;
+use rand::Rng;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("ThreeCrate Basic Usage Example");
@@ -142,13 +143,14 @@ fn noisy_icp_example() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Create target points with known transformation + noise
+    let mut rng = rand::thread_rng();
     for point in &source.points {
         let transformed = transform * point;
         // Add Gaussian noise
         let noise = Vector3f::new(
-            (rand::random::<f32>() - 0.5) * 0.05,
-            (rand::random::<f32>() - 0.5) * 0.05,
-            (rand::random::<f32>() - 0.5) * 0.05,
+            (rng.gen_range(-0.5..0.5)) * 0.05,
+            (rng.gen_range(-0.5..0.5)) * 0.05,
+            (rng.gen_range(-0.5..0.5)) * 0.05,
         );
         target.push(transformed + noise);
     }
