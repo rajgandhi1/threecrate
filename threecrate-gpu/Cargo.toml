@@ -23,4 +23,6 @@ flume = "0.11"
 [dev-dependencies]
 approx = { workspace = true }
 pollster = "0.3"
-rand = { workspace = true } 
+rand = { workspace = true }
+threecrate-algorithms = { path = "../threecrate-algorithms" }
+tokio = { version = "1.0", features = ["full"] } 

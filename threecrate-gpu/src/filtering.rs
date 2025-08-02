@@ -4,7 +4,12 @@ use threecrate_core::{PointCloud, Result, Point3f};
 use crate::GpuContext;
 
 const STATISTICAL_OUTLIER_SHADER: &str = r#"
-@group(0) @binding(0) var<storage, read> input_points: array<vec3<f32>>;
+struct GpuPoint {
+    position: vec3<f32>,
+    _padding: f32,  // Ensure 16-byte alignment
+}
+
+@group(0) @binding(0) var<storage, read> input_points: array<GpuPoint>;
 @group(0) @binding(1) var<storage, read> neighbors: array<array<u32, MAX_NEIGHBORS>>;
 @group(0) @binding(2) var<storage, read_write> is_outlier: array<u32>;
 @group(0) @binding(3) var<uniform> params: FilterParams;
@@ -23,7 +28,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         return;
     }
     
-    let center_point = input_points[index];
+    let center_point = input_points[index].position;
     
     // Compute mean distance to k-nearest neighbors
     var total_distance = 0.0;
@@ -32,7 +37,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     for (var i = 0u; i < params.k_neighbors; i++) {
         let neighbor_idx = neighbors[index][i];
         if (neighbor_idx < params.num_points) {
-            let neighbor_point = input_points[neighbor_idx];
+            let neighbor_point = input_points[neighbor_idx].position;
             let distance = length(center_point - neighbor_point);
             total_distance += distance;
             count++;
@@ -64,17 +69,30 @@ impl GpuContext {
             return Ok(Vec::new());
         }
 
-        // Convert points to GPU format
-        let point_data: Vec<[f32; 3]> = points
+        // Convert points to GPU format with proper alignment
+        #[repr(C)]
+        #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+        struct GpuPoint {
+            position: [f32; 3],
+            _padding: f32,
+        }
+        
+        let point_data: Vec<GpuPoint> = points
             .iter()
-            .map(|p| [p.x, p.y, p.z])
+            .map(|p| GpuPoint {
+                position: [p.x, p.y, p.z],
+                _padding: 0.0,
+            })
             .collect();
 
+        // Convert to the format expected by helper functions
+        let point_data_flat: Vec<[f32; 3]> = point_data.iter().map(|p| p.position).collect();
+        
         // Compute neighbors (reuse from normals computation)
-        let neighbors = self.compute_neighbors_simple(&point_data, k_neighbors);
+        let neighbors = self.compute_neighbors_simple(&point_data_flat, k_neighbors);
         
         // Compute global statistics on CPU first (could be moved to GPU)
-        let global_mean = self.compute_global_mean_distance(&point_data, &neighbors, k_neighbors);
+        let global_mean = self.compute_global_mean_distance(&point_data_flat, &neighbors, k_neighbors);
 
         // Create buffers
         let input_buffer = self.create_buffer_init(
@@ -309,4 +327,287 @@ pub async fn gpu_remove_statistical_outliers(
 pub fn gpu_voxel_grid_filter(_cloud: &PointCloud<Point3f>, _voxel_size: f32) -> Result<PointCloud<Point3f>> {
     // TODO: Implement GPU voxel grid filtering
     todo!("GPU voxel grid filtering not yet implemented")
+} 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use threecrate_core::{PointCloud, Point3f};
+    use std::time::Instant;
+
+    async fn try_create_gpu_context() -> Option<GpuContext> {
+        GpuContext::new().await.ok()
+    }
+
+    fn create_test_point_cloud_with_outliers() -> PointCloud<Point3f> {
+        let mut points = Vec::new();
+        
+        // Create a cluster of normal points
+        for i in 0..50 {
+            for j in 0..50 {
+                let x = (i as f32 - 25.0) * 0.1;
+                let y = (j as f32 - 25.0) * 0.1;
+                let z = 0.0;
+                points.push(Point3f::new(x, y, z));
+            }
+        }
+        
+        // Add some outliers far from the cluster
+        for i in 0..20 {
+            let x = 50.0 + (i as f32 * 2.0);
+            let y = 50.0 + (i as f32 * 2.0);
+            let z = 50.0 + (i as f32 * 2.0);
+            points.push(Point3f::new(x, y, z));
+        }
+        
+        PointCloud::from_points(points)
+    }
+
+    fn create_test_point_cloud_no_outliers() -> PointCloud<Point3f> {
+        let mut points = Vec::new();
+        
+        // Create a uniform grid of points
+        for i in 0..25 {
+            for j in 0..25 {
+                for k in 0..5 {
+                    let x = (i as f32 - 12.5) * 0.1;
+                    let y = (j as f32 - 12.5) * 0.1;
+                    let z = (k as f32 - 2.5) * 0.1;
+                    points.push(Point3f::new(x, y, z));
+                }
+            }
+        }
+        
+        PointCloud::from_points(points)
+    }
+
+    #[tokio::test]
+    async fn test_gpu_statistical_outlier_removal_basic() {
+        let gpu_context = match try_create_gpu_context().await {
+            Some(ctx) => ctx,
+            None => {
+                println!("Skipping GPU test - no GPU available");
+                return;
+            }
+        };
+
+        let cloud = create_test_point_cloud_with_outliers();
+        let original_count = cloud.len();
+        
+        let filtered = gpu_remove_statistical_outliers(&gpu_context, &cloud, 10, 1.0).await.unwrap();
+        let filtered_count = filtered.len();
+        
+        // Should remove some outliers
+        assert!(filtered_count < original_count);
+        assert!(filtered_count > 0);
+        
+        println!("GPU outlier removal: {} -> {} points", original_count, filtered_count);
+    }
+
+    #[tokio::test]
+    async fn test_gpu_statistical_outlier_removal_no_outliers() {
+        let gpu_context = match try_create_gpu_context().await {
+            Some(ctx) => ctx,
+            None => {
+                println!("Skipping GPU test - no GPU available");
+                return;
+            }
+        };
+
+        let cloud = create_test_point_cloud_no_outliers();
+        let original_count = cloud.len();
+        
+        let filtered = gpu_remove_statistical_outliers(&gpu_context, &cloud, 10, 1.0).await.unwrap();
+        let filtered_count = filtered.len();
+        
+        println!("GPU outlier removal (no outliers): {} -> {} points", original_count, filtered_count);
+        
+        // The algorithm should remove some points but not all
+        // Even with no obvious outliers, the algorithm may remove points based on statistical analysis
+        assert!(filtered_count > 0);
+        assert!(filtered_count < original_count);
+    }
+
+    #[tokio::test]
+    async fn test_gpu_statistical_outlier_removal_empty_cloud() {
+        let gpu_context = match try_create_gpu_context().await {
+            Some(ctx) => ctx,
+            None => {
+                println!("Skipping GPU test - no GPU available");
+                return;
+            }
+        };
+
+        let cloud = PointCloud::<Point3f>::new();
+        let filtered = gpu_remove_statistical_outliers(&gpu_context, &cloud, 10, 1.0).await.unwrap();
+        
+        assert_eq!(filtered.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_gpu_statistical_outlier_removal_single_point() {
+        let gpu_context = match try_create_gpu_context().await {
+            Some(ctx) => ctx,
+            None => {
+                println!("Skipping GPU test - no GPU available");
+                return;
+            }
+        };
+
+        let cloud = PointCloud::from_points(vec![Point3f::new(0.0, 0.0, 0.0)]);
+        let filtered = gpu_remove_statistical_outliers(&gpu_context, &cloud, 1, 1.0).await.unwrap();
+        
+        // Should keep the single point
+        assert_eq!(filtered.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_gpu_vs_cpu_statistical_outlier_removal() {
+        let gpu_context = match try_create_gpu_context().await {
+            Some(ctx) => ctx,
+            None => {
+                println!("Skipping GPU vs CPU test - no GPU available");
+                return;
+            }
+        };
+
+        let cloud = create_test_point_cloud_with_outliers();
+        
+        // CPU version - use the same algorithm logic but avoid type conflicts
+        let cpu_start = Instant::now();
+        let cpu_filtered_count = {
+            // Simple CPU implementation for comparison
+            let points = &cloud.points;
+            let k = 10;
+            let std_dev_multiplier = 1.0;
+            
+            if points.is_empty() {
+                0
+            } else {
+                // Simple distance-based outlier detection
+                let mut mean_distances = Vec::new();
+                for point in points {
+                    let mut distances = Vec::new();
+                    for other_point in points {
+                        if other_point != point {
+                            let dx = point.x - other_point.x;
+                            let dy = point.y - other_point.y;
+                            let dz = point.z - other_point.z;
+                            let distance = (dx * dx + dy * dy + dz * dz).sqrt();
+                            distances.push(distance);
+                        }
+                    }
+                    distances.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                    let k_neighbors = k.min(distances.len());
+                    if k_neighbors > 0 {
+                        let mean = distances[..k_neighbors].iter().sum::<f32>() / k_neighbors as f32;
+                        mean_distances.push(mean);
+                    } else {
+                        mean_distances.push(0.0);
+                    }
+                }
+                
+                let global_mean = mean_distances.iter().sum::<f32>() / mean_distances.len() as f32;
+                let variance = mean_distances.iter().map(|&d| (d - global_mean).powi(2)).sum::<f32>() / mean_distances.len() as f32;
+                let global_std_dev = variance.sqrt();
+                let threshold = global_mean + std_dev_multiplier * global_std_dev;
+                
+                mean_distances.iter().filter(|&&d| d <= threshold).count()
+            }
+        };
+        let cpu_time = cpu_start.elapsed();
+        
+        // GPU version
+        let gpu_start = Instant::now();
+        let gpu_filtered = gpu_remove_statistical_outliers(&gpu_context, &cloud, 10, 1.0).await.unwrap();
+        let gpu_time = gpu_start.elapsed();
+        
+        println!("CPU outlier removal: {} -> {} points in {:?}", 
+                cloud.len(), cpu_filtered_count, cpu_time);
+        println!("GPU outlier removal: {} -> {} points in {:?}", 
+                cloud.len(), gpu_filtered.len(), gpu_time);
+        
+        // Both should remove outliers (exact counts may vary due to different algorithms)
+        assert!(cpu_filtered_count < cloud.len());
+        assert!(gpu_filtered.len() < cloud.len());
+        
+        // Performance comparison (GPU should be faster for larger datasets)
+        if cloud.len() > 1000 {
+            println!("GPU speedup: {:.2}x", cpu_time.as_secs_f32() / gpu_time.as_secs_f32());
+        }
+    }
+
+    #[tokio::test]
+    async fn test_gpu_statistical_outlier_removal_different_parameters() {
+        let gpu_context = match try_create_gpu_context().await {
+            Some(ctx) => ctx,
+            None => {
+                println!("Skipping GPU test - no GPU available");
+                return;
+            }
+        };
+
+        let cloud = create_test_point_cloud_with_outliers();
+        let original_count = cloud.len();
+        
+        // Test different k values
+        for k in [5, 10, 20] {
+            let filtered = gpu_remove_statistical_outliers(&gpu_context, &cloud, k, 1.0).await.unwrap();
+            println!("k={}: {} -> {} points", k, original_count, filtered.len());
+            assert!(filtered.len() > 0);
+        }
+        
+        // Test different std_dev_multiplier values
+        for std_dev in [0.5, 1.0, 2.0] {
+            let filtered = gpu_remove_statistical_outliers(&gpu_context, &cloud, 10, std_dev).await.unwrap();
+            println!("std_dev={}: {} -> {} points", std_dev, original_count, filtered.len());
+            assert!(filtered.len() > 0);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_gpu_statistical_outlier_removal_large_dataset() {
+        let gpu_context = match try_create_gpu_context().await {
+            Some(ctx) => ctx,
+            None => {
+                println!("Skipping GPU test - no GPU available");
+                return;
+            }
+        };
+
+        // Create a smaller dataset for faster testing
+        let mut points = Vec::new();
+        for i in 0..50 {
+            for j in 0..50 {
+                let x = (i as f32 - 25.0) * 0.1;
+                let y = (j as f32 - 25.0) * 0.1;
+                let z = 0.0;
+                points.push(Point3f::new(x, y, z));
+            }
+        }
+        
+        // Add some outliers
+        for i in 0..10 {
+            let x = 25.0 + (i as f32 * 2.0);
+            let y = 25.0 + (i as f32 * 2.0);
+            let z = 25.0 + (i as f32 * 2.0);
+            points.push(Point3f::new(x, y, z));
+        }
+        
+        let cloud = PointCloud::from_points(points);
+        let original_count = cloud.len();
+        
+        let start = Instant::now();
+        let filtered = gpu_remove_statistical_outliers(&gpu_context, &cloud, 5, 1.0).await.unwrap();
+        let elapsed = start.elapsed();
+        
+        println!("Large dataset GPU outlier removal: {} -> {} points in {:?}", 
+                original_count, filtered.len(), elapsed);
+        
+        assert!(filtered.len() < original_count);
+        assert!(filtered.len() > 0);
+        
+        // Should complete in reasonable time
+        assert!(elapsed.as_secs() < 10);
+    }
 } 

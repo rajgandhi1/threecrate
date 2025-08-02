@@ -44,4 +44,8 @@ path = "ransac_plane_example.rs"
 
 [[bin]]
 name = "k_nearest_neighbors_example"
-path = "k_nearest_neighbors_example.rs" 
+path = "k_nearest_neighbors_example.rs"
+
+[[bin]]
+name = "statistical_outlier_benchmark"
+path = "statistical_outlier_benchmark.rs" 
