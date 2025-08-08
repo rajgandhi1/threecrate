@@ -5,8 +5,8 @@ use crate::GpuContext;
 use nalgebra::Isometry3;
 
 const ICP_NEAREST_NEIGHBOR_SHADER: &str = r#"
-@group(0) @binding(0) var<storage, read> source_points: array<vec3<f32>>;
-@group(0) @binding(1) var<storage, read> target_points: array<vec3<f32>>;
+@group(0) @binding(0) var<storage, read> source_points: array<vec4<f32>>;
+@group(0) @binding(1) var<storage, read> target_points: array<vec4<f32>>;
 @group(0) @binding(2) var<storage, read_write> correspondences: array<u32>;
 @group(0) @binding(3) var<storage, read_write> distances: array<f32>;
 @group(0) @binding(4) var<uniform> params: ICPParams;
@@ -24,13 +24,13 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         return;
     }
     
-    let source_point = source_points[index];
+    let source_point = source_points[index].xyz;
     var min_distance = params.max_distance;
     var best_match = 0u;
     
     // Find nearest neighbor in target
     for (var i = 0u; i < params.num_target; i++) {
-        let target_point = target_points[i];
+        let target_point = target_points[i].xyz;
         let diff = source_point - target_point;
         let distance = length(diff);
         
@@ -46,10 +46,10 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 "#;
 
 const ICP_CENTROID_SHADER: &str = r#"
-@group(0) @binding(0) var<storage, read> source_points: array<vec3<f32>>;
-@group(0) @binding(1) var<storage, read> target_points: array<vec3<f32>>;
+@group(0) @binding(0) var<storage, read> source_points: array<vec4<f32>>;
+@group(0) @binding(1) var<storage, read> target_points: array<vec4<f32>>;
 @group(0) @binding(2) var<storage, read> correspondences: array<u32>;
-@group(0) @binding(3) var<storage, read_write> centroids: array<vec3<f32>>; // [source_centroid, target_centroid]
+@group(0) @binding(3) var<storage, read_write> centroids: array<vec4<f32>>; // [source_centroid, target_centroid]
 @group(0) @binding(4) var<uniform> params: CentroidParams;
 
 struct CentroidParams {
@@ -67,22 +67,22 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     
     for (var i = 0u; i < params.num_correspondences; i++) {
         let target_idx = correspondences[i];
-        source_centroid += source_points[i];
-        target_centroid += target_points[target_idx];
+        source_centroid += source_points[i].xyz;
+        target_centroid += target_points[target_idx].xyz;
     }
     
     let scale = 1.0 / f32(params.num_correspondences);
-    centroids[0] = source_centroid * scale;
-    centroids[1] = target_centroid * scale;
+    centroids[0] = vec4<f32>(source_centroid * scale, 0.0);
+    centroids[1] = vec4<f32>(target_centroid * scale, 0.0);
 }
 "#;
 
 #[allow(dead_code)]
 const ICP_COVARIANCE_SHADER: &str = r#"
-@group(0) @binding(0) var<storage, read> source_points: array<vec3<f32>>;
-@group(0) @binding(1) var<storage, read> target_points: array<vec3<f32>>;
+@group(0) @binding(0) var<storage, read> source_points: array<vec4<f32>>;
+@group(0) @binding(1) var<storage, read> target_points: array<vec4<f32>>;
 @group(0) @binding(2) var<storage, read> correspondences: array<u32>;
-@group(0) @binding(3) var<storage, read> centroids: array<vec3<f32>>;
+@group(0) @binding(3) var<storage, read> centroids: array<vec4<f32>>;
 @group(0) @binding(4) var<storage, read_write> covariance: array<f32>; // 9 elements for 3x3 matrix
 @group(0) @binding(5) var<uniform> params: CovarianceParams;
 
@@ -97,12 +97,12 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         return;
     }
     
-    let source_centroid = centroids[0];
-    let target_centroid = centroids[1];
+    let source_centroid = centroids[0].xyz;
+    let target_centroid = centroids[1].xyz;
     
     let target_idx = correspondences[index];
-    let source_centered = source_points[index] - source_centroid;
-    let target_centered = target_points[target_idx] - target_centroid;
+    let source_centered = source_points[index].xyz - source_centroid;
+    let target_centered = target_points[target_idx].xyz - target_centroid;
     
     // Compute outer product contribution
     let h00 = source_centered.x * target_centered.x;
@@ -259,15 +259,15 @@ impl GpuContext {
             return Ok((Isometry3::identity(), 0.0));
         }
         
-        // Convert to GPU format
-        let source_data: Vec<[f32; 3]> = source_points
+        // Convert to GPU format (vec4 alignment)
+        let source_data: Vec<[f32; 4]> = source_points
             .iter()
-            .map(|p| [p.x, p.y, p.z])
+            .map(|p| [p.x, p.y, p.z, 0.0])
             .collect();
             
-        let target_data: Vec<[f32; 3]> = target_points
+        let target_data: Vec<[f32; 4]> = target_points
             .iter()
-            .map(|p| [p.x, p.y, p.z])
+            .map(|p| [p.x, p.y, p.z, 0.0])
             .collect();
             
         let correspondence_indices: Vec<u32> = correspondences
@@ -288,14 +288,13 @@ impl GpuContext {
             correspondences.len(),
         ).await?;
         
-        // Step 2: Compute covariance matrix on GPU
-        let covariance = self.compute_covariance_gpu(
-            &source_buffer,
-            &target_buffer,
-            &correspondence_buffer,
+        // Step 2: Compute covariance matrix on CPU for stability
+        let covariance = self.compute_covariance_cpu(
+            source_points,
+            target_points,
+            correspondences,
             &centroids,
-            correspondences.len(),
-        ).await?;
+        )?;
         
         // Step 3: Perform SVD on CPU (could be moved to GPU with more complex implementation)
         let transformation = self.svd_to_transformation(&covariance, &centroids)?;
@@ -386,28 +385,24 @@ impl GpuContext {
     }
     
     /// Compute covariance matrix using GPU (simplified version without atomics for now)
-    async fn compute_covariance_gpu(
+    // CPU covariance as stable fallback
+    fn compute_covariance_cpu(
         &self,
-        _source_buffer: &wgpu::Buffer,
-        _target_buffer: &wgpu::Buffer,
-        _correspondence_buffer: &wgpu::Buffer,
-        _centroids: &[[f32; 3]],
-        _num_correspondences: usize,
+        source_points: &[Point3f],
+        target_points: &[Point3f],
+        correspondences: &[(usize, usize, f32)],
+        centroids: &[[f32; 3]],
     ) -> Result<nalgebra::Matrix3<f32>> {
-        // For now, fall back to CPU computation for the covariance matrix
-        // GPU atomic operations for float accumulation are complex and not widely supported
-        
-        // This would be the CPU fallback implementation
         let mut h = nalgebra::Matrix3::zeros();
-        
-        // Read source and target points back from GPU (inefficient but functional)
-        // In a production implementation, you'd keep this data on CPU or use more sophisticated GPU reduction
-        
-        // For now, return an identity-based covariance for demonstration
-        h[(0, 0)] = 1.0;
-        h[(1, 1)] = 1.0;
-        h[(2, 2)] = 1.0;
-        
+        let sc = nalgebra::Vector3::new(centroids[0][0], centroids[0][1], centroids[0][2]);
+        let tc = nalgebra::Vector3::new(centroids[1][0], centroids[1][1], centroids[1][2]);
+        for (si, ti, _dist) in correspondences.iter().copied() {
+            let s = source_points[si];
+            let t = target_points[ti];
+            let sv = s.coords - sc;
+            let tv = t.coords - tc;
+            h += sv * tv.transpose();
+        }
         Ok(h)
     }
     
