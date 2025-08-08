@@ -8,7 +8,7 @@
 //! ## Example Usage
 //!
 //! ```rust,no_run
-//! use threecrate_gpu::GpuContext;
+//! use threecrate_gpu::{GpuContext, gpu_remove_statistical_outliers, gpu_radius_outlier_removal, gpu_voxel_grid_filter};
 //! use threecrate_core::{PointCloud, Point3f};
 //!
 //! async fn example() -> threecrate_core::Result<()> {
@@ -17,7 +17,18 @@
 //!     let mut point_cloud = PointCloud::<Point3f>::new();
 //!     // ... populate point cloud
 //!     
+//!     // Compute normals using GPU acceleration
 //!     let normals = gpu_context.compute_normals(&point_cloud.points, 10).await?;
+//!     
+//!     // Filter outliers using GPU acceleration
+//!     let filtered = gpu_remove_statistical_outliers(&gpu_context, &point_cloud, 10, 1.0).await?;
+//!     
+//!     // Remove isolated points using radius-based filtering
+//!     let filtered = gpu_radius_outlier_removal(&gpu_context, &point_cloud, 0.1, 5).await?;
+//!     
+//!     // Downsample using voxel grid filtering
+//!     let downsampled = gpu_voxel_grid_filter(&gpu_context, &point_cloud, 0.05).await?;
+//!     
 //!     Ok(())
 //! }
 //! ```
@@ -34,7 +45,7 @@ pub mod utils;
 
 // Re-export commonly used items
 pub use device::GpuContext;
-pub use filtering::gpu_remove_statistical_outliers;
+pub use filtering::{gpu_remove_statistical_outliers, gpu_radius_outlier_removal, gpu_voxel_grid_filter};
 pub use normals::gpu_estimate_normals;
 pub use nearest_neighbor::{gpu_find_k_nearest, gpu_find_k_nearest_batch, gpu_find_radius_neighbors};
 pub use icp::gpu_icp;

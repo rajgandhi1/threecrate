@@ -48,4 +48,8 @@ path = "k_nearest_neighbors_example.rs"
 
 [[bin]]
 name = "statistical_outlier_benchmark"
-path = "statistical_outlier_benchmark.rs" 
+path = "statistical_outlier_benchmark.rs"
+
+[[bin]]
+name = "gpu_filtering_example"
+path = "gpu_filtering_example.rs" 

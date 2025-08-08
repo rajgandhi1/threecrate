@@ -57,6 +57,99 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 }
 "#;
 
+const RADIUS_OUTLIER_SHADER: &str = r#"
+struct GpuPoint {
+    position: vec3<f32>,
+    _padding: f32,  // Ensure 16-byte alignment
+}
+
+@group(0) @binding(0) var<storage, read> input_points: array<GpuPoint>;
+@group(0) @binding(1) var<storage, read_write> is_outlier: array<u32>;
+@group(0) @binding(2) var<uniform> params: RadiusOutlierParams;
+
+struct RadiusOutlierParams {
+    num_points: u32,
+    radius: f32,
+    min_neighbors: u32,
+    _padding: u32,
+}
+
+@compute @workgroup_size(64)
+fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
+    let index = global_id.x;
+    if (index >= params.num_points) {
+        return;
+    }
+    
+    let center_point = input_points[index].position;
+    var neighbor_count = 0u;
+    
+    // Count neighbors within radius
+    for (var i = 0u; i < params.num_points; i++) {
+        if (i != index) {
+            let neighbor_point = input_points[i].position;
+            let distance = length(center_point - neighbor_point);
+            if (distance <= params.radius) {
+                neighbor_count++;
+            }
+        }
+    }
+    
+    // Mark as outlier if neighbor count is below threshold
+    is_outlier[index] = select(0u, 1u, neighbor_count < params.min_neighbors);
+}
+"#;
+
+const VOXEL_GRID_SHADER: &str = r#"
+struct GpuPoint {
+    position: vec3<f32>,
+    _padding: f32,  // Ensure 16-byte alignment
+}
+
+@group(0) @binding(0) var<storage, read> input_points: array<GpuPoint>;
+@group(0) @binding(1) var<storage, read_write> voxel_indices: array<u32>;
+@group(0) @binding(2) var<uniform> params: VoxelGridParams;
+
+struct VoxelGridParams {
+    num_points: u32,
+    voxel_size: f32,
+    min_x: f32,
+    min_y: f32,
+    min_z: f32,
+    max_x: f32,
+    max_y: f32,
+    max_z: f32,
+}
+
+fn get_voxel_index(point: vec3<f32>, params: VoxelGridParams) -> u32 {
+    // Simple coordinate-based voxel index (similar to CPU version)
+    let voxel_x = i32(floor((point.x - params.min_x) / params.voxel_size));
+    let voxel_y = i32(floor((point.y - params.min_y) / params.voxel_size));
+    let voxel_z = i32(floor((point.z - params.min_z) / params.voxel_size));
+    
+    // Use a simple hash based on coordinates
+    let hash_x = u32(voxel_x * voxel_x + voxel_x);
+    let hash_y = u32(voxel_y * voxel_y + voxel_y * 7);
+    let hash_z = u32(voxel_z * voxel_z + voxel_z * 13);
+    
+    return (hash_x + hash_y * 31u + hash_z * 97u) % 100000u;
+}
+
+@compute @workgroup_size(64)
+fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
+    let index = global_id.x;
+    if (index >= params.num_points) {
+        return;
+    }
+    
+    let point = input_points[index].position;
+    let voxel_idx = get_voxel_index(point, params);
+    
+    // Store voxel index for this point
+    voxel_indices[index] = voxel_idx;
+}
+"#;
+
 impl GpuContext {
     /// Remove statistical outliers from point cloud using GPU acceleration
     pub async fn remove_statistical_outliers(
@@ -310,6 +403,427 @@ impl GpuContext {
             0.0
         }
     }
+
+    /// Remove radius outliers from point cloud using GPU acceleration
+    pub async fn remove_radius_outliers(
+        &self,
+        points: &[Point3f],
+        radius: f32,
+        min_neighbors: usize,
+    ) -> Result<Vec<Point3f>> {
+        if points.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Convert points to GPU format with proper alignment
+        #[repr(C)]
+        #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+        struct GpuPoint {
+            position: [f32; 3],
+            _padding: f32,
+        }
+        
+        let point_data: Vec<GpuPoint> = points
+            .iter()
+            .map(|p| GpuPoint {
+                position: [p.x, p.y, p.z],
+                _padding: 0.0,
+            })
+            .collect();
+
+        // Create buffers
+        let input_buffer = self.create_buffer_init(
+            "Input Points",
+            &point_data,
+            wgpu::BufferUsages::STORAGE,
+        );
+
+        let outlier_buffer = self.create_buffer(
+            "Outlier Flags",
+            (point_data.len() * std::mem::size_of::<u32>()) as u64,
+            wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        );
+
+        #[repr(C)]
+        #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+        struct RadiusOutlierParams {
+            num_points: u32,
+            radius: f32,
+            min_neighbors: u32,
+            _padding: u32,
+        }
+
+        let params = RadiusOutlierParams {
+            num_points: points.len() as u32,
+            radius,
+            min_neighbors: min_neighbors as u32,
+            _padding: 0,
+        };
+
+        let params_buffer = self.create_buffer_init(
+            "Radius Outlier Params",
+            &[params],
+            wgpu::BufferUsages::UNIFORM,
+        );
+
+        // Create shader
+        let shader = self.create_shader_module("Radius Outlier Filter", RADIUS_OUTLIER_SHADER);
+
+        // Create bind group layout
+        let bind_group_layout = self.create_bind_group_layout(
+            "Radius Outlier Filter",
+            &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        );
+
+        // Create compute pipeline
+        let pipeline = self.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("Radius Outlier Filter Pipeline"),
+            layout: Some(&self.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Radius Outlier Filter Layout"),
+                bind_group_layouts: &[&bind_group_layout],
+                push_constant_ranges: &[],
+            })),
+            module: &shader,
+            entry_point: "main",
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+        });
+
+        // Create bind group
+        let bind_group = self.create_bind_group(
+            "Radius Outlier Filter",
+            &bind_group_layout,
+            &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: input_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: outlier_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: params_buffer.as_entire_binding(),
+                },
+            ],
+        );
+
+        // Execute compute shader
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Radius Outlier Filter"),
+        });
+
+        {
+            let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("Radius Outlier Filter Pass"),
+                timestamp_writes: None,
+            });
+            compute_pass.set_pipeline(&pipeline);
+            compute_pass.set_bind_group(0, &bind_group, &[]);
+            let workgroup_count = (points.len() + 63) / 64;
+            compute_pass.dispatch_workgroups(workgroup_count as u32, 1, 1);
+        }
+
+        // Read back results
+        let staging_buffer = self.create_buffer(
+            "Radius Outlier Staging",
+            (point_data.len() * std::mem::size_of::<u32>()) as u64,
+            wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        );
+
+        encoder.copy_buffer_to_buffer(
+            &outlier_buffer,
+            0,
+            &staging_buffer,
+            0,
+            (point_data.len() * std::mem::size_of::<u32>()) as u64,
+        );
+
+        self.queue.submit(std::iter::once(encoder.finish()));
+
+        // Map and read results
+        let buffer_slice = staging_buffer.slice(..);
+        let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
+        buffer_slice.map_async(wgpu::MapMode::Read, move |v| sender.send(v).unwrap());
+
+        self.device.poll(wgpu::Maintain::wait()).panic_on_timeout();
+
+        if let Some(Ok(())) = receiver.receive().await {
+            let data = buffer_slice.get_mapped_range();
+            let outlier_flags: Vec<u32> = bytemuck::cast_slice(&data).to_vec();
+            
+            let filtered_points: Vec<Point3f> = points
+                .iter()
+                .zip(outlier_flags.iter())
+                .filter(|&(_, &is_outlier)| is_outlier == 0)
+                .map(|(point, _)| *point)
+                .collect();
+            
+            drop(data);
+            staging_buffer.unmap();
+            
+            Ok(filtered_points)
+        } else {
+            Err(threecrate_core::Error::Gpu("Failed to read GPU radius outlier filtering results".to_string()))
+        }
+    }
+
+    /// Voxel grid filtering using GPU acceleration
+    pub async fn voxel_grid_filter(
+        &self,
+        points: &[Point3f],
+        voxel_size: f32,
+    ) -> Result<Vec<Point3f>> {
+        if points.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        if voxel_size <= 0.0 {
+            return Err(threecrate_core::Error::InvalidData("Voxel size must be positive".to_string()));
+        }
+
+        // Convert points to GPU format
+        #[repr(C)]
+        #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+        struct GpuPoint {
+            position: [f32; 3],
+            _padding: f32,
+        }
+        
+        let point_data: Vec<GpuPoint> = points
+            .iter()
+            .map(|p| GpuPoint {
+                position: [p.x, p.y, p.z],
+                _padding: 0.0,
+            })
+            .collect();
+
+        // Compute grid bounds
+        let min_x = points.iter().map(|p| p.x).min_by(|a, b| a.partial_cmp(b).unwrap()).unwrap();
+        let min_y = points.iter().map(|p| p.y).min_by(|a, b| a.partial_cmp(b).unwrap()).unwrap();
+        let min_z = points.iter().map(|p| p.z).min_by(|a, b| a.partial_cmp(b).unwrap()).unwrap();
+        let max_x = points.iter().map(|p| p.x).max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap();
+        let max_y = points.iter().map(|p| p.y).max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap();
+        let max_z = points.iter().map(|p| p.z).max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap();
+
+        // Estimate total voxels for buffer allocation (we'll use a hash-based approach)
+        let total_voxels = points.len() * 2; // Conservative estimate
+
+        // Create buffers
+        let input_buffer = self.create_buffer_init(
+            "Input Points",
+            &point_data,
+            wgpu::BufferUsages::STORAGE,
+        );
+
+        let voxel_indices_buffer = self.create_buffer(
+            "Voxel Indices",
+            (point_data.len() * std::mem::size_of::<u32>()) as u64,
+            wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        );
+
+
+
+        #[repr(C)]
+        #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+        struct VoxelGridParams {
+            num_points: u32,
+            voxel_size: f32,
+            min_x: f32,
+            min_y: f32,
+            min_z: f32,
+            max_x: f32,
+            max_y: f32,
+            max_z: f32,
+        }
+
+        let params = VoxelGridParams {
+            num_points: points.len() as u32,
+            voxel_size,
+            min_x,
+            min_y,
+            min_z,
+            max_x,
+            max_y,
+            max_z,
+        };
+
+        let params_buffer = self.create_buffer_init(
+            "Voxel Grid Params",
+            &[params],
+            wgpu::BufferUsages::UNIFORM,
+        );
+
+        // Create shader
+        let shader = self.create_shader_module("Voxel Grid Filter", VOXEL_GRID_SHADER);
+
+        // Create bind group layout
+        let bind_group_layout = self.create_bind_group_layout(
+            "Voxel Grid Filter",
+            &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        );
+
+        // Create compute pipeline
+        let pipeline = self.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("Voxel Grid Filter Pipeline"),
+            layout: Some(&self.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Voxel Grid Filter Layout"),
+                bind_group_layouts: &[&bind_group_layout],
+                push_constant_ranges: &[],
+            })),
+            module: &shader,
+            entry_point: "main",
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+        });
+
+        // Create bind group
+        let bind_group = self.create_bind_group(
+            "Voxel Grid Filter",
+            &bind_group_layout,
+            &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: input_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: voxel_indices_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: params_buffer.as_entire_binding(),
+                },
+            ],
+        );
+
+        // Execute compute shader
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Voxel Grid Filter"),
+        });
+
+        {
+            let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("Voxel Grid Filter Pass"),
+                timestamp_writes: None,
+            });
+            compute_pass.set_pipeline(&pipeline);
+            compute_pass.set_bind_group(0, &bind_group, &[]);
+            let workgroup_count = (points.len() + 63) / 64;
+            compute_pass.dispatch_workgroups(workgroup_count as u32, 1, 1);
+        }
+
+        // Read back voxel indices
+        let indices_staging = self.create_buffer(
+            "Voxel Indices Staging",
+            (point_data.len() * std::mem::size_of::<u32>()) as u64,
+            wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        );
+
+        encoder.copy_buffer_to_buffer(
+            &voxel_indices_buffer,
+            0,
+            &indices_staging,
+            0,
+            (point_data.len() * std::mem::size_of::<u32>()) as u64,
+        );
+
+        self.queue.submit(std::iter::once(encoder.finish()));
+
+        // Map and read results
+        let indices_slice = indices_staging.slice(..);
+        
+        let (indices_sender, indices_receiver) = futures_intrusive::channel::shared::oneshot_channel();
+        
+        indices_slice.map_async(wgpu::MapMode::Read, move |v| indices_sender.send(v).unwrap());
+
+        self.device.poll(wgpu::Maintain::wait()).panic_on_timeout();
+
+        if let Some(Ok(())) = indices_receiver.receive().await {
+            let indices_data = indices_slice.get_mapped_range();
+            
+            let voxel_indices: Vec<u32> = bytemuck::cast_slice(&indices_data).to_vec();
+            
+            // Post-process on CPU: keep one point per voxel (the first one)
+            let mut voxel_used = vec![false; total_voxels];
+            let mut filtered_points = Vec::new();
+            
+            for (point_idx, &voxel_idx) in voxel_indices.iter().enumerate() {
+                if voxel_idx < total_voxels as u32 && !voxel_used[voxel_idx as usize] {
+                    filtered_points.push(points[point_idx]);
+                    voxel_used[voxel_idx as usize] = true;
+                }
+            }
+            
+            drop(indices_data);
+            indices_staging.unmap();
+            
+            Ok(filtered_points)
+        } else {
+            Err(threecrate_core::Error::Gpu("Failed to read GPU voxel grid filtering results".to_string()))
+        }
+    }
 }
 
 /// GPU-accelerated statistical outlier removal
@@ -323,10 +837,25 @@ pub async fn gpu_remove_statistical_outliers(
     Ok(PointCloud::from_points(filtered_points))
 }
 
+/// GPU-accelerated radius outlier removal
+pub async fn gpu_radius_outlier_removal(
+    gpu_context: &GpuContext,
+    cloud: &PointCloud<Point3f>,
+    radius: f32,
+    min_neighbors: usize,
+) -> Result<PointCloud<Point3f>> {
+    let filtered_points = gpu_context.remove_radius_outliers(&cloud.points, radius, min_neighbors).await?;
+    Ok(PointCloud::from_points(filtered_points))
+}
+
 /// GPU-accelerated voxel grid filtering
-pub fn gpu_voxel_grid_filter(_cloud: &PointCloud<Point3f>, _voxel_size: f32) -> Result<PointCloud<Point3f>> {
-    // TODO: Implement GPU voxel grid filtering
-    todo!("GPU voxel grid filtering not yet implemented")
+pub async fn gpu_voxel_grid_filter(
+    gpu_context: &GpuContext,
+    cloud: &PointCloud<Point3f>,
+    voxel_size: f32,
+) -> Result<PointCloud<Point3f>> {
+    let filtered_points = gpu_context.voxel_grid_filter(&cloud.points, voxel_size).await?;
+    Ok(PointCloud::from_points(filtered_points))
 } 
 
 #[cfg(test)]
@@ -609,5 +1138,274 @@ mod tests {
         
         // Should complete in reasonable time
         assert!(elapsed.as_secs() < 10);
+    }
+
+    fn create_test_point_cloud_for_radius_outlier() -> PointCloud<Point3f> {
+        let mut points = Vec::new();
+        
+        // Create a dense cluster
+        for i in 0..20 {
+            for j in 0..20 {
+                let x = (i as f32 - 10.0) * 0.1;
+                let y = (j as f32 - 10.0) * 0.1;
+                let z = 0.0;
+                points.push(Point3f::new(x, y, z));
+            }
+        }
+        
+        // Add some isolated points (outliers)
+        for i in 0..5 {
+            let x = 10.0 + (i as f32 * 2.0);
+            let y = 10.0 + (i as f32 * 2.0);
+            let z = 10.0 + (i as f32 * 2.0);
+            points.push(Point3f::new(x, y, z));
+        }
+        
+        PointCloud::from_points(points)
+    }
+
+    #[tokio::test]
+    async fn test_gpu_radius_outlier_removal_basic() {
+        let gpu_context = match try_create_gpu_context().await {
+            Some(ctx) => ctx,
+            None => {
+                println!("Skipping GPU test - no GPU available");
+                return;
+            }
+        };
+
+        let cloud = create_test_point_cloud_for_radius_outlier();
+        let original_count = cloud.len();
+        
+        let filtered = gpu_radius_outlier_removal(&gpu_context, &cloud, 0.5, 3).await.unwrap();
+        let filtered_count = filtered.len();
+        
+        // Should remove some outliers
+        assert!(filtered_count < original_count);
+        assert!(filtered_count > 0);
+        
+        println!("GPU radius outlier removal: {} -> {} points", original_count, filtered_count);
+    }
+
+    #[tokio::test]
+    async fn test_gpu_radius_outlier_removal_empty_cloud() {
+        let gpu_context = match try_create_gpu_context().await {
+            Some(ctx) => ctx,
+            None => {
+                println!("Skipping GPU test - no GPU available");
+                return;
+            }
+        };
+
+        let cloud = PointCloud::<Point3f>::new();
+        let filtered = gpu_radius_outlier_removal(&gpu_context, &cloud, 0.5, 3).await.unwrap();
+        
+        assert_eq!(filtered.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_gpu_radius_outlier_removal_single_point() {
+        let gpu_context = match try_create_gpu_context().await {
+            Some(ctx) => ctx,
+            None => {
+                println!("Skipping GPU test - no GPU available");
+                return;
+            }
+        };
+
+        let cloud = PointCloud::from_points(vec![Point3f::new(0.0, 0.0, 0.0)]);
+        let filtered = gpu_radius_outlier_removal(&gpu_context, &cloud, 0.5, 1).await.unwrap();
+        
+        // Should remove the single point since it has no neighbors
+        assert_eq!(filtered.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_gpu_radius_outlier_removal_different_parameters() {
+        let gpu_context = match try_create_gpu_context().await {
+            Some(ctx) => ctx,
+            None => {
+                println!("Skipping GPU test - no GPU available");
+                return;
+            }
+        };
+
+        let cloud = create_test_point_cloud_for_radius_outlier();
+        let original_count = cloud.len();
+        
+        // Test different radius values
+        for radius in [0.2, 0.5, 1.0] {
+            let filtered = gpu_radius_outlier_removal(&gpu_context, &cloud, radius, 3).await.unwrap();
+            println!("radius={}: {} -> {} points", radius, original_count, filtered.len());
+            assert!(filtered.len() > 0);
+        }
+        
+        // Test different min_neighbors values
+        for min_neighbors in [1, 3, 5] {
+            let filtered = gpu_radius_outlier_removal(&gpu_context, &cloud, 0.5, min_neighbors).await.unwrap();
+            println!("min_neighbors={}: {} -> {} points", min_neighbors, original_count, filtered.len());
+            assert!(filtered.len() > 0);
+        }
+    }
+
+    fn create_test_point_cloud_for_voxel_grid() -> PointCloud<Point3f> {
+        let mut points = Vec::new();
+        
+        // Create a dense grid of points
+        for i in 0..10 {
+            for j in 0..10 {
+                for k in 0..5 {
+                    let x = (i as f32 - 5.0) * 0.1;
+                    let y = (j as f32 - 5.0) * 0.1;
+                    let z = (k as f32 - 2.5) * 0.1;
+                    points.push(Point3f::new(x, y, z));
+                }
+            }
+        }
+        
+        // Add some duplicate points in the same voxels
+        for i in 0..5 {
+            for j in 0..5 {
+                let x = (i as f32 - 2.5) * 0.1;
+                let y = (j as f32 - 2.5) * 0.1;
+                let z = 0.0;
+                points.push(Point3f::new(x, y, z));
+                points.push(Point3f::new(x, y, z)); // Duplicate
+            }
+        }
+        
+        PointCloud::from_points(points)
+    }
+
+    #[tokio::test]
+    async fn test_gpu_voxel_grid_filter_basic() {
+        let gpu_context = match try_create_gpu_context().await {
+            Some(ctx) => ctx,
+            None => {
+                println!("Skipping GPU test - no GPU available");
+                return;
+            }
+        };
+
+        let cloud = create_test_point_cloud_for_voxel_grid();
+        let original_count = cloud.len();
+        
+        let filtered = gpu_voxel_grid_filter(&gpu_context, &cloud, 0.1).await.unwrap();
+        let filtered_count = filtered.len();
+        
+        // Should reduce the number of points by removing duplicates
+        assert!(filtered_count < original_count);
+        assert!(filtered_count > 0);
+        
+        println!("GPU voxel grid filter: {} -> {} points", original_count, filtered_count);
+    }
+
+    #[tokio::test]
+    async fn test_gpu_voxel_grid_filter_empty_cloud() {
+        let gpu_context = match try_create_gpu_context().await {
+            Some(ctx) => ctx,
+            None => {
+                println!("Skipping GPU test - no GPU available");
+                return;
+            }
+        };
+
+        let cloud = PointCloud::<Point3f>::new();
+        let filtered = gpu_voxel_grid_filter(&gpu_context, &cloud, 0.1).await.unwrap();
+        
+        assert_eq!(filtered.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_gpu_voxel_grid_filter_single_point() {
+        let gpu_context = match try_create_gpu_context().await {
+            Some(ctx) => ctx,
+            None => {
+                println!("Skipping GPU test - no GPU available");
+                return;
+            }
+        };
+
+        let cloud = PointCloud::from_points(vec![Point3f::new(0.0, 0.0, 0.0)]);
+        let filtered = gpu_voxel_grid_filter(&gpu_context, &cloud, 0.1).await.unwrap();
+        
+        // Should keep the single point
+        assert_eq!(filtered.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_gpu_voxel_grid_filter_different_voxel_sizes() {
+        let gpu_context = match try_create_gpu_context().await {
+            Some(ctx) => ctx,
+            None => {
+                println!("Skipping GPU test - no GPU available");
+                return;
+            }
+        };
+
+        let cloud = create_test_point_cloud_for_voxel_grid();
+        let original_count = cloud.len();
+        
+        // Test different voxel sizes
+        for voxel_size in [0.05, 0.1, 0.2] {
+            let filtered = gpu_voxel_grid_filter(&gpu_context, &cloud, voxel_size).await.unwrap();
+            println!("voxel_size={}: {} -> {} points", voxel_size, original_count, filtered.len());
+            assert!(filtered.len() > 0);
+            assert!(filtered.len() <= original_count);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_gpu_voxel_grid_filter_invalid_voxel_size() {
+        let gpu_context = match try_create_gpu_context().await {
+            Some(ctx) => ctx,
+            None => {
+                println!("Skipping GPU test - no GPU available");
+                return;
+            }
+        };
+
+        let cloud = PointCloud::from_points(vec![Point3f::new(0.0, 0.0, 0.0)]);
+        let result = gpu_voxel_grid_filter(&gpu_context, &cloud, 0.0).await;
+        assert!(result.is_err());
+        
+        let result = gpu_voxel_grid_filter(&gpu_context, &cloud, -1.0).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_gpu_vs_cpu_performance_comparison() {
+        let gpu_context = match try_create_gpu_context().await {
+            Some(ctx) => ctx,
+            None => {
+                println!("Skipping GPU vs CPU test - no GPU available");
+                return;
+            }
+        };
+
+        let cloud = create_test_point_cloud_for_radius_outlier();
+        
+        // GPU radius outlier removal
+        let gpu_start = Instant::now();
+        let gpu_filtered = gpu_radius_outlier_removal(&gpu_context, &cloud, 0.5, 3).await.unwrap();
+        let gpu_time = gpu_start.elapsed();
+        
+        // GPU voxel grid filter
+        let gpu_voxel_start = Instant::now();
+        let gpu_voxel_filtered = gpu_voxel_grid_filter(&gpu_context, &cloud, 0.1).await.unwrap();
+        let gpu_voxel_time = gpu_voxel_start.elapsed();
+        
+        println!("GPU radius outlier removal: {} -> {} points in {:?}", 
+                cloud.len(), gpu_filtered.len(), gpu_time);
+        println!("GPU voxel grid filter: {} -> {} points in {:?}", 
+                cloud.len(), gpu_voxel_filtered.len(), gpu_voxel_time);
+        
+        // Both should complete successfully
+        assert!(gpu_filtered.len() > 0);
+        assert!(gpu_voxel_filtered.len() > 0);
+        
+        // Should complete in reasonable time
+        assert!(gpu_time.as_secs() < 10);
+        assert!(gpu_voxel_time.as_secs() < 10);
     }
 } 
