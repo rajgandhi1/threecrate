@@ -5,14 +5,28 @@ use crate::GpuContext;
 // use wgpu::util::DeviceExt; // Used in device.rs
 
 const NORMALS_SHADER: &str = r#"
-@group(0) @binding(0) var<storage, read> input_points: array<vec3<f32>>;
-@group(0) @binding(1) var<storage, read_write> output_normals: array<vec3<f32>>;
-@group(0) @binding(2) var<storage, read> neighbors: array<array<u32, MAX_NEIGHBORS>>;
+@group(0) @binding(0) var<storage, read> input_points: array<vec4<f32>>;
+@group(0) @binding(1) var<storage, read_write> output_normals: array<vec4<f32>>;
+@group(0) @binding(2) var<storage, read> neighbors: array<array<u32, 64>>;
 @group(0) @binding(3) var<uniform> params: NormalParams;
 
 struct NormalParams {
     num_points: u32,
     k_neighbors: u32,
+    consistent_orientation: u32,
+    _pad: u32,
+    viewpoint: vec4<f32>,
+}
+
+fn mat3_mul_vec3(m00: f32, m01: f32, m02: f32,
+                 m10: f32, m11: f32, m12: f32,
+                 m20: f32, m21: f32, m22: f32,
+                 v: vec3<f32>) -> vec3<f32> {
+    return vec3<f32>(
+        m00 * v.x + m01 * v.y + m02 * v.z,
+        m10 * v.x + m11 * v.y + m12 * v.z,
+        m20 * v.x + m21 * v.y + m22 * v.z
+    );
 }
 
 @compute @workgroup_size(64)
@@ -22,77 +36,102 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         return;
     }
     
-    let center_point = input_points[index];
+    let center_point = input_points[index].xyz;
     
-    // Compute covariance matrix
+    // Compute covariance matrix via neighbor centroid
     var centroid = vec3<f32>(0.0);
     var count = 0u;
-    
-    // Calculate centroid of neighbors
     for (var i = 0u; i < params.k_neighbors; i++) {
         let neighbor_idx = neighbors[index][i];
         if (neighbor_idx < params.num_points) {
-            centroid += input_points[neighbor_idx];
+            centroid += input_points[neighbor_idx].xyz;
             count++;
         }
     }
     
-    if (count == 0u) {
-        output_normals[index] = vec3<f32>(0.0, 0.0, 1.0);
+    if (count < 3u) {
+        output_normals[index] = vec4<f32>(0.0, 0.0, 1.0, 0.0);
         return;
     }
     
     centroid /= f32(count);
     
-    // Compute covariance matrix
-    var cov00 = 0.0; var cov01 = 0.0; var cov02 = 0.0;
-    var cov11 = 0.0; var cov12 = 0.0; var cov22 = 0.0;
-    
+    // Covariance components
+    var c00 = 0.0; var c01 = 0.0; var c02 = 0.0;
+    var c11 = 0.0; var c12 = 0.0; var c22 = 0.0;
     for (var i = 0u; i < params.k_neighbors; i++) {
         let neighbor_idx = neighbors[index][i];
         if (neighbor_idx < params.num_points) {
-            let diff = input_points[neighbor_idx] - centroid;
-            cov00 += diff.x * diff.x;
-            cov01 += diff.x * diff.y;
-            cov02 += diff.x * diff.z;
-            cov11 += diff.y * diff.y;
-            cov12 += diff.y * diff.z;
-            cov22 += diff.z * diff.z;
+            let d = input_points[neighbor_idx].xyz - centroid;
+            c00 += d.x * d.x;
+            c01 += d.x * d.y;
+            c02 += d.x * d.z;
+            c11 += d.y * d.y;
+            c12 += d.y * d.z;
+            c22 += d.z * d.z;
+        }
+    }
+    let inv_count = 1.0 / f32(count);
+    c00 *= inv_count; c01 *= inv_count; c02 *= inv_count;
+    c11 *= inv_count; c12 *= inv_count; c22 *= inv_count;
+    
+    // Power iteration on shifted matrix D = trace(C) * I - C to get eigenvector of smallest eigenvalue of C
+    let trace_c = c00 + c11 + c22;
+    
+    // Initial vector using cross of two neighbor directions for stability
+    let n0 = neighbors[index][0u];
+    let n1 = neighbors[index][1u];
+    var v = vec3<f32>(0.0, 0.0, 1.0);
+    if (n0 < params.num_points && n1 < params.num_points) {
+        let d1 = normalize(input_points[n0].xyz - center_point);
+        let d2 = normalize(input_points[n1].xyz - center_point);
+        let cp = cross(d1, d2);
+        if (length(cp) > 1e-6) {
+            v = normalize(cp);
         }
     }
     
-    let scale = 1.0 / f32(count);
-    cov00 *= scale; cov01 *= scale; cov02 *= scale;
-    cov11 *= scale; cov12 *= scale; cov22 *= scale;
+    // Perform fixed number of iterations
+    for (var it = 0u; it < 8u; it++) {
+        // Multiply v by D = trace*I - C
+        let Cv = mat3_mul_vec3(c00, c01, c02, c01, c11, c12, c02, c12, c22, v);
+        let Dv = vec3<f32>(trace_c * v.x, trace_c * v.y, trace_c * v.z) - Cv;
+        let lenDv = length(Dv);
+        if (lenDv > 1e-8) {
+            v = Dv / lenDv;
+        }
+    }
+    var normal = v;
     
-    // Simplified eigenvalue computation for smallest eigenvalue's eigenvector
-    // This is a simplified approach - in practice, you'd want a more robust method
-    var normal = vec3<f32>(0.0, 0.0, 1.0);
-    
-    // Use cross product method for robustness
-    let diff1 = input_points[neighbors[index][0]] - center_point;
-    let diff2 = input_points[neighbors[index][min(1u, params.k_neighbors - 1u)]] - center_point;
-    let cross_prod = cross(diff1, diff2);
-    
-    if (length(cross_prod) > 1e-6) {
-        normal = normalize(cross_prod);
+    // Orientation consistency
+    if (params.consistent_orientation == 1u) {
+        let to_view = normalize(params.viewpoint.xyz - center_point);
+        if (dot(normal, to_view) < 0.0) {
+            normal = -normal;
+        }
     }
     
-    output_normals[index] = normal;
+    output_normals[index] = vec4<f32>(normal, 0.0);
 }
 "#;
 
 impl GpuContext {
-    /// Compute normals for a point cloud using GPU acceleration
-    pub async fn compute_normals(&self, points: &[Point3f], k_neighbors: usize) -> Result<Vec<nalgebra::Vector3<f32>>> {
+    /// Compute normals for a point cloud using GPU acceleration with options
+    pub async fn compute_normals_with_options(
+        &self,
+        points: &[Point3f],
+        k_neighbors: usize,
+        consistent_orientation: bool,
+        viewpoint: Option<[f32; 3]>,
+    ) -> Result<Vec<nalgebra::Vector3<f32>>> {
         if points.is_empty() {
             return Ok(Vec::new());
         }
 
-        // Convert points to GPU format
-        let point_data: Vec<[f32; 3]> = points
+        // Convert points to GPU format (std430 alignment prefers vec4)
+        let point_data: Vec<[f32; 4]> = points
             .iter()
-            .map(|p| [p.x, p.y, p.z])
+            .map(|p| [p.x, p.y, p.z, 0.0])
             .collect();
 
         // Create buffers
@@ -104,12 +143,13 @@ impl GpuContext {
 
         let output_buffer = self.create_buffer(
             "Output Normals",
-            (point_data.len() * std::mem::size_of::<[f32; 3]>()) as u64,
+            (point_data.len() * std::mem::size_of::<[f32; 4]>()) as u64,
             wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
         );
 
         // For now, use a simple neighbor computation (could be replaced with KD-tree)
-        let neighbors = self.compute_neighbors_simple(&point_data, k_neighbors);
+        let k_neighbors = k_neighbors.max(3).min(64);
+        let neighbors = self.compute_neighbors_simple_points3(&points.iter().map(|p| [p.x, p.y, p.z]).collect::<Vec<[f32;3]>>(), k_neighbors);
         let neighbors_buffer = self.create_buffer_init(
             "Neighbors",
             &neighbors,
@@ -121,11 +161,45 @@ impl GpuContext {
         struct NormalParams {
             num_points: u32,
             k_neighbors: u32,
+            consistent_orientation: u32,
+            _pad: u32,
+            viewpoint: [f32; 4],
         }
+
+        // Determine default viewpoint (mimic CPU implementation): above bbox center along +Z by extent
+        let vp = if let Some(vp) = viewpoint {
+            [vp[0], vp[1], vp[2], 0.0]
+        } else {
+            let mut min_x = point_data[0][0];
+            let mut min_y = point_data[0][1];
+            let mut min_z = point_data[0][2];
+            let mut max_x = point_data[0][0];
+            let mut max_y = point_data[0][1];
+            let mut max_z = point_data[0][2];
+            for p in &point_data {
+                min_x = min_x.min(p[0]);
+                min_y = min_y.min(p[1]);
+                min_z = min_z.min(p[2]);
+                max_x = max_x.max(p[0]);
+                max_y = max_y.max(p[1]);
+                max_z = max_z.max(p[2]);
+            }
+            let cx = (min_x + max_x) * 0.5;
+            let cy = (min_y + max_y) * 0.5;
+            let cz = (min_z + max_z) * 0.5;
+            let dx = max_x - min_x;
+            let dy = max_y - min_y;
+            let dz = max_z - min_z;
+            let extent = (dx * dx + dy * dy + dz * dz).sqrt();
+            [cx, cy, cz + extent, 0.0]
+        };
 
         let params = NormalParams {
             num_points: points.len() as u32,
             k_neighbors: k_neighbors as u32,
+            consistent_orientation: if consistent_orientation { 1 } else { 0 },
+            _pad: 0,
+            viewpoint: vp,
         };
 
         let params_buffer = self.create_buffer_init(
@@ -134,9 +208,8 @@ impl GpuContext {
             wgpu::BufferUsages::UNIFORM,
         );
 
-        // Create shader with MAX_NEIGHBORS constant
-        let shader_source = NORMALS_SHADER.replace("MAX_NEIGHBORS", &k_neighbors.to_string());
-        let shader = self.create_shader_module("Normals Compute", &shader_source);
+        // Create shader
+        let shader = self.create_shader_module("Normals Compute", NORMALS_SHADER);
 
         // Create bind group layout
         let bind_group_layout = self.create_bind_group_layout(
@@ -241,7 +314,7 @@ impl GpuContext {
         // Read back results
         let staging_buffer = self.create_buffer(
             "Staging Buffer",
-            (point_data.len() * std::mem::size_of::<[f32; 3]>()) as u64,
+            (point_data.len() * std::mem::size_of::<[f32; 4]>()) as u64,
             wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         );
 
@@ -250,7 +323,7 @@ impl GpuContext {
             0,
             &staging_buffer,
             0,
-            (point_data.len() * std::mem::size_of::<[f32; 3]>()) as u64,
+            (point_data.len() * std::mem::size_of::<[f32; 4]>()) as u64,
         );
 
         self.queue.submit(std::iter::once(encoder.finish()));
@@ -264,9 +337,9 @@ impl GpuContext {
 
         if let Some(Ok(())) = receiver.receive().await {
             let data = buffer_slice.get_mapped_range();
-            let normals: Vec<[f32; 3]> = bytemuck::cast_slice(&data).to_vec();
+            let normals4: Vec<[f32; 4]> = bytemuck::cast_slice(&data).to_vec();
             
-            let result = normals
+            let result = normals4
                 .into_iter()
                 .map(|n| nalgebra::Vector3::new(n[0], n[1], n[2]))
                 .collect();
@@ -278,6 +351,11 @@ impl GpuContext {
         } else {
             Err(threecrate_core::Error::Gpu("Failed to read GPU results".to_string()))
         }
+    }
+
+    /// Compute normals for a point cloud using GPU acceleration with default options
+    pub async fn compute_normals(&self, points: &[Point3f], k_neighbors: usize) -> Result<Vec<nalgebra::Vector3<f32>>> {
+        self.compute_normals_with_options(points, k_neighbors, true, None).await
     }
 
     /// Simple neighbor computation (brute force - could be replaced with KD-tree)
@@ -312,6 +390,11 @@ impl GpuContext {
         
         neighbors
     }
+
+    /// Helper to compute neighbors from Vec<[f32;3]> built from owned data
+    pub fn compute_neighbors_simple_points3(&self, points: &[[f32; 3]], k: usize) -> Vec<[u32; 64]> {
+        self.compute_neighbors_simple(points, k)
+    }
 }
 
 /// GPU-accelerated normal estimation for point clouds
@@ -334,3 +417,49 @@ pub async fn gpu_estimate_normals(
     
     Ok(PointCloud::from_points(normal_points))
 } 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use threecrate_core::{Point3f, PointCloud};
+
+    // These tests require a GPU backend; run with `cargo test -p threecrate-gpu`
+
+    #[tokio::test]
+    async fn test_gpu_normals_plane() {
+        let gpu = crate::GpuContext::new().await.unwrap();
+        let mut cloud = PointCloud::new();
+        // Create XY plane grid
+        for i in 0..15 { for j in 0..15 {
+            cloud.push(Point3f::new(i as f32 * 0.1, j as f32 * 0.1, 0.0));
+        }}
+        let result = gpu_estimate_normals(&gpu, &mut cloud, 8).await.unwrap();
+        assert_eq!(result.len(), 225);
+        let mut z_count = 0;
+        for p in result.iter() {
+            if p.normal.z.abs() > 0.8 { z_count += 1; }
+        }
+        let pct = (z_count as f32 / result.len() as f32) * 100.0;
+        assert!(pct > 80.0, "Only {:.1}% normals in Z direction", pct);
+    }
+
+    #[tokio::test]
+    async fn test_gpu_normals_compare_cpu_plane() {
+        use threecrate_algorithms::estimate_normals as cpu_estimate_normals;
+        let gpu = crate::GpuContext::new().await.unwrap();
+        let mut cloud = PointCloud::new();
+        for i in 0..10 { for j in 0..10 {
+            cloud.push(Point3f::new(i as f32 * 0.1, j as f32 * 0.1, 0.0));
+        }}
+        let gpu_cloud = gpu_estimate_normals(&gpu, &mut cloud.clone(), 8).await.unwrap();
+        let cpu_cloud = cpu_estimate_normals(&cloud, 8).unwrap();
+        // Compare orientation alignment percentage
+        let mut agree = 0usize;
+        for (g, c) in gpu_cloud.iter().zip(cpu_cloud.iter()) {
+            let dot = g.normal.dot(&c.normal);
+            if dot.abs() > 0.7 { agree += 1; }
+        }
+        let pct = (agree as f32 / gpu_cloud.len() as f32) * 100.0;
+        assert!(pct > 70.0, "GPU-CPU normals agree only {:.1}%", pct);
+    }
+}
