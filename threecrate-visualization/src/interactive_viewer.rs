@@ -12,7 +12,10 @@ use winit::{
 };
 
 use threecrate_core::{PointCloud, TriangleMesh, Result, Point3f, ColoredPoint3f, Error};
-use threecrate_gpu::{PointCloudRenderer, RenderConfig, PointVertex};
+use threecrate_gpu::{
+    PointCloudRenderer, RenderConfig, PointVertex,
+    MeshRenderer, MeshRenderConfig, ShadingMode, mesh_to_gpu_mesh,
+};
 use threecrate_algorithms::{ICPResult, PlaneSegmentationResult};
 use crate::camera::Camera;
 
@@ -175,10 +178,13 @@ impl InteractiveViewer {
                 .map_err(|e| Error::Io(std::io::Error::new(std::io::ErrorKind::Other, format!("Failed to create window: {}", e))))?
         );
 
-        // Initialize renderer
-        let config = RenderConfig::default();
+        // Initialize renderers
+        let pc_config = RenderConfig::default();
         let window_clone = window.clone();
-        let mut renderer = pollster::block_on(PointCloudRenderer::new(&window_clone, config))?;
+        let mut point_renderer = pollster::block_on(PointCloudRenderer::new(&window_clone, pc_config))?;
+
+        let mesh_config = MeshRenderConfig::default();
+        let mut mesh_renderer = pollster::block_on(MeshRenderer::new(&window_clone, mesh_config))?;
 
         // Update camera aspect ratio
         let size = window.inner_size();
@@ -197,7 +203,8 @@ impl InteractiveViewer {
                             target.exit();
                         }
                         WindowEvent::Resized(new_size) => {
-                            renderer.resize(new_size);
+                            point_renderer.resize(new_size);
+                            mesh_renderer.resize(new_size);
                             self.camera.aspect_ratio = new_size.width as f32 / new_size.height as f32;
                         }
                         WindowEvent::MouseInput { state, button, .. } => {
@@ -270,9 +277,10 @@ impl InteractiveViewer {
                             let view_matrix = self.camera.view_matrix();
                             let proj_matrix = self.camera.projection_matrix();
                             let camera_pos = self.camera.position.coords;
-                            renderer.update_camera(view_matrix, proj_matrix, camera_pos);
+                            point_renderer.update_camera(view_matrix, proj_matrix, camera_pos);
+                            mesh_renderer.update_camera(view_matrix, proj_matrix, camera_pos);
 
-                            // Convert current data to vertices (create quads for each point)
+                            // Convert current data
                             let vertices = match &self.current_data {
                                 ViewData::PointCloud(cloud) => {
                                     let mut vertices = Vec::new();
@@ -332,9 +340,8 @@ impl InteractiveViewer {
                                     }
                                     vertices
                                 }
-                                ViewData::Mesh(_mesh) => {
-                                    // For now, just create vertices from mesh vertices
-                                    // TODO: Proper mesh rendering
+                                ViewData::Mesh(_) => {
+                                    // Mesh rendering handled separately
                                     vec![]
                                 }
                                 ViewData::Empty => {
@@ -351,11 +358,49 @@ impl InteractiveViewer {
                             }
                             self.debug_frame_count += 1;
 
-                            // Render points if we have any
-                            if !vertices.is_empty() {
-                                if let Err(e) = renderer.render(&vertices) {
-                                    eprintln!("Render error: {}", e);
+                            match &self.current_data {
+                                ViewData::PointCloud(_) | ViewData::ColoredPointCloud(_) => {
+                                    if !vertices.is_empty() {
+                                        if let Err(e) = point_renderer.render(&vertices) {
+                                            eprintln!("Render error: {}", e);
+                                        }
+                                    }
                                 }
+                                ViewData::Mesh(mesh) => {
+                                    if !mesh.vertices.is_empty() && !mesh.faces.is_empty() {
+                                        // Build index buffer from faces
+                                        let indices: Vec<u32> = mesh
+                                            .faces
+                                            .iter()
+                                            .flat_map(|f| [f[0] as u32, f[1] as u32, f[2] as u32])
+                                            .collect();
+
+                                        // Prepare optional normals
+                                        let normals_opt = mesh.normals.as_ref().map(|n| n.as_slice());
+
+                                        // Prepare optional colors as f32
+                                        let colors_f32: Option<Vec<[f32; 3]>> = mesh.colors.as_ref().map(|cols| {
+                                            cols.iter()
+                                                .map(|c| [c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0])
+                                                .collect()
+                                        });
+                                        let colors_opt = colors_f32.as_ref().map(|c| c.as_slice());
+
+                                        // Convert to GPU mesh
+                                        let gpu_mesh = mesh_to_gpu_mesh(
+                                            &mesh.vertices,
+                                            &indices,
+                                            normals_opt,
+                                            colors_opt,
+                                            None,
+                                        );
+
+                                        if let Err(e) = mesh_renderer.render(&gpu_mesh, ShadingMode::Flat) {
+                                            eprintln!("Mesh render error: {}", e);
+                                        }
+                                    }
+                                }
+                                ViewData::Empty => {}
                             }
 
                             // Request next frame
