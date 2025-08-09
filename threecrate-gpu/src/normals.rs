@@ -423,11 +423,23 @@ mod tests {
     use super::*;
     use threecrate_core::{Point3f, PointCloud};
 
-    // These tests require a GPU backend; run with `cargo test -p threecrate-gpu`
+    /// Try to create a GPU context, return None if not available
+    async fn try_create_gpu_context() -> Option<crate::GpuContext> {
+        match crate::GpuContext::new().await {
+            Ok(gpu) => Some(gpu),
+            Err(_) => {
+                println!("⚠️  GPU not available, skipping GPU-dependent test");
+                None
+            }
+        }
+    }
 
     #[tokio::test]
     async fn test_gpu_normals_plane() {
-        let gpu = crate::GpuContext::new().await.unwrap();
+        let Some(gpu) = try_create_gpu_context().await else {
+            return;
+        };
+        
         let mut cloud = PointCloud::new();
         // Create XY plane grid
         for i in 0..15 { for j in 0..15 {
@@ -446,7 +458,10 @@ mod tests {
     #[tokio::test]
     async fn test_gpu_normals_compare_cpu_plane() {
         use threecrate_algorithms::estimate_normals as cpu_estimate_normals;
-        let gpu = crate::GpuContext::new().await.unwrap();
+        let Some(gpu) = try_create_gpu_context().await else {
+            return;
+        };
+        
         let mut cloud = PointCloud::new();
         for i in 0..10 { for j in 0..10 {
             cloud.push(Point3f::new(i as f32 * 0.1, j as f32 * 0.1, 0.0));
