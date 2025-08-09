@@ -24,15 +24,15 @@ all = ["algorithms", "gpu", "io", "simplification", "reconstruction", "visualiza
 
 [dependencies]
 # Core is always included
-threecrate-core = { version = "0.3.1" }
+threecrate-core = { path = "../threecrate-core" }
 
 # Optional dependencies controlled by features
-threecrate-algorithms = { version = "0.3.1", optional = true }
-threecrate-gpu = { version = "0.3.1", optional = true }
-threecrate-io = { version = "0.3.1", optional = true }
-threecrate-simplification = { version = "0.3.1", optional = true }
-threecrate-reconstruction = { version = "0.3.1", optional = true }
-threecrate-visualization = { version = "0.3.1", optional = true }
+threecrate-algorithms = { path = "../threecrate-algorithms", optional = true }
+threecrate-gpu = { path = "../threecrate-gpu", optional = true }
+threecrate-io = { path = "../threecrate-io", optional = true }
+threecrate-simplification = { path = "../threecrate-simplification", optional = true }
+threecrate-reconstruction = { path = "../threecrate-reconstruction", optional = true }
+threecrate-visualization = { path = "../threecrate-visualization", optional = true }
 
 [dev-dependencies]
 anyhow = "1.0" 
