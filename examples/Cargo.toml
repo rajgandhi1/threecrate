@@ -17,6 +17,8 @@ anyhow = { workspace = true }
 nalgebra = { workspace = true }
 tokio = { version = "1.0", features = ["full"] }
 rand = { workspace = true }
+winit = { workspace = true }
+pollster = { workspace = true }
 
 [[bin]]
 name = "basic_usage"
@@ -53,3 +55,7 @@ path = "statistical_outlier_benchmark.rs"
 [[bin]]
 name = "gpu_filtering_example"
 path = "gpu_filtering_example.rs" 
+
+[[bin]]
+name = "gpu_mesh_render_example"
+path = "gpu_mesh_render_example.rs"
