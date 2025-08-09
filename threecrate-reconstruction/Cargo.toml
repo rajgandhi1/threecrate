@@ -10,8 +10,8 @@ documentation.workspace = true
 description = "Surface reconstruction algorithms for threecrate"
 
 [dependencies]
-threecrate-core = "0.3.1"
-threecrate-algorithms = "0.3.1"
+threecrate-core = { path = "../threecrate-core" }
+threecrate-algorithms = { path = "../threecrate-algorithms" }
 nalgebra = { workspace = true }
 ndarray = { workspace = true }
 rayon = { workspace = true }

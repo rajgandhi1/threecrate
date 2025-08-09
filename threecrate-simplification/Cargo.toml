@@ -10,7 +10,7 @@ documentation.workspace = true
 description = "Mesh simplification and decimation algorithms for threecrate"
 
 [dependencies]
-threecrate-core = "0.3.1"
+threecrate-core = { path = "../threecrate-core" }
 nalgebra = { workspace = true }
 rayon = { workspace = true }
 ndarray = { workspace = true }
