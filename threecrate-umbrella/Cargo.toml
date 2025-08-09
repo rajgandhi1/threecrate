@@ -1,6 +1,6 @@
 [package]
 name = "threecrate"
-version = "0.2.0"
+version = "0.3.1"
 edition = "2021"
 authors = ["rajgandhi1"]
 license = "MIT OR Apache-2.0"
@@ -24,15 +24,15 @@ all = ["algorithms", "gpu", "io", "simplification", "reconstruction", "visualiza
 
 [dependencies]
 # Core is always included
-threecrate-core = { version = "0.2.0" }
+threecrate-core = { version = "0.3.1" }
 
 # Optional dependencies controlled by features
-threecrate-algorithms = { version = "0.2.0", optional = true }
-threecrate-gpu = { version = "0.1.0", optional = true }
-threecrate-io = { version = "0.1.0", optional = true }
-threecrate-simplification = { version = "0.1.0", optional = true }
-threecrate-reconstruction = { version = "0.1.0", optional = true }
-threecrate-visualization = { version = "0.1.0", optional = true }
+threecrate-algorithms = { version = "0.3.1", optional = true }
+threecrate-gpu = { version = "0.3.1", optional = true }
+threecrate-io = { version = "0.3.1", optional = true }
+threecrate-simplification = { version = "0.3.1", optional = true }
+threecrate-reconstruction = { version = "0.3.1", optional = true }
+threecrate-visualization = { version = "0.3.1", optional = true }
 
 [dev-dependencies]
 anyhow = "1.0" 
