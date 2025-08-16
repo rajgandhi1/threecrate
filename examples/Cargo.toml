@@ -59,3 +59,7 @@ path = "gpu_filtering_example.rs"
 [[bin]]
 name = "gpu_mesh_render_example"
 path = "gpu_mesh_render_example.rs"
+
+[[bin]]
+name = "read_ply"
+path = "read_ply.rs"
