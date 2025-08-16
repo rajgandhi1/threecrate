@@ -67,3 +67,7 @@ path = "read_ply.rs"
 [[bin]]
 name = "write_ply"
 path = "write_ply.rs"
+
+[[bin]]
+name = "read_obj"
+path = "read_obj.rs"
