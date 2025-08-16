@@ -63,3 +63,7 @@ path = "gpu_mesh_render_example.rs"
 [[bin]]
 name = "read_ply"
 path = "read_ply.rs"
+
+[[bin]]
+name = "write_ply"
+path = "write_ply.rs"
