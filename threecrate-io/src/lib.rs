@@ -9,6 +9,7 @@ pub mod pasture;
 pub mod error;
 
 pub use error::*;
+pub use ply::{RobustPlyReader, RobustPlyWriter, PlyWriteOptions, PlyFormat, PlyValue};
 
 use threecrate_core::{PointCloud, TriangleMesh, Result, Point3f};
 
@@ -300,6 +301,238 @@ end_header
         
         // Cleanup
         let _ = fs::remove_file(temp_file);
+    }
+
+    #[test]
+    fn test_robust_ply_writer_ascii() {
+        let temp_file = "test_writer_ascii.ply";
+        
+        // Create test point cloud
+        let mut cloud = PointCloud::new();
+        cloud.push(Point3f::new(1.0, 2.0, 3.0));
+        cloud.push(Point3f::new(4.0, 5.0, 6.0));
+        cloud.push(Point3f::new(7.0, 8.0, 9.0));
+        
+        // Write with ASCII format and custom options
+        let options = ply::PlyWriteOptions::ascii()
+            .with_comment("Test point cloud")
+            .with_obj_info("Created by threecrate test");
+        
+        ply::RobustPlyWriter::write_point_cloud(&cloud, temp_file, &options).unwrap();
+        
+        // Read back and verify
+        let loaded_cloud = ply::PlyReader::read_point_cloud(temp_file).unwrap();
+        assert_eq!(cloud.len(), loaded_cloud.len());
+        
+        for (original, loaded) in cloud.iter().zip(loaded_cloud.iter()) {
+            assert!((original.x - loaded.x).abs() < 1e-6);
+            assert!((original.y - loaded.y).abs() < 1e-6);
+            assert!((original.z - loaded.z).abs() < 1e-6);
+        }
+        
+        // Verify metadata
+        let ply_data = ply::RobustPlyReader::read_ply_file(temp_file).unwrap();
+        assert_eq!(ply_data.header.format, ply::PlyFormat::Ascii);
+        assert_eq!(ply_data.header.comments, vec!["Test point cloud"]);
+        assert_eq!(ply_data.header.obj_info, vec!["Created by threecrate test"]);
+        
+        // Cleanup
+        let _ = fs::remove_file(temp_file);
+    }
+
+    #[test]
+    fn test_robust_ply_writer_binary_little_endian() {
+        let temp_file = "test_writer_binary_le.ply";
+        
+        // Create test mesh
+        let vertices = vec![
+            Point3f::new(0.0, 0.0, 0.0),
+            Point3f::new(1.0, 0.0, 0.0),
+            Point3f::new(0.5, 1.0, 0.0),
+        ];
+        let faces = vec![[0, 1, 2]];
+        let normals = vec![
+            Vector3f::new(0.0, 0.0, 1.0),
+            Vector3f::new(0.0, 0.0, 1.0),
+            Vector3f::new(0.0, 0.0, 1.0),
+        ];
+        
+        let mut mesh = TriangleMesh::from_vertices_and_faces(vertices, faces);
+        mesh.set_normals(normals);
+        
+        // Write with binary little endian format
+        let options = ply::PlyWriteOptions::binary_little_endian()
+            .with_normals(true);
+        
+        ply::RobustPlyWriter::write_mesh(&mesh, temp_file, &options).unwrap();
+        
+        // Read back and verify
+        let loaded_mesh = ply::PlyReader::read_mesh(temp_file).unwrap();
+        assert_eq!(mesh.vertex_count(), loaded_mesh.vertex_count());
+        assert_eq!(mesh.face_count(), loaded_mesh.face_count());
+        assert!(loaded_mesh.normals.is_some());
+        
+        // Verify format
+        let ply_data = ply::RobustPlyReader::read_ply_file(temp_file).unwrap();
+        assert_eq!(ply_data.header.format, ply::PlyFormat::BinaryLittleEndian);
+        
+        // Cleanup
+        let _ = fs::remove_file(temp_file);
+    }
+
+    #[test]
+    fn test_robust_ply_writer_binary_big_endian() {
+        let temp_file = "test_writer_binary_be.ply";
+        
+        // Create test point cloud
+        let mut cloud = PointCloud::new();
+        cloud.push(Point3f::new(10.0, 20.0, 30.0));
+        cloud.push(Point3f::new(40.0, 50.0, 60.0));
+        
+        // Write with binary big endian format
+        let options = ply::PlyWriteOptions::binary_big_endian()
+            .with_comment("Binary big endian test");
+        
+        ply::RobustPlyWriter::write_point_cloud(&cloud, temp_file, &options).unwrap();
+        
+        // Read back and verify
+        let loaded_cloud = ply::PlyReader::read_point_cloud(temp_file).unwrap();
+        assert_eq!(cloud.len(), loaded_cloud.len());
+        
+        // Verify format
+        let ply_data = ply::RobustPlyReader::read_ply_file(temp_file).unwrap();
+        assert_eq!(ply_data.header.format, ply::PlyFormat::BinaryBigEndian);
+        assert_eq!(ply_data.header.comments, vec!["Binary big endian test"]);
+        
+        // Cleanup
+        let _ = fs::remove_file(temp_file);
+    }
+
+    #[test]
+    fn test_robust_ply_writer_custom_properties() {
+        let temp_file = "test_writer_custom_props.ply";
+        
+        // Create test point cloud
+        let mut cloud = PointCloud::new();
+        cloud.push(Point3f::new(1.0, 2.0, 3.0));
+        cloud.push(Point3f::new(4.0, 5.0, 6.0));
+        
+        // Create custom properties
+        let colors = vec![
+            ply::PlyValue::UChar(255),
+            ply::PlyValue::UChar(128),
+        ];
+        let intensities = vec![
+            ply::PlyValue::Float(0.8),
+            ply::PlyValue::Float(0.5),
+        ];
+        
+        // Write with custom properties
+        let options = ply::PlyWriteOptions::ascii()
+            .with_custom_vertex_property("red", colors)
+            .with_custom_vertex_property("intensity", intensities)
+            .with_vertex_property_order(vec!["x".to_string(), "y".to_string(), "z".to_string(), "red".to_string(), "intensity".to_string()]);
+        
+        ply::RobustPlyWriter::write_point_cloud(&cloud, temp_file, &options).unwrap();
+        
+        // Read back and verify structure
+        let ply_data = ply::RobustPlyReader::read_ply_file(temp_file).unwrap();
+        let vertex_element = &ply_data.header.elements[0];
+        assert_eq!(vertex_element.properties.len(), 5); // x, y, z, red, intensity
+        
+        // Verify custom properties exist
+        let vertices = ply_data.elements.get("vertex").unwrap();
+        let first_vertex = &vertices[0];
+        assert!(first_vertex.contains_key("red"));
+        assert!(first_vertex.contains_key("intensity"));
+        
+        // Verify values
+        match first_vertex.get("red").unwrap() {
+            ply::PlyValue::UChar(255) => {},
+            _ => panic!("Expected UChar(255) for red property"),
+        }
+        match first_vertex.get("intensity").unwrap() {
+            ply::PlyValue::Float(val) if (*val - 0.8).abs() < 1e-6 => {},
+            _ => panic!("Expected Float(0.8) for intensity property"),
+        }
+        
+        // Cleanup
+        let _ = fs::remove_file(temp_file);
+    }
+
+    #[test]
+    fn test_robust_ply_writer_round_trip_all_formats() {
+        let formats = vec![
+            ply::PlyFormat::Ascii,
+            ply::PlyFormat::BinaryLittleEndian,
+            ply::PlyFormat::BinaryBigEndian,
+        ];
+        
+        for (i, format) in formats.iter().enumerate() {
+            let temp_file = format!("test_roundtrip_{}.ply", i);
+            
+            // Create test mesh with normals
+            let vertices = vec![
+                Point3f::new(-1.0, -1.0, 0.0),
+                Point3f::new(1.0, -1.0, 0.0),
+                Point3f::new(0.0, 1.0, 0.0),
+            ];
+            let faces = vec![[0, 1, 2]];
+            let normals = vec![
+                Vector3f::new(0.0, 0.0, 1.0),
+                Vector3f::new(0.0, 0.0, 1.0),
+                Vector3f::new(0.0, 0.0, 1.0),
+            ];
+            
+            let mut original_mesh = TriangleMesh::from_vertices_and_faces(vertices, faces);
+            original_mesh.set_normals(normals);
+            
+            // Write mesh
+            let options = ply::PlyWriteOptions {
+                format: *format,
+                include_normals: true,
+                comments: vec!["Round-trip test".to_string()],
+                ..Default::default()
+            };
+            
+            ply::RobustPlyWriter::write_mesh(&original_mesh, &temp_file, &options).unwrap();
+            
+            // Read back and verify
+            let loaded_mesh = ply::PlyReader::read_mesh(&temp_file).unwrap();
+            
+            // Verify structure
+            assert_eq!(original_mesh.vertex_count(), loaded_mesh.vertex_count());
+            assert_eq!(original_mesh.face_count(), loaded_mesh.face_count());
+            assert!(loaded_mesh.normals.is_some());
+            
+            // Verify vertices
+            for (orig, loaded) in original_mesh.vertices.iter().zip(loaded_mesh.vertices.iter()) {
+                assert!((orig.x - loaded.x).abs() < 1e-5, "Vertex X mismatch for format {:?}", format);
+                assert!((orig.y - loaded.y).abs() < 1e-5, "Vertex Y mismatch for format {:?}", format);
+                assert!((orig.z - loaded.z).abs() < 1e-5, "Vertex Z mismatch for format {:?}", format);
+            }
+            
+            // Verify faces
+            for (orig, loaded) in original_mesh.faces.iter().zip(loaded_mesh.faces.iter()) {
+                assert_eq!(orig, loaded, "Face mismatch for format {:?}", format);
+            }
+            
+            // Verify normals
+            if let (Some(orig_normals), Some(loaded_normals)) = (&original_mesh.normals, &loaded_mesh.normals) {
+                for (orig, loaded) in orig_normals.iter().zip(loaded_normals.iter()) {
+                    assert!((orig.x - loaded.x).abs() < 1e-5, "Normal X mismatch for format {:?}", format);
+                    assert!((orig.y - loaded.y).abs() < 1e-5, "Normal Y mismatch for format {:?}", format);
+                    assert!((orig.z - loaded.z).abs() < 1e-5, "Normal Z mismatch for format {:?}", format);
+                }
+            }
+            
+            // Verify format was preserved
+            let ply_data = ply::RobustPlyReader::read_ply_file(&temp_file).unwrap();
+            assert_eq!(ply_data.header.format, *format);
+            
+            // Cleanup
+            let _ = fs::remove_file(temp_file);
+        }
     }
 
     #[test]

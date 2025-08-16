@@ -87,8 +87,557 @@ pub struct PlyData {
 /// Enhanced PLY reader with comprehensive format support
 pub struct RobustPlyReader;
 
-/// Enhanced PLY writer 
+/// PLY writer configuration options
+#[derive(Debug, Clone)]
+pub struct PlyWriteOptions {
+    /// Output format (ASCII or binary)
+    pub format: PlyFormat,
+    /// Comments to include in the header
+    pub comments: Vec<String>,
+    /// Object info to include in the header
+    pub obj_info: Vec<String>,
+    /// Custom properties to include for vertices
+    pub custom_vertex_properties: Vec<(String, Vec<PlyValue>)>,
+    /// Custom properties to include for faces
+    pub custom_face_properties: Vec<(String, Vec<PlyValue>)>,
+    /// Whether to include normals if available
+    pub include_normals: bool,
+    /// Whether to include colors if available
+    pub include_colors: bool,
+    /// Custom property ordering for vertices
+    pub vertex_property_order: Option<Vec<String>>,
+}
+
+impl Default for PlyWriteOptions {
+    fn default() -> Self {
+        Self {
+            format: PlyFormat::Ascii,
+            comments: Vec::new(),
+            obj_info: Vec::new(),
+            custom_vertex_properties: Vec::new(),
+            custom_face_properties: Vec::new(),
+            include_normals: true,
+            include_colors: false,
+            vertex_property_order: None,
+        }
+    }
+}
+
+impl PlyWriteOptions {
+    /// Create new options with ASCII format
+    pub fn ascii() -> Self {
+        Self {
+            format: PlyFormat::Ascii,
+            ..Default::default()
+        }
+    }
+    
+    /// Create new options with binary little endian format
+    pub fn binary_little_endian() -> Self {
+        Self {
+            format: PlyFormat::BinaryLittleEndian,
+            ..Default::default()
+        }
+    }
+    
+    /// Create new options with binary big endian format
+    pub fn binary_big_endian() -> Self {
+        Self {
+            format: PlyFormat::BinaryBigEndian,
+            ..Default::default()
+        }
+    }
+    
+    /// Add a comment to the header
+    pub fn with_comment<S: Into<String>>(mut self, comment: S) -> Self {
+        self.comments.push(comment.into());
+        self
+    }
+    
+    /// Add object info to the header
+    pub fn with_obj_info<S: Into<String>>(mut self, info: S) -> Self {
+        self.obj_info.push(info.into());
+        self
+    }
+    
+    /// Include normals in output
+    pub fn with_normals(mut self, include: bool) -> Self {
+        self.include_normals = include;
+        self
+    }
+    
+    /// Include colors in output
+    pub fn with_colors(mut self, include: bool) -> Self {
+        self.include_colors = include;
+        self
+    }
+    
+    /// Set custom vertex property ordering
+    pub fn with_vertex_property_order(mut self, order: Vec<String>) -> Self {
+        self.vertex_property_order = Some(order);
+        self
+    }
+    
+    /// Add custom vertex property
+    pub fn with_custom_vertex_property<S: Into<String>>(mut self, name: S, values: Vec<PlyValue>) -> Self {
+        self.custom_vertex_properties.push((name.into(), values));
+        self
+    }
+}
+
+/// Enhanced PLY writer with comprehensive format support
 pub struct RobustPlyWriter;
+
+impl RobustPlyWriter {
+    /// Write point cloud to PLY file with options
+    pub fn write_point_cloud<P: AsRef<Path>>(
+        cloud: &PointCloud<Point3f>, 
+        path: P, 
+        options: &PlyWriteOptions
+    ) -> Result<()> {
+        let file = File::create(path)?;
+        let mut writer = BufWriter::new(file);
+        Self::write_point_cloud_to_writer(cloud, &mut writer, options)
+    }
+    
+    /// Write point cloud to writer with options
+    pub fn write_point_cloud_to_writer<W: std::io::Write>(
+        cloud: &PointCloud<Point3f>,
+        writer: &mut W,
+        options: &PlyWriteOptions,
+    ) -> Result<()> {
+        // Build PLY data structure
+        let mut ply_data = PlyData {
+            header: PlyHeader {
+                format: options.format,
+                version: "1.0".to_string(),
+                elements: Vec::new(),
+                comments: options.comments.clone(),
+                obj_info: options.obj_info.clone(),
+            },
+            elements: HashMap::new(),
+        };
+        
+        // Build vertex element definition
+        let mut vertex_properties = Vec::new();
+        let mut vertex_data = Vec::new();
+        
+        // Always include x, y, z
+        vertex_properties.push(PlyProperty {
+            name: "x".to_string(),
+            property_type: PlyPropertyType::Float,
+        });
+        vertex_properties.push(PlyProperty {
+            name: "y".to_string(),
+            property_type: PlyPropertyType::Float,
+        });
+        vertex_properties.push(PlyProperty {
+            name: "z".to_string(),
+            property_type: PlyPropertyType::Float,
+        });
+        
+        // Add custom properties if specified
+        for (prop_name, _) in &options.custom_vertex_properties {
+            // Determine property type from first value
+            if let Some(first_values) = options.custom_vertex_properties.iter()
+                .find(|(name, _)| name == prop_name)
+                .map(|(_, values)| values)
+            {
+                if let Some(first_value) = first_values.first() {
+                    let prop_type = Self::value_to_property_type(first_value);
+                    vertex_properties.push(PlyProperty {
+                        name: prop_name.clone(),
+                        property_type: prop_type,
+                    });
+                }
+            }
+        }
+        
+        // Reorder properties if custom order is specified
+        if let Some(order) = &options.vertex_property_order {
+            vertex_properties.sort_by_key(|prop| {
+                order.iter().position(|name| name == &prop.name)
+                    .unwrap_or(order.len())
+            });
+        }
+        
+        // Build vertex data
+        for (i, point) in cloud.iter().enumerate() {
+            let mut vertex_instance = HashMap::new();
+            vertex_instance.insert("x".to_string(), PlyValue::Float(point.x));
+            vertex_instance.insert("y".to_string(), PlyValue::Float(point.y));
+            vertex_instance.insert("z".to_string(), PlyValue::Float(point.z));
+            
+            // Add custom properties
+            for (prop_name, values) in &options.custom_vertex_properties {
+                if i < values.len() {
+                    vertex_instance.insert(prop_name.clone(), values[i].clone());
+                }
+            }
+            
+            vertex_data.push(vertex_instance);
+        }
+        
+        // Add vertex element
+        ply_data.header.elements.push(PlyElement {
+            name: "vertex".to_string(),
+            count: cloud.len(),
+            properties: vertex_properties,
+        });
+        ply_data.elements.insert("vertex".to_string(), vertex_data);
+        
+        // Write PLY data
+        Self::write_ply_data(writer, &ply_data)
+    }
+    
+    /// Write triangle mesh to PLY file with options
+    pub fn write_mesh<P: AsRef<Path>>(
+        mesh: &TriangleMesh,
+        path: P,
+        options: &PlyWriteOptions,
+    ) -> Result<()> {
+        let file = File::create(path)?;
+        let mut writer = BufWriter::new(file);
+        Self::write_mesh_to_writer(mesh, &mut writer, options)
+    }
+    
+    /// Write triangle mesh to writer with options
+    pub fn write_mesh_to_writer<W: std::io::Write>(
+        mesh: &TriangleMesh,
+        writer: &mut W,
+        options: &PlyWriteOptions,
+    ) -> Result<()> {
+        // Build PLY data structure
+        let mut ply_data = PlyData {
+            header: PlyHeader {
+                format: options.format,
+                version: "1.0".to_string(),
+                elements: Vec::new(),
+                comments: options.comments.clone(),
+                obj_info: options.obj_info.clone(),
+            },
+            elements: HashMap::new(),
+        };
+        
+        // Build vertex element
+        let mut vertex_properties = Vec::new();
+        let mut vertex_data = Vec::new();
+        
+        // Always include x, y, z
+        vertex_properties.push(PlyProperty {
+            name: "x".to_string(),
+            property_type: PlyPropertyType::Float,
+        });
+        vertex_properties.push(PlyProperty {
+            name: "y".to_string(),
+            property_type: PlyPropertyType::Float,
+        });
+        vertex_properties.push(PlyProperty {
+            name: "z".to_string(),
+            property_type: PlyPropertyType::Float,
+        });
+        
+        // Add normals if requested and available
+        if options.include_normals && mesh.normals.is_some() {
+            vertex_properties.push(PlyProperty {
+                name: "nx".to_string(),
+                property_type: PlyPropertyType::Float,
+            });
+            vertex_properties.push(PlyProperty {
+                name: "ny".to_string(),
+                property_type: PlyPropertyType::Float,
+            });
+            vertex_properties.push(PlyProperty {
+                name: "nz".to_string(),
+                property_type: PlyPropertyType::Float,
+            });
+        }
+        
+        // Add custom vertex properties
+        for (prop_name, _) in &options.custom_vertex_properties {
+            if let Some(first_values) = options.custom_vertex_properties.iter()
+                .find(|(name, _)| name == prop_name)
+                .map(|(_, values)| values)
+            {
+                if let Some(first_value) = first_values.first() {
+                    let prop_type = Self::value_to_property_type(first_value);
+                    vertex_properties.push(PlyProperty {
+                        name: prop_name.clone(),
+                        property_type: prop_type,
+                    });
+                }
+            }
+        }
+        
+        // Reorder properties if specified
+        if let Some(order) = &options.vertex_property_order {
+            vertex_properties.sort_by_key(|prop| {
+                order.iter().position(|name| name == &prop.name)
+                    .unwrap_or(order.len())
+            });
+        }
+        
+        // Build vertex data
+        for (i, vertex) in mesh.vertices.iter().enumerate() {
+            let mut vertex_instance = HashMap::new();
+            vertex_instance.insert("x".to_string(), PlyValue::Float(vertex.x));
+            vertex_instance.insert("y".to_string(), PlyValue::Float(vertex.y));
+            vertex_instance.insert("z".to_string(), PlyValue::Float(vertex.z));
+            
+            // Add normals if available and requested
+            if options.include_normals {
+                if let Some(normals) = &mesh.normals {
+                    if i < normals.len() {
+                        vertex_instance.insert("nx".to_string(), PlyValue::Float(normals[i].x));
+                        vertex_instance.insert("ny".to_string(), PlyValue::Float(normals[i].y));
+                        vertex_instance.insert("nz".to_string(), PlyValue::Float(normals[i].z));
+                    }
+                }
+            }
+            
+            // Add custom properties
+            for (prop_name, values) in &options.custom_vertex_properties {
+                if i < values.len() {
+                    vertex_instance.insert(prop_name.clone(), values[i].clone());
+                }
+            }
+            
+            vertex_data.push(vertex_instance);
+        }
+        
+        // Add vertex element
+        ply_data.header.elements.push(PlyElement {
+            name: "vertex".to_string(),
+            count: mesh.vertices.len(),
+            properties: vertex_properties,
+        });
+        ply_data.elements.insert("vertex".to_string(), vertex_data);
+        
+        // Build face element
+        if !mesh.faces.is_empty() {
+            let face_properties = vec![
+                PlyProperty {
+                    name: "vertex_indices".to_string(),
+                    property_type: PlyPropertyType::List(
+                        Box::new(PlyPropertyType::UChar),
+                        Box::new(PlyPropertyType::Int),
+                    ),
+                },
+            ];
+            
+            let mut face_data = Vec::new();
+            for face in &mesh.faces {
+                let mut face_instance = HashMap::new();
+                let indices = vec![
+                    PlyValue::Int(face[0] as i32),
+                    PlyValue::Int(face[1] as i32),
+                    PlyValue::Int(face[2] as i32),
+                ];
+                face_instance.insert("vertex_indices".to_string(), PlyValue::List(indices));
+                face_data.push(face_instance);
+            }
+            
+            ply_data.header.elements.push(PlyElement {
+                name: "face".to_string(),
+                count: mesh.faces.len(),
+                properties: face_properties,
+            });
+            ply_data.elements.insert("face".to_string(), face_data);
+        }
+        
+        // Write PLY data
+        Self::write_ply_data(writer, &ply_data)
+    }
+    
+    /// Write PLY data to writer
+    fn write_ply_data<W: std::io::Write>(writer: &mut W, ply_data: &PlyData) -> Result<()> {
+        // Write header
+        Self::write_header(writer, &ply_data.header)?;
+        
+        // Write element data
+        match ply_data.header.format {
+            PlyFormat::Ascii => Self::write_ascii_data(writer, ply_data)?,
+            PlyFormat::BinaryLittleEndian => Self::write_binary_data::<LittleEndian, _>(writer, ply_data)?,
+            PlyFormat::BinaryBigEndian => Self::write_binary_data::<BigEndian, _>(writer, ply_data)?,
+        }
+        
+        Ok(())
+    }
+    
+    /// Write PLY header
+    fn write_header<W: std::io::Write>(writer: &mut W, header: &PlyHeader) -> Result<()> {
+        writeln!(writer, "ply")?;
+        
+        let format_str = match header.format {
+            PlyFormat::Ascii => "ascii",
+            PlyFormat::BinaryLittleEndian => "binary_little_endian",
+            PlyFormat::BinaryBigEndian => "binary_big_endian",
+        };
+        writeln!(writer, "format {} {}", format_str, header.version)?;
+        
+        // Write comments
+        for comment in &header.comments {
+            writeln!(writer, "comment {}", comment)?;
+        }
+        
+        // Write obj_info
+        for info in &header.obj_info {
+            writeln!(writer, "obj_info {}", info)?;
+        }
+        
+        // Write elements and properties
+        for element in &header.elements {
+            writeln!(writer, "element {} {}", element.name, element.count)?;
+            for property in &element.properties {
+                Self::write_property_definition(writer, property)?;
+            }
+        }
+        
+        writeln!(writer, "end_header")?;
+        Ok(())
+    }
+    
+    /// Write property definition
+    fn write_property_definition<W: std::io::Write>(writer: &mut W, property: &PlyProperty) -> Result<()> {
+        match &property.property_type {
+            PlyPropertyType::List(count_type, item_type) => {
+                let count_str = Self::property_type_to_string(count_type);
+                let item_str = Self::property_type_to_string(item_type);
+                writeln!(writer, "property list {} {} {}", count_str, item_str, property.name)?;
+            }
+            _ => {
+                let type_str = Self::property_type_to_string(&property.property_type);
+                writeln!(writer, "property {} {}", type_str, property.name)?;
+            }
+        }
+        Ok(())
+    }
+    
+    /// Convert property type to string
+    fn property_type_to_string(prop_type: &PlyPropertyType) -> &'static str {
+        match prop_type {
+            PlyPropertyType::Char => "char",
+            PlyPropertyType::UChar => "uchar",
+            PlyPropertyType::Short => "short",
+            PlyPropertyType::UShort => "ushort",
+            PlyPropertyType::Int => "int",
+            PlyPropertyType::UInt => "uint",
+            PlyPropertyType::Float => "float",
+            PlyPropertyType::Double => "double",
+            PlyPropertyType::List(_, _) => "list", // Should not be called directly for lists
+        }
+    }
+    
+    /// Write ASCII format data
+    fn write_ascii_data<W: std::io::Write>(writer: &mut W, ply_data: &PlyData) -> Result<()> {
+        for element_def in &ply_data.header.elements {
+            if let Some(element_data) = ply_data.elements.get(&element_def.name) {
+                for instance in element_data {
+                    let mut values = Vec::new();
+                    
+                    for property in &element_def.properties {
+                        if let Some(value) = instance.get(&property.name) {
+                            Self::format_ascii_value(value, &mut values)?;
+                        }
+                    }
+                    
+                    writeln!(writer, "{}", values.join(" "))?;
+                }
+            }
+        }
+        Ok(())
+    }
+    
+    /// Format a value for ASCII output
+    fn format_ascii_value(value: &PlyValue, output: &mut Vec<String>) -> Result<()> {
+        match value {
+            PlyValue::Char(v) => output.push(v.to_string()),
+            PlyValue::UChar(v) => output.push(v.to_string()),
+            PlyValue::Short(v) => output.push(v.to_string()),
+            PlyValue::UShort(v) => output.push(v.to_string()),
+            PlyValue::Int(v) => output.push(v.to_string()),
+            PlyValue::UInt(v) => output.push(v.to_string()),
+            PlyValue::Float(v) => output.push(v.to_string()),
+            PlyValue::Double(v) => output.push(v.to_string()),
+            PlyValue::List(values) => {
+                output.push(values.len().to_string());
+                for item in values {
+                    Self::format_ascii_value(item, output)?;
+                }
+            }
+        }
+        Ok(())
+    }
+    
+    /// Write binary format data
+    fn write_binary_data<E: byteorder::ByteOrder, W: std::io::Write>(
+        writer: &mut W,
+        ply_data: &PlyData,
+    ) -> Result<()> {
+        
+        for element_def in &ply_data.header.elements {
+            if let Some(element_data) = ply_data.elements.get(&element_def.name) {
+                for instance in element_data {
+                    for property in &element_def.properties {
+                        if let Some(value) = instance.get(&property.name) {
+                            Self::write_binary_value::<E, _>(writer, value)?;
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+    
+    /// Write a binary value
+    fn write_binary_value<E: byteorder::ByteOrder, W: std::io::Write>(
+        writer: &mut W,
+        value: &PlyValue,
+    ) -> Result<()> {
+        use byteorder::WriteBytesExt;
+        
+        match value {
+            PlyValue::Char(v) => writer.write_i8(*v)?,
+            PlyValue::UChar(v) => writer.write_u8(*v)?,
+            PlyValue::Short(v) => writer.write_i16::<E>(*v)?,
+            PlyValue::UShort(v) => writer.write_u16::<E>(*v)?,
+            PlyValue::Int(v) => writer.write_i32::<E>(*v)?,
+            PlyValue::UInt(v) => writer.write_u32::<E>(*v)?,
+            PlyValue::Float(v) => writer.write_f32::<E>(*v)?,
+            PlyValue::Double(v) => writer.write_f64::<E>(*v)?,
+            PlyValue::List(values) => {
+                // Write count as uchar (assuming list count type is uchar)
+                writer.write_u8(values.len() as u8)?;
+                for item in values {
+                    Self::write_binary_value::<E, _>(writer, item)?;
+                }
+            }
+        }
+        Ok(())
+    }
+    
+    /// Determine property type from PLY value
+    fn value_to_property_type(value: &PlyValue) -> PlyPropertyType {
+        match value {
+            PlyValue::Char(_) => PlyPropertyType::Char,
+            PlyValue::UChar(_) => PlyPropertyType::UChar,
+            PlyValue::Short(_) => PlyPropertyType::Short,
+            PlyValue::UShort(_) => PlyPropertyType::UShort,
+            PlyValue::Int(_) => PlyPropertyType::Int,
+            PlyValue::UInt(_) => PlyPropertyType::UInt,
+            PlyValue::Float(_) => PlyPropertyType::Float,
+            PlyValue::Double(_) => PlyPropertyType::Double,
+            PlyValue::List(values) => {
+                let item_type = if let Some(first_item) = values.first() {
+                    Self::value_to_property_type(first_item)
+                } else {
+                    PlyPropertyType::Int
+                };
+                PlyPropertyType::List(Box::new(PlyPropertyType::UChar), Box::new(item_type))
+            }
+        }
+    }
+}
 
 impl RobustPlyReader {
     /// Read a complete PLY file with all metadata and elements
