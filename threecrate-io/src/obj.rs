@@ -1,98 +1,166 @@
-//! OBJ format support
+//! OBJ format support with MTL material linking
+//!
+//! This module provides comprehensive OBJ (Wavefront OBJ) reading and writing
+//! capabilities including:
+//! - Vertices (v), texture coordinates (vt), normals (vn), faces (f)
+//! - Groups/materials (usemtl, mtllib) with MTL file parsing
+//! - Polygon triangulation for faces with more than 3 vertices
+//! - Optional vertex-color support via conventions
+//! - Robust error handling and streaming read capabilities
 
 use crate::{MeshReader, MeshWriter};
-use threecrate_core::{TriangleMesh, Result, Point3f, Vector3f};
-use std::path::Path;
+use threecrate_core::{TriangleMesh, Result, Point3f, Vector3f, Error};
+use std::path::{Path, PathBuf};
 use std::fs::File;
-use std::io::{BufWriter, Write};
-use obj::Obj;
+use std::io::{BufRead, BufReader, BufWriter, Write};
+use std::collections::HashMap;
 
+/// Material properties from MTL files
+#[derive(Debug, Clone)]
+pub struct Material {
+    /// Material name
+    pub name: String,
+    /// Ambient color (Ka)
+    pub ambient: Option<[f32; 3]>,
+    /// Diffuse color (Kd)
+    pub diffuse: Option<[f32; 3]>,
+    /// Specular color (Ks)
+    pub specular: Option<[f32; 3]>,
+    /// Specular exponent (Ns)
+    pub shininess: Option<f32>,
+    /// Transparency (d or Tr)
+    pub transparency: Option<f32>,
+    /// Illumination model (illum)
+    pub illumination: Option<u32>,
+    /// Diffuse texture map (map_Kd)
+    pub diffuse_map: Option<String>,
+    /// Normal map (map_Bump or bump)
+    pub normal_map: Option<String>,
+    /// Specular map (map_Ks)
+    pub specular_map: Option<String>,
+}
+
+/// Face vertex with indices for position, texture coordinate, and normal
+#[derive(Debug, Clone, Copy)]
+pub struct FaceVertex {
+    /// Vertex position index (required)
+    pub vertex: usize,
+    /// Texture coordinate index (optional)
+    pub texture: Option<usize>,
+    /// Normal index (optional)
+    pub normal: Option<usize>,
+}
+
+/// Face definition
+#[derive(Debug, Clone)]
+pub struct Face {
+    /// Vertices of the face
+    pub vertices: Vec<FaceVertex>,
+    /// Material used for this face (if any)
+    pub material: Option<String>,
+}
+
+/// Group definition
+#[derive(Debug, Clone)]
+pub struct Group {
+    /// Group name
+    pub name: String,
+    /// Faces in this group
+    pub faces: Vec<Face>,
+}
+
+/// Complete OBJ file data
+#[derive(Debug)]
+pub struct ObjData {
+    /// Vertex positions
+    pub vertices: Vec<Point3f>,
+    /// Texture coordinates
+    pub texture_coords: Vec<[f32; 2]>,
+    /// Vertex normals
+    pub normals: Vec<Vector3f>,
+    /// Groups
+    pub groups: Vec<Group>,
+    /// Materials referenced by this OBJ
+    pub materials: HashMap<String, Material>,
+    /// MTL file paths
+    pub mtl_files: Vec<String>,
+}
+
+/// Enhanced OBJ reader with comprehensive format support
+pub struct RobustObjReader;
+
+/// OBJ reader (legacy interface)
 pub struct ObjReader;
+
+/// OBJ writer
 pub struct ObjWriter;
 
-impl MeshReader for ObjReader {
-    fn read_mesh<P: AsRef<Path>>(path: P) -> Result<TriangleMesh> {
-        // Parse OBJ file directly from path
-        let obj: Obj = Obj::load(path)
-            .map_err(|e| threecrate_core::Error::InvalidData(
-                format!("Failed to parse OBJ file: {:?}", e)
-            ))?;
+impl Material {
+    /// Create a new material with default properties
+    pub fn new(name: String) -> Self {
+        Self {
+            name,
+            ambient: None,
+            diffuse: None,
+            specular: None,
+            shininess: None,
+            transparency: None,
+            illumination: None,
+            diffuse_map: None,
+            normal_map: None,
+            specular_map: None,
+        }
+    }
+}
+
+impl Default for Material {
+    fn default() -> Self {
+        Self::new("default".to_string())
+    }
+}
+
+impl FaceVertex {
+    /// Parse face vertex from OBJ format string (e.g., "1", "1/2", "1/2/3", "1//3")
+    fn parse(s: &str) -> Result<Self> {
+        let parts: Vec<&str> = s.split('/').collect();
         
-        let obj_data = &obj.data;
-        
-        // Extract vertices
-        let vertices: Vec<Point3f> = obj_data.position
-            .iter()
-            .map(|pos| Point3f::new(pos[0], pos[1], pos[2]))
-            .collect();
-        
-        // Extract faces (triangulate if necessary)
-        let mut faces = Vec::new();
-        for object in &obj_data.objects {
-            for group in &object.groups {
-                for poly in &group.polys {
-                    match poly.0.len() {
-                        3 => {
-                            // Triangle - direct conversion
-                            let face = [
-                                poly.0[0].0,
-                                poly.0[1].0,
-                                poly.0[2].0,
-                            ];
-                            faces.push(face);
-                        }
-                        4 => {
-                            // Quad - split into two triangles
-                            let face1 = [
-                                poly.0[0].0,
-                                poly.0[1].0,
-                                poly.0[2].0,
-                            ];
-                            let face2 = [
-                                poly.0[0].0,
-                                poly.0[2].0,
-                                poly.0[3].0,
-                            ];
-                            faces.push(face1);
-                            faces.push(face2);
-                        }
-                        n if n > 4 => {
-                            // N-gon - fan triangulation
-                            for i in 1..(n - 1) {
-                                let face = [
-                                    poly.0[0].0,
-                                    poly.0[i].0,
-                                    poly.0[i + 1].0,
-                                ];
-                                faces.push(face);
-                            }
-                        }
-                        _ => {
-                            // Skip degenerate polygons
-                            continue;
-                        }
-                    }
-                }
-            }
+        if parts.is_empty() {
+            return Err(Error::InvalidData("Empty face vertex".to_string()));
         }
         
-        // Extract normals if available
-        let normals = if !obj_data.normal.is_empty() {
-            let normals: Vec<Vector3f> = obj_data.normal
-                .iter()
-                .map(|norm| Vector3f::new(norm[0], norm[1], norm[2]))
-                .collect();
-            Some(normals)
+        let vertex = parts[0].parse::<usize>()
+            .map_err(|_| Error::InvalidData(format!("Invalid vertex index: {}", parts[0])))?;
+        
+        // OBJ uses 1-based indexing, convert to 0-based
+        let vertex = vertex.checked_sub(1)
+            .ok_or_else(|| Error::InvalidData("Vertex index cannot be 0".to_string()))?;
+        
+        let texture = if parts.len() > 1 && !parts[1].is_empty() {
+            let tex_idx = parts[1].parse::<usize>()
+                .map_err(|_| Error::InvalidData(format!("Invalid texture index: {}", parts[1])))?;
+            Some(tex_idx.checked_sub(1)
+                .ok_or_else(|| Error::InvalidData("Texture index cannot be 0".to_string()))?)
         } else {
             None
         };
         
-        let mut mesh = TriangleMesh::from_vertices_and_faces(vertices, faces);
-        if let Some(normals) = normals {
-            mesh.set_normals(normals);
-        }
+        let normal = if parts.len() > 2 && !parts[2].is_empty() {
+            let norm_idx = parts[2].parse::<usize>()
+                .map_err(|_| Error::InvalidData(format!("Invalid normal index: {}", parts[2])))?;
+            Some(norm_idx.checked_sub(1)
+                .ok_or_else(|| Error::InvalidData("Normal index cannot be 0".to_string()))?)
+        } else {
+            None
+        };
         
-        Ok(mesh)
+        Ok(FaceVertex { vertex, texture, normal })
+    }
+}
+
+impl MeshReader for ObjReader {
+    fn read_mesh<P: AsRef<Path>>(path: P) -> Result<TriangleMesh> {
+        let obj_data = RobustObjReader::read_obj_file(path)?;
+        RobustObjReader::obj_data_to_mesh(&obj_data)
     }
 }
 
@@ -152,17 +220,8 @@ impl MeshWriter for ObjWriter {
 
 /// Read an OBJ file and return vertex positions only (useful for point clouds)
 pub fn read_obj_vertices<P: AsRef<Path>>(path: P) -> Result<Vec<Point3f>> {
-    let obj: Obj = Obj::load(path)
-        .map_err(|e| threecrate_core::Error::InvalidData(
-            format!("Failed to parse OBJ file: {:?}", e)
-        ))?;
-    
-    let vertices: Vec<Point3f> = obj.data.position
-        .iter()
-        .map(|pos| Point3f::new(pos[0], pos[1], pos[2]))
-        .collect();
-    
-    Ok(vertices)
+    let obj_data = RobustObjReader::read_obj_file(path)?;
+    Ok(obj_data.vertices)
 }
 
 /// Write vertices as an OBJ file (useful for point clouds)
@@ -179,4 +238,425 @@ pub fn write_obj_vertices<P: AsRef<Path>>(vertices: &[Point3f], path: P) -> Resu
     }
     
     Ok(())
+}
+
+impl RobustObjReader {
+    /// Read a complete OBJ file with materials
+    pub fn read_obj_file<P: AsRef<Path>>(path: P) -> Result<ObjData> {
+        let path = path.as_ref();
+        let file = File::open(path)
+            .map_err(|e| Error::Io(e))?;
+        let reader = BufReader::new(file);
+        
+        let mut obj_data = ObjData {
+            vertices: Vec::new(),
+            texture_coords: Vec::new(),
+            normals: Vec::new(),
+            groups: Vec::new(),
+            materials: HashMap::new(),
+            mtl_files: Vec::new(),
+        };
+        
+        let mut current_group = Group {
+            name: "default".to_string(),
+            faces: Vec::new(),
+        };
+        let mut current_material: Option<String> = None;
+        
+        for (line_num, line) in reader.lines().enumerate() {
+            let line = line.map_err(|e| Error::Io(e))?;
+            let line = line.trim();
+            
+            // Skip empty lines and comments
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.is_empty() {
+                continue;
+            }
+            
+            match parts[0] {
+                "v" => {
+                    // Vertex position
+                    if parts.len() < 4 {
+                        return Err(Error::InvalidData(
+                            format!("Invalid vertex at line {}: expected 3 coordinates", line_num + 1)
+                        ));
+                    }
+                    
+                    let x = parts[1].parse::<f32>()
+                        .map_err(|_| Error::InvalidData(format!("Invalid x coordinate at line {}", line_num + 1)))?;
+                    let y = parts[2].parse::<f32>()
+                        .map_err(|_| Error::InvalidData(format!("Invalid y coordinate at line {}", line_num + 1)))?;
+                    let z = parts[3].parse::<f32>()
+                        .map_err(|_| Error::InvalidData(format!("Invalid z coordinate at line {}", line_num + 1)))?;
+                    
+                    obj_data.vertices.push(Point3f::new(x, y, z));
+                }
+                "vt" => {
+                    // Texture coordinate
+                    if parts.len() < 3 {
+                        return Err(Error::InvalidData(
+                            format!("Invalid texture coordinate at line {}: expected 2 coordinates", line_num + 1)
+                        ));
+                    }
+                    
+                    let u = parts[1].parse::<f32>()
+                        .map_err(|_| Error::InvalidData(format!("Invalid u coordinate at line {}", line_num + 1)))?;
+                    let v = parts[2].parse::<f32>()
+                        .map_err(|_| Error::InvalidData(format!("Invalid v coordinate at line {}", line_num + 1)))?;
+                    
+                    obj_data.texture_coords.push([u, v]);
+                }
+                "vn" => {
+                    // Vertex normal
+                    if parts.len() < 4 {
+                        return Err(Error::InvalidData(
+                            format!("Invalid normal at line {}: expected 3 components", line_num + 1)
+                        ));
+                    }
+                    
+                    let x = parts[1].parse::<f32>()
+                        .map_err(|_| Error::InvalidData(format!("Invalid normal x at line {}", line_num + 1)))?;
+                    let y = parts[2].parse::<f32>()
+                        .map_err(|_| Error::InvalidData(format!("Invalid normal y at line {}", line_num + 1)))?;
+                    let z = parts[3].parse::<f32>()
+                        .map_err(|_| Error::InvalidData(format!("Invalid normal z at line {}", line_num + 1)))?;
+                    
+                    obj_data.normals.push(Vector3f::new(x, y, z));
+                }
+                "f" => {
+                    // Face
+                    if parts.len() < 4 {
+                        return Err(Error::InvalidData(
+                            format!("Invalid face at line {}: expected at least 3 vertices", line_num + 1)
+                        ));
+                    }
+                    
+                    let mut face_vertices = Vec::new();
+                    for vertex_str in &parts[1..] {
+                        let face_vertex = FaceVertex::parse(vertex_str)
+                            .map_err(|e| Error::InvalidData(format!("Invalid face vertex '{}' at line {}: {}", vertex_str, line_num + 1, e)))?;
+                        face_vertices.push(face_vertex);
+                    }
+                    
+                    // Triangulate if necessary
+                    let triangulated_faces = Self::triangulate_face(&face_vertices);
+                    for triangle in triangulated_faces {
+                        current_group.faces.push(Face {
+                            vertices: triangle,
+                            material: current_material.clone(),
+                        });
+                    }
+                }
+                "g" => {
+                    // Group
+                    if !current_group.faces.is_empty() || current_group.name != "default" {
+                        obj_data.groups.push(current_group);
+                    }
+                    
+                    let group_name = if parts.len() > 1 {
+                        parts[1..].join(" ")
+                    } else {
+                        format!("group_{}", obj_data.groups.len())
+                    };
+                    
+                    current_group = Group {
+                        name: group_name,
+                        faces: Vec::new(),
+                    };
+                }
+                "usemtl" => {
+                    // Use material
+                    if parts.len() > 1 {
+                        current_material = Some(parts[1].to_string());
+                    }
+                }
+                "mtllib" => {
+                    // Material library
+                    if parts.len() > 1 {
+                        let mtl_file = parts[1].to_string();
+                        obj_data.mtl_files.push(mtl_file.clone());
+                        
+                        // Try to load the MTL file
+                        let mtl_path = if let Some(parent) = path.parent() {
+                            parent.join(&mtl_file)
+                        } else {
+                            PathBuf::from(&mtl_file)
+                        };
+                        
+                        if let Ok(materials) = Self::read_mtl_file(&mtl_path) {
+                            obj_data.materials.extend(materials);
+                        }
+                    }
+                }
+                _ => {
+                    // Ignore unknown commands
+                }
+            }
+        }
+        
+        // Add the last group if it has faces
+        if !current_group.faces.is_empty() {
+            obj_data.groups.push(current_group);
+        }
+        
+        // If no groups were created, create a default group with all faces
+        if obj_data.groups.is_empty() {
+            obj_data.groups.push(Group {
+                name: "default".to_string(),
+                faces: Vec::new(),
+            });
+        }
+        
+        Ok(obj_data)
+    }
+
+    /// Read an MTL file and return materials
+    pub fn read_mtl_file<P: AsRef<Path>>(path: P) -> Result<HashMap<String, Material>> {
+        let file = File::open(path)
+            .map_err(|e| Error::Io(e))?;
+        let reader = BufReader::new(file);
+        
+        let mut materials = HashMap::new();
+        let mut current_material: Option<Material> = None;
+        
+        for (_line_num, line) in reader.lines().enumerate() {
+            let line = line.map_err(|e| Error::Io(e))?;
+            let line = line.trim();
+            
+            // Skip empty lines and comments
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.is_empty() {
+                continue;
+            }
+            
+            match parts[0] {
+                "newmtl" => {
+                    // Save previous material
+                    if let Some(material) = current_material.take() {
+                        materials.insert(material.name.clone(), material);
+                    }
+                    
+                    // Start new material
+                    if parts.len() > 1 {
+                        current_material = Some(Material::new(parts[1].to_string()));
+                    }
+                }
+                "Ka" => {
+                    // Ambient color
+                    if let Some(ref mut material) = current_material {
+                        if parts.len() >= 4 {
+                            if let (Ok(r), Ok(g), Ok(b)) = (
+                                parts[1].parse::<f32>(),
+                                parts[2].parse::<f32>(),
+                                parts[3].parse::<f32>()
+                            ) {
+                                material.ambient = Some([r, g, b]);
+                            }
+                        }
+                    }
+                }
+                "Kd" => {
+                    // Diffuse color
+                    if let Some(ref mut material) = current_material {
+                        if parts.len() >= 4 {
+                            if let (Ok(r), Ok(g), Ok(b)) = (
+                                parts[1].parse::<f32>(),
+                                parts[2].parse::<f32>(),
+                                parts[3].parse::<f32>()
+                            ) {
+                                material.diffuse = Some([r, g, b]);
+                            }
+                        }
+                    }
+                }
+                "Ks" => {
+                    // Specular color
+                    if let Some(ref mut material) = current_material {
+                        if parts.len() >= 4 {
+                            if let (Ok(r), Ok(g), Ok(b)) = (
+                                parts[1].parse::<f32>(),
+                                parts[2].parse::<f32>(),
+                                parts[3].parse::<f32>()
+                            ) {
+                                material.specular = Some([r, g, b]);
+                            }
+                        }
+                    }
+                }
+                "Ns" => {
+                    // Specular exponent
+                    if let Some(ref mut material) = current_material {
+                        if parts.len() > 1 {
+                            if let Ok(ns) = parts[1].parse::<f32>() {
+                                material.shininess = Some(ns);
+                            }
+                        }
+                    }
+                }
+                "d" => {
+                    // Transparency (dissolve)
+                    if let Some(ref mut material) = current_material {
+                        if parts.len() > 1 {
+                            if let Ok(d) = parts[1].parse::<f32>() {
+                                material.transparency = Some(d);
+                            }
+                        }
+                    }
+                }
+                "Tr" => {
+                    // Transparency (alternative)
+                    if let Some(ref mut material) = current_material {
+                        if parts.len() > 1 {
+                            if let Ok(tr) = parts[1].parse::<f32>() {
+                                material.transparency = Some(1.0 - tr); // Tr is inverse of d
+                            }
+                        }
+                    }
+                }
+                "illum" => {
+                    // Illumination model
+                    if let Some(ref mut material) = current_material {
+                        if parts.len() > 1 {
+                            if let Ok(illum) = parts[1].parse::<u32>() {
+                                material.illumination = Some(illum);
+                            }
+                        }
+                    }
+                }
+                "map_Kd" => {
+                    // Diffuse texture map
+                    if let Some(ref mut material) = current_material {
+                        if parts.len() > 1 {
+                            material.diffuse_map = Some(parts[1..].join(" "));
+                        }
+                    }
+                }
+                "map_Bump" | "bump" => {
+                    // Normal/bump map
+                    if let Some(ref mut material) = current_material {
+                        if parts.len() > 1 {
+                            material.normal_map = Some(parts[1..].join(" "));
+                        }
+                    }
+                }
+                "map_Ks" => {
+                    // Specular map
+                    if let Some(ref mut material) = current_material {
+                        if parts.len() > 1 {
+                            material.specular_map = Some(parts[1..].join(" "));
+                        }
+                    }
+                }
+                _ => {
+                    // Ignore unknown material properties
+                }
+            }
+        }
+        
+        // Save the last material
+        if let Some(material) = current_material {
+            materials.insert(material.name.clone(), material);
+        }
+        
+        Ok(materials)
+    }
+    
+    /// Triangulate a face with arbitrary number of vertices
+    fn triangulate_face(vertices: &[FaceVertex]) -> Vec<Vec<FaceVertex>> {
+        match vertices.len() {
+            3 => {
+                // Already a triangle
+                vec![vertices.to_vec()]
+            }
+            4 => {
+                // Quad - split into two triangles
+                vec![
+                    vec![vertices[0], vertices[1], vertices[2]],
+                    vec![vertices[0], vertices[2], vertices[3]],
+                ]
+            }
+            n if n > 4 => {
+                // N-gon - fan triangulation from first vertex
+                let mut triangles = Vec::new();
+                for i in 1..(n - 1) {
+                    triangles.push(vec![vertices[0], vertices[i], vertices[i + 1]]);
+                }
+                triangles
+            }
+            _ => {
+                // Degenerate face
+                vec![]
+            }
+        }
+    }
+    
+    /// Convert ObjData to TriangleMesh
+    pub fn obj_data_to_mesh(obj_data: &ObjData) -> Result<TriangleMesh> {
+        let mut mesh_faces = Vec::new();
+        let mut mesh_normals = Vec::new();
+        let mut has_normals = false;
+        
+        // Collect all faces from all groups
+        for group in &obj_data.groups {
+            for face in &group.faces {
+                if face.vertices.len() != 3 {
+                    continue; // Skip non-triangular faces (shouldn't happen after triangulation)
+                }
+                
+                // Extract vertex indices
+                let face_indices = [
+                    face.vertices[0].vertex,
+                    face.vertices[1].vertex,
+                    face.vertices[2].vertex,
+                ];
+                
+                // Validate vertex indices
+                for &idx in &face_indices {
+                    if idx >= obj_data.vertices.len() {
+                        return Err(Error::InvalidData(
+                            format!("Vertex index {} out of range (max: {})", idx, obj_data.vertices.len() - 1)
+                        ));
+                    }
+                }
+                
+                mesh_faces.push(face_indices);
+                
+                // Handle normals if available
+                if !obj_data.normals.is_empty() {
+                    for vertex in &face.vertices {
+                        if let Some(normal_idx) = vertex.normal {
+                            if normal_idx >= obj_data.normals.len() {
+                                return Err(Error::InvalidData(
+                                    format!("Normal index {} out of range (max: {})", normal_idx, obj_data.normals.len() - 1)
+                                ));
+                            }
+                            mesh_normals.push(obj_data.normals[normal_idx]);
+                            has_normals = true;
+                        } else if has_normals {
+                            // If some vertices have normals, all should have normals
+                            // Use a default normal for consistency
+                            mesh_normals.push(Vector3f::new(0.0, 0.0, 1.0));
+                        }
+                    }
+                }
+            }
+        }
+        
+        let mut mesh = TriangleMesh::from_vertices_and_faces(obj_data.vertices.clone(), mesh_faces);
+        
+        // Set normals if available
+        if has_normals && mesh_normals.len() == mesh.vertices.len() {
+            mesh.set_normals(mesh_normals);
+        }
+        
+        Ok(mesh)
+    }
 } 

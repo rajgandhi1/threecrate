@@ -10,6 +10,7 @@ pub mod error;
 
 pub use error::*;
 pub use ply::{RobustPlyReader, RobustPlyWriter, PlyWriteOptions, PlyFormat, PlyValue};
+pub use obj::{RobustObjReader, ObjData, Material, FaceVertex, Face, Group};
 
 use threecrate_core::{PointCloud, TriangleMesh, Result, Point3f};
 
@@ -558,6 +559,302 @@ end_header
         
         // Cleanup
         let _ = fs::remove_file(temp_file);
+    }
+
+    #[test]
+    fn test_robust_obj_reader_basic() {
+        let temp_file = "test_basic.obj";
+        
+        // Create a basic OBJ file
+        let obj_content = r#"# Basic OBJ test
+v 0.0 0.0 0.0
+v 1.0 0.0 0.0
+v 0.5 1.0 0.0
+f 1 2 3
+"#;
+        
+        std::fs::write(temp_file, obj_content).unwrap();
+        
+        // Test reading
+        let obj_data = obj::RobustObjReader::read_obj_file(temp_file).unwrap();
+        assert_eq!(obj_data.vertices.len(), 3);
+        assert_eq!(obj_data.groups.len(), 1);
+        assert_eq!(obj_data.groups[0].faces.len(), 1);
+        
+        // Test mesh conversion
+        let mesh = obj::RobustObjReader::obj_data_to_mesh(&obj_data).unwrap();
+        assert_eq!(mesh.vertex_count(), 3);
+        assert_eq!(mesh.face_count(), 1);
+        
+        // Cleanup
+        let _ = fs::remove_file(temp_file);
+    }
+
+    #[test]
+    fn test_robust_obj_reader_with_normals_and_textures() {
+        let temp_file = "test_with_normals.obj";
+        
+        // Create OBJ file with normals and texture coordinates
+        let obj_content = r#"# OBJ with normals and textures
+v 0.0 0.0 0.0
+v 1.0 0.0 0.0
+v 0.5 1.0 0.0
+vt 0.0 0.0
+vt 1.0 0.0
+vt 0.5 1.0
+vn 0.0 0.0 1.0
+vn 0.0 0.0 1.0
+vn 0.0 0.0 1.0
+f 1/1/1 2/2/2 3/3/3
+"#;
+        
+        std::fs::write(temp_file, obj_content).unwrap();
+        
+        // Test reading
+        let obj_data = obj::RobustObjReader::read_obj_file(temp_file).unwrap();
+        assert_eq!(obj_data.vertices.len(), 3);
+        assert_eq!(obj_data.texture_coords.len(), 3);
+        assert_eq!(obj_data.normals.len(), 3);
+        assert_eq!(obj_data.groups[0].faces.len(), 1);
+        
+        // Verify face vertex data
+        let face = &obj_data.groups[0].faces[0];
+        assert_eq!(face.vertices.len(), 3);
+        assert_eq!(face.vertices[0].vertex, 0);
+        assert_eq!(face.vertices[0].texture, Some(0));
+        assert_eq!(face.vertices[0].normal, Some(0));
+        
+        // Test mesh conversion with normals
+        let mesh = obj::RobustObjReader::obj_data_to_mesh(&obj_data).unwrap();
+        assert_eq!(mesh.vertex_count(), 3);
+        assert_eq!(mesh.face_count(), 1);
+        assert!(mesh.normals.is_some());
+        
+        // Cleanup
+        let _ = fs::remove_file(temp_file);
+    }
+
+    #[test]
+    fn test_robust_obj_reader_with_groups() {
+        let temp_file = "test_with_groups.obj";
+        
+        // Create OBJ file with multiple groups
+        let obj_content = r#"# OBJ with groups
+v 0.0 0.0 0.0
+v 1.0 0.0 0.0
+v 0.5 1.0 0.0
+v 0.0 0.0 1.0
+
+g group1
+f 1 2 3
+
+g group2
+f 1 3 4
+"#;
+        
+        std::fs::write(temp_file, obj_content).unwrap();
+        
+        // Test reading
+        let obj_data = obj::RobustObjReader::read_obj_file(temp_file).unwrap();
+        assert_eq!(obj_data.vertices.len(), 4);
+        assert_eq!(obj_data.groups.len(), 2);
+        assert_eq!(obj_data.groups[0].name, "group1");
+        assert_eq!(obj_data.groups[1].name, "group2");
+        assert_eq!(obj_data.groups[0].faces.len(), 1);
+        assert_eq!(obj_data.groups[1].faces.len(), 1);
+        
+        // Cleanup
+        let _ = fs::remove_file(temp_file);
+    }
+
+    #[test]
+    fn test_robust_obj_reader_with_materials() {
+        let obj_file = "test_with_materials.obj";
+        let mtl_file = "test_materials.mtl";
+        
+        // Create MTL file
+        let mtl_content = r#"# Test materials
+newmtl red_material
+Ka 0.2 0.0 0.0
+Kd 1.0 0.0 0.0
+Ks 0.5 0.5 0.5
+Ns 32.0
+d 1.0
+illum 2
+map_Kd red_texture.jpg
+
+newmtl blue_material
+Ka 0.0 0.0 0.2
+Kd 0.0 0.0 1.0
+Ks 0.5 0.5 0.5
+Ns 16.0
+d 0.8
+"#;
+        
+        std::fs::write(mtl_file, mtl_content).unwrap();
+        
+        // Create OBJ file with material references
+        let obj_content = r#"# OBJ with materials
+mtllib test_materials.mtl
+v 0.0 0.0 0.0
+v 1.0 0.0 0.0
+v 0.5 1.0 0.0
+v 0.0 0.0 1.0
+
+usemtl red_material
+f 1 2 3
+
+usemtl blue_material
+f 1 3 4
+"#;
+        
+        std::fs::write(obj_file, obj_content).unwrap();
+        
+        // Test reading
+        let obj_data = obj::RobustObjReader::read_obj_file(obj_file).unwrap();
+        assert_eq!(obj_data.vertices.len(), 4);
+        assert_eq!(obj_data.mtl_files.len(), 1);
+        assert_eq!(obj_data.materials.len(), 2);
+        
+        // Verify materials
+        let red_material = obj_data.materials.get("red_material").unwrap();
+        assert_eq!(red_material.diffuse, Some([1.0, 0.0, 0.0]));
+        assert_eq!(red_material.shininess, Some(32.0));
+        assert_eq!(red_material.diffuse_map, Some("red_texture.jpg".to_string()));
+        
+        let blue_material = obj_data.materials.get("blue_material").unwrap();
+        assert_eq!(blue_material.diffuse, Some([0.0, 0.0, 1.0]));
+        assert_eq!(blue_material.transparency, Some(0.8));
+        
+        // Verify face materials
+        assert_eq!(obj_data.groups[0].faces[0].material, Some("red_material".to_string()));
+        assert_eq!(obj_data.groups[0].faces[1].material, Some("blue_material".to_string()));
+        
+        // Cleanup
+        let _ = fs::remove_file(obj_file);
+        let _ = fs::remove_file(mtl_file);
+    }
+
+    #[test]
+    fn test_robust_obj_reader_polygon_triangulation() {
+        let temp_file = "test_polygons.obj";
+        
+        // Create OBJ file with quads and n-gons
+        let obj_content = r#"# OBJ with polygons
+v 0.0 0.0 0.0
+v 1.0 0.0 0.0
+v 1.0 1.0 0.0
+v 0.0 1.0 0.0
+v 2.0 0.0 0.0
+v 2.0 1.0 0.0
+
+# Quad (should become 2 triangles)
+f 1 2 3 4
+
+# Pentagon (should become 3 triangles)
+f 1 2 5 6 4
+"#;
+        
+        std::fs::write(temp_file, obj_content).unwrap();
+        
+        // Test reading
+        let obj_data = obj::RobustObjReader::read_obj_file(temp_file).unwrap();
+        assert_eq!(obj_data.vertices.len(), 6);
+        
+        // Quad should become 2 triangles, pentagon should become 3 triangles
+        assert_eq!(obj_data.groups[0].faces.len(), 5);
+        
+        // All faces should be triangles
+        for face in &obj_data.groups[0].faces {
+            assert_eq!(face.vertices.len(), 3);
+        }
+        
+        // Test mesh conversion
+        let mesh = obj::RobustObjReader::obj_data_to_mesh(&obj_data).unwrap();
+        assert_eq!(mesh.vertex_count(), 6);
+        assert_eq!(mesh.face_count(), 5);
+        
+        // Cleanup
+        let _ = fs::remove_file(temp_file);
+    }
+
+    #[test]
+    fn test_robust_obj_reader_error_handling() {
+        // Test invalid vertex
+        let invalid_vertex = "test_invalid_vertex.obj";
+        std::fs::write(invalid_vertex, "v 1.0 invalid 3.0\n").unwrap();
+        let result = obj::RobustObjReader::read_obj_file(invalid_vertex);
+        assert!(result.is_err());
+        let _ = fs::remove_file(invalid_vertex);
+        
+        // Test invalid face
+        let invalid_face = "test_invalid_face.obj";
+        std::fs::write(invalid_face, "v 0.0 0.0 0.0\nf 1 invalid 3\n").unwrap();
+        let result = obj::RobustObjReader::read_obj_file(invalid_face);
+        assert!(result.is_err());
+        let _ = fs::remove_file(invalid_face);
+        
+        // Test out of range vertex index
+        let out_of_range = "test_out_of_range.obj";
+        std::fs::write(out_of_range, "v 0.0 0.0 0.0\nf 1 2 3\n").unwrap();
+        let obj_data = obj::RobustObjReader::read_obj_file(out_of_range).unwrap();
+        let result = obj::RobustObjReader::obj_data_to_mesh(&obj_data);
+        assert!(result.is_err());
+        let _ = fs::remove_file(out_of_range);
+    }
+
+    #[test]
+    fn test_mtl_reader_standalone() {
+        let mtl_file = "test_standalone.mtl";
+        
+        // Create comprehensive MTL file
+        let mtl_content = r#"# Comprehensive MTL test
+newmtl material1
+Ka 0.1 0.2 0.3
+Kd 0.4 0.5 0.6
+Ks 0.7 0.8 0.9
+Ns 96.0
+d 0.9
+Tr 0.1
+illum 2
+map_Kd diffuse.png
+map_Bump normal.png
+map_Ks specular.png
+
+newmtl material2
+Kd 1.0 0.0 0.0
+Ns 32
+d 1.0
+illum 1
+"#;
+        
+        std::fs::write(mtl_file, mtl_content).unwrap();
+        
+        // Test reading
+        let materials = obj::RobustObjReader::read_mtl_file(mtl_file).unwrap();
+        assert_eq!(materials.len(), 2);
+        
+        // Test material1
+        let mat1 = materials.get("material1").unwrap();
+        assert_eq!(mat1.ambient, Some([0.1, 0.2, 0.3]));
+        assert_eq!(mat1.diffuse, Some([0.4, 0.5, 0.6]));
+        assert_eq!(mat1.specular, Some([0.7, 0.8, 0.9]));
+        assert_eq!(mat1.shininess, Some(96.0));
+        assert_eq!(mat1.transparency, Some(0.9));
+        assert_eq!(mat1.illumination, Some(2));
+        assert_eq!(mat1.diffuse_map, Some("diffuse.png".to_string()));
+        assert_eq!(mat1.normal_map, Some("normal.png".to_string()));
+        assert_eq!(mat1.specular_map, Some("specular.png".to_string()));
+        
+        // Test material2
+        let mat2 = materials.get("material2").unwrap();
+        assert_eq!(mat2.diffuse, Some([1.0, 0.0, 0.0]));
+        assert_eq!(mat2.shininess, Some(32.0));
+        assert_eq!(mat2.transparency, Some(1.0));
+        assert_eq!(mat2.illumination, Some(1));
+        
+        // Cleanup
+        let _ = fs::remove_file(mtl_file);
     }
 
     #[test]
