@@ -10,7 +10,7 @@ pub mod error;
 
 pub use error::*;
 pub use ply::{RobustPlyReader, RobustPlyWriter, PlyWriteOptions, PlyFormat, PlyValue};
-pub use obj::{RobustObjReader, ObjData, Material, FaceVertex, Face, Group};
+pub use obj::{RobustObjReader, RobustObjWriter, ObjData, ObjWriteOptions, Material, FaceVertex, Face, Group};
 
 use threecrate_core::{PointCloud, TriangleMesh, Result, Point3f};
 
@@ -70,6 +70,7 @@ mod tests {
     use threecrate_core::{Point3f, Vector3f};
     use std::fs;
     use std::io::Write;
+    use std::collections::HashMap;
 
     #[test]
     fn test_ply_point_cloud_roundtrip() {
@@ -852,6 +853,296 @@ illum 1
         assert_eq!(mat2.shininess, Some(32.0));
         assert_eq!(mat2.transparency, Some(1.0));
         assert_eq!(mat2.illumination, Some(1));
+        
+        // Cleanup
+        let _ = fs::remove_file(mtl_file);
+    }
+
+    #[test]
+    fn test_robust_obj_writer_basic() {
+        let temp_file = "test_writer_basic.obj";
+        
+        // Create test mesh
+        let vertices = vec![
+            Point3f::new(0.0, 0.0, 0.0),
+            Point3f::new(1.0, 0.0, 0.0),
+            Point3f::new(0.5, 1.0, 0.0),
+        ];
+        let faces = vec![[0, 1, 2]];
+        let mesh = TriangleMesh::from_vertices_and_faces(vertices, faces);
+        
+        // Write with basic options
+        let options = obj::ObjWriteOptions::new()
+            .with_comment("Test mesh")
+            .with_normals(false);
+        
+        obj::RobustObjWriter::write_mesh(&mesh, temp_file, &options).unwrap();
+        
+        // Read back and verify
+        let loaded_mesh = obj::ObjReader::read_mesh(temp_file).unwrap();
+        assert_eq!(mesh.vertex_count(), loaded_mesh.vertex_count());
+        assert_eq!(mesh.face_count(), loaded_mesh.face_count());
+        
+        // Verify file contents
+        let content = std::fs::read_to_string(temp_file).unwrap();
+        assert!(content.contains("# Test mesh"));
+        assert!(content.contains("v 0 0 0"));
+        assert!(content.contains("v 1 0 0"));
+        assert!(content.contains("v 0.5 1 0"));
+        assert!(content.contains("f 1 2 3"));
+        
+        // Cleanup
+        let _ = fs::remove_file(temp_file);
+    }
+
+    #[test]
+    fn test_robust_obj_writer_with_normals() {
+        let temp_file = "test_writer_normals.obj";
+        
+        // Create test mesh with normals
+        let vertices = vec![
+            Point3f::new(0.0, 0.0, 0.0),
+            Point3f::new(1.0, 0.0, 0.0),
+            Point3f::new(0.5, 1.0, 0.0),
+        ];
+        let faces = vec![[0, 1, 2]];
+        let normals = vec![
+            Vector3f::new(0.0, 0.0, 1.0),
+            Vector3f::new(0.0, 0.0, 1.0),
+            Vector3f::new(0.0, 0.0, 1.0),
+        ];
+        
+        let mut mesh = TriangleMesh::from_vertices_and_faces(vertices, faces);
+        mesh.set_normals(normals);
+        
+        // Write with normals enabled
+        let options = obj::ObjWriteOptions::new()
+            .with_normals(true)
+            .with_group_name("test_group");
+        
+        obj::RobustObjWriter::write_mesh(&mesh, temp_file, &options).unwrap();
+        
+        // Read back and verify
+        let loaded_mesh = obj::ObjReader::read_mesh(temp_file).unwrap();
+        assert_eq!(mesh.vertex_count(), loaded_mesh.vertex_count());
+        assert_eq!(mesh.face_count(), loaded_mesh.face_count());
+        assert!(loaded_mesh.normals.is_some());
+        
+        // Verify file contents
+        let content = std::fs::read_to_string(temp_file).unwrap();
+        assert!(content.contains("vn 0 0 1"));
+        assert!(content.contains("g test_group"));
+        assert!(content.contains("f 1//1 2//2 3//3"));
+        
+        // Cleanup
+        let _ = fs::remove_file(temp_file);
+    }
+
+    #[test]
+    fn test_robust_obj_writer_with_materials() {
+        let obj_file = "test_writer_materials.obj";
+        let mtl_file = "test_writer_materials.mtl";
+        
+        // Create test mesh
+        let vertices = vec![
+            Point3f::new(0.0, 0.0, 0.0),
+            Point3f::new(1.0, 0.0, 0.0),
+            Point3f::new(0.5, 1.0, 0.0),
+            Point3f::new(0.0, 0.0, 1.0),
+        ];
+        let faces = vec![[0, 1, 2], [0, 2, 3]];
+        let mesh = TriangleMesh::from_vertices_and_faces(vertices, faces);
+        
+        // Write with materials
+        let options = obj::ObjWriteOptions::new()
+            .with_materials(true)
+            .with_material_name("test_material")
+            .with_object_name("test_object");
+        
+        obj::RobustObjWriter::write_mesh(&mesh, obj_file, &options).unwrap();
+        
+        // Verify OBJ file
+        let obj_content = std::fs::read_to_string(obj_file).unwrap();
+        assert!(obj_content.contains("mtllib test_writer_materials.mtl"));
+        assert!(obj_content.contains("o test_object"));
+        assert!(obj_content.contains("usemtl test_material"));
+        
+        // Verify MTL file was created
+        assert!(std::path::Path::new(mtl_file).exists());
+        let mtl_content = std::fs::read_to_string(mtl_file).unwrap();
+        assert!(mtl_content.contains("newmtl test_material"));
+        
+        // Test round-trip
+        let loaded_obj_data = obj::RobustObjReader::read_obj_file(obj_file).unwrap();
+        assert_eq!(loaded_obj_data.materials.len(), 1);
+        assert!(loaded_obj_data.materials.contains_key("test_material"));
+        
+        // Cleanup
+        let _ = fs::remove_file(obj_file);
+        let _ = fs::remove_file(mtl_file);
+    }
+
+    #[test]
+    fn test_robust_obj_writer_obj_data_round_trip() {
+        let obj_file = "test_round_trip.obj";
+        let mtl_file = "test_round_trip.mtl";
+        
+        // Create complex ObjData
+        let vertices = vec![
+            Point3f::new(0.0, 0.0, 0.0),
+            Point3f::new(1.0, 0.0, 0.0),
+            Point3f::new(0.5, 1.0, 0.0),
+            Point3f::new(0.0, 0.0, 1.0),
+        ];
+        
+        let texture_coords = vec![
+            [0.0, 0.0],
+            [1.0, 0.0],
+            [0.5, 1.0],
+            [0.0, 1.0],
+        ];
+        
+        let normals = vec![
+            Vector3f::new(0.0, 0.0, 1.0),
+            Vector3f::new(0.0, 0.0, 1.0),
+            Vector3f::new(0.0, 0.0, 1.0),
+            Vector3f::new(0.0, 1.0, 0.0),
+        ];
+        
+        // Create materials
+        let mut materials = HashMap::new();
+        let mut red_material = obj::Material::new("red".to_string());
+        red_material.diffuse = Some([1.0, 0.0, 0.0]);
+        red_material.shininess = Some(32.0);
+        materials.insert("red".to_string(), red_material);
+        
+        let mut blue_material = obj::Material::new("blue".to_string());
+        blue_material.diffuse = Some([0.0, 0.0, 1.0]);
+        blue_material.transparency = Some(0.8);
+        materials.insert("blue".to_string(), blue_material);
+        
+        // Create faces with different materials
+        let face1 = obj::Face {
+            vertices: vec![
+                obj::FaceVertex { vertex: 0, texture: Some(0), normal: Some(0) },
+                obj::FaceVertex { vertex: 1, texture: Some(1), normal: Some(1) },
+                obj::FaceVertex { vertex: 2, texture: Some(2), normal: Some(2) },
+            ],
+            material: Some("red".to_string()),
+        };
+        
+        let face2 = obj::Face {
+            vertices: vec![
+                obj::FaceVertex { vertex: 0, texture: Some(0), normal: Some(0) },
+                obj::FaceVertex { vertex: 2, texture: Some(2), normal: Some(2) },
+                obj::FaceVertex { vertex: 3, texture: Some(3), normal: Some(3) },
+            ],
+            material: Some("blue".to_string()),
+        };
+        
+        let group = obj::Group {
+            name: "test_group".to_string(),
+            faces: vec![face1, face2],
+        };
+        
+        let original_obj_data = obj::ObjData {
+            vertices,
+            texture_coords,
+            normals,
+            groups: vec![group],
+            materials,
+            mtl_files: vec!["test_round_trip.mtl".to_string()],
+        };
+        
+        // Write OBJ data
+        let options = obj::ObjWriteOptions::new()
+            .with_normals(true)
+            .with_texcoords(true)
+            .with_materials(true);
+        
+        obj::RobustObjWriter::write_obj_file(&original_obj_data, obj_file, &options).unwrap();
+        
+        // Read back
+        let loaded_obj_data = obj::RobustObjReader::read_obj_file(obj_file).unwrap();
+        
+        // Verify structure
+        assert_eq!(original_obj_data.vertices.len(), loaded_obj_data.vertices.len());
+        assert_eq!(original_obj_data.texture_coords.len(), loaded_obj_data.texture_coords.len());
+        assert_eq!(original_obj_data.normals.len(), loaded_obj_data.normals.len());
+        assert_eq!(original_obj_data.groups.len(), loaded_obj_data.groups.len());
+        assert_eq!(original_obj_data.materials.len(), loaded_obj_data.materials.len());
+        
+        // Verify vertices
+        for (orig, loaded) in original_obj_data.vertices.iter().zip(loaded_obj_data.vertices.iter()) {
+            assert!((orig.x - loaded.x).abs() < 1e-6);
+            assert!((orig.y - loaded.y).abs() < 1e-6);
+            assert!((orig.z - loaded.z).abs() < 1e-6);
+        }
+        
+        // Verify materials
+        for (name, orig_material) in &original_obj_data.materials {
+            let loaded_material = loaded_obj_data.materials.get(name).unwrap();
+            assert_eq!(orig_material.diffuse, loaded_material.diffuse);
+            assert_eq!(orig_material.shininess, loaded_material.shininess);
+            assert_eq!(orig_material.transparency, loaded_material.transparency);
+        }
+        
+        // Verify groups and faces
+        let orig_group = &original_obj_data.groups[0];
+        let loaded_group = &loaded_obj_data.groups[0];
+        assert_eq!(orig_group.name, loaded_group.name);
+        assert_eq!(orig_group.faces.len(), loaded_group.faces.len());
+        
+        // Cleanup
+        let _ = fs::remove_file(obj_file);
+        let _ = fs::remove_file(mtl_file);
+    }
+
+    #[test]
+    fn test_mtl_writer_standalone() {
+        let mtl_file = "test_mtl_writer.mtl";
+        
+        // Create materials
+        let mut materials = HashMap::new();
+        
+        let mut plastic = obj::Material::new("plastic".to_string());
+        plastic.ambient = Some([0.1, 0.1, 0.1]);
+        plastic.diffuse = Some([0.8, 0.2, 0.2]);
+        plastic.specular = Some([0.9, 0.9, 0.9]);
+        plastic.shininess = Some(32.0);
+        plastic.transparency = Some(1.0);
+        plastic.illumination = Some(2);
+        plastic.diffuse_map = Some("texture.jpg".to_string());
+        materials.insert("plastic".to_string(), plastic);
+        
+        let mut glass = obj::Material::new("glass".to_string());
+        glass.diffuse = Some([0.0, 0.8, 0.0]);
+        glass.transparency = Some(0.5);
+        glass.illumination = Some(4);
+        materials.insert("glass".to_string(), glass);
+        
+        // Write MTL file
+        obj::RobustObjWriter::write_mtl_file(&materials, mtl_file).unwrap();
+        
+        // Read back and verify
+        let loaded_materials = obj::RobustObjReader::read_mtl_file(mtl_file).unwrap();
+        assert_eq!(materials.len(), loaded_materials.len());
+        
+        // Verify plastic material
+        let loaded_plastic = loaded_materials.get("plastic").unwrap();
+        assert_eq!(loaded_plastic.ambient, Some([0.1, 0.1, 0.1]));
+        assert_eq!(loaded_plastic.diffuse, Some([0.8, 0.2, 0.2]));
+        assert_eq!(loaded_plastic.specular, Some([0.9, 0.9, 0.9]));
+        assert_eq!(loaded_plastic.shininess, Some(32.0));
+        assert_eq!(loaded_plastic.transparency, Some(1.0));
+        assert_eq!(loaded_plastic.illumination, Some(2));
+        assert_eq!(loaded_plastic.diffuse_map, Some("texture.jpg".to_string()));
+        
+        // Verify glass material
+        let loaded_glass = loaded_materials.get("glass").unwrap();
+        assert_eq!(loaded_glass.diffuse, Some([0.0, 0.8, 0.0]));
+        assert_eq!(loaded_glass.transparency, Some(0.5));
+        assert_eq!(loaded_glass.illumination, Some(4));
         
         // Cleanup
         let _ = fs::remove_file(mtl_file);
