@@ -67,6 +67,7 @@ mod tests {
     use super::*;
     use threecrate_core::{Point3f, Vector3f};
     use std::fs;
+    use std::io::Write;
 
     #[test]
     fn test_ply_point_cloud_roundtrip() {
@@ -89,6 +90,213 @@ mod tests {
             assert!((original.y - loaded.y).abs() < 1e-6);
             assert!((original.z - loaded.z).abs() < 1e-6);
         }
+        
+        // Cleanup
+        let _ = fs::remove_file(temp_file);
+    }
+
+    #[test]
+    fn test_robust_ply_ascii_parsing() {
+        let temp_file = "test_robust_ascii.ply";
+        
+        // Create a test ASCII PLY file manually
+        let ply_content = r#"ply
+format ascii 1.0
+comment This is a test file
+obj_info Created by threecrate test
+element vertex 4
+property float x
+property float y
+property float z
+property float nx
+property float ny
+property float nz
+property uchar red
+property uchar green
+property uchar blue
+element face 2
+property list uchar int vertex_indices
+end_header
+0.0 0.0 0.0 0.0 0.0 1.0 255 0 0
+1.0 0.0 0.0 0.0 0.0 1.0 0 255 0
+1.0 1.0 0.0 0.0 0.0 1.0 0 0 255
+0.0 1.0 0.0 0.0 0.0 1.0 255 255 255
+3 0 1 2
+3 0 2 3
+"#;
+        
+        std::fs::write(temp_file, ply_content).unwrap();
+        
+        // Test robust reader
+        let ply_data = ply::RobustPlyReader::read_ply_file(temp_file).unwrap();
+        
+        // Verify header
+        assert_eq!(ply_data.header.format, ply::PlyFormat::Ascii);
+        assert_eq!(ply_data.header.version, "1.0");
+        assert_eq!(ply_data.header.comments.len(), 1);
+        assert_eq!(ply_data.header.comments[0], "This is a test file");
+        assert_eq!(ply_data.header.obj_info.len(), 1);
+        assert_eq!(ply_data.header.obj_info[0], "Created by threecrate test");
+        
+        // Verify elements
+        assert_eq!(ply_data.header.elements.len(), 2);
+        assert_eq!(ply_data.header.elements[0].name, "vertex");
+        assert_eq!(ply_data.header.elements[0].count, 4);
+        assert_eq!(ply_data.header.elements[1].name, "face");
+        assert_eq!(ply_data.header.elements[1].count, 2);
+        
+        // Verify vertex data
+        let vertices = ply_data.elements.get("vertex").unwrap();
+        assert_eq!(vertices.len(), 4);
+        
+        let first_vertex = &vertices[0];
+        assert_eq!(first_vertex.get("x").unwrap().as_f32().unwrap(), 0.0);
+        assert_eq!(first_vertex.get("y").unwrap().as_f32().unwrap(), 0.0);
+        assert_eq!(first_vertex.get("z").unwrap().as_f32().unwrap(), 0.0);
+        assert_eq!(first_vertex.get("nx").unwrap().as_f32().unwrap(), 0.0);
+        assert_eq!(first_vertex.get("red").unwrap().as_f32().unwrap(), 255.0);
+        
+        // Verify face data
+        let faces = ply_data.elements.get("face").unwrap();
+        assert_eq!(faces.len(), 2);
+        
+        let first_face = &faces[0];
+        let indices = first_face.get("vertex_indices").unwrap().as_usize_list().unwrap();
+        assert_eq!(indices, vec![0, 1, 2]);
+        
+        // Test mesh reading through the standard interface
+        let mesh = ply::PlyReader::read_mesh(temp_file).unwrap();
+        assert_eq!(mesh.vertex_count(), 4);
+        assert_eq!(mesh.face_count(), 2);
+        assert!(mesh.normals.is_some());
+        
+        // Cleanup
+        let _ = fs::remove_file(temp_file);
+    }
+
+    #[test]
+    fn test_robust_ply_binary_little_endian() {
+        let temp_file = "test_binary_le.ply";
+        
+        // Create a simple binary PLY file
+        let header = "ply\nformat binary_little_endian 1.0\nelement vertex 2\nproperty float x\nproperty float y\nproperty float z\nend_header\n";
+        let mut file = std::fs::File::create(temp_file).unwrap();
+        file.write_all(header.as_bytes()).unwrap();
+        
+        // Write binary vertex data (little endian)
+        use byteorder::{LittleEndian, WriteBytesExt};
+        file.write_f32::<LittleEndian>(1.0).unwrap(); // x
+        file.write_f32::<LittleEndian>(2.0).unwrap(); // y
+        file.write_f32::<LittleEndian>(3.0).unwrap(); // z
+        file.write_f32::<LittleEndian>(4.0).unwrap(); // x
+        file.write_f32::<LittleEndian>(5.0).unwrap(); // y
+        file.write_f32::<LittleEndian>(6.0).unwrap(); // z
+        file.flush().unwrap();
+        drop(file);
+        
+        // Test reading
+        let ply_data = ply::RobustPlyReader::read_ply_file(temp_file).unwrap();
+        assert_eq!(ply_data.header.format, ply::PlyFormat::BinaryLittleEndian);
+        
+        let vertices = ply_data.elements.get("vertex").unwrap();
+        assert_eq!(vertices.len(), 2);
+        
+        let first_vertex = &vertices[0];
+        assert_eq!(first_vertex.get("x").unwrap().as_f32().unwrap(), 1.0);
+        assert_eq!(first_vertex.get("y").unwrap().as_f32().unwrap(), 2.0);
+        assert_eq!(first_vertex.get("z").unwrap().as_f32().unwrap(), 3.0);
+        
+        let second_vertex = &vertices[1];
+        assert_eq!(second_vertex.get("x").unwrap().as_f32().unwrap(), 4.0);
+        assert_eq!(second_vertex.get("y").unwrap().as_f32().unwrap(), 5.0);
+        assert_eq!(second_vertex.get("z").unwrap().as_f32().unwrap(), 6.0);
+        
+        // Test point cloud reading
+        let cloud = ply::PlyReader::read_point_cloud(temp_file).unwrap();
+        assert_eq!(cloud.len(), 2);
+        assert_eq!(cloud[0], Point3f::new(1.0, 2.0, 3.0));
+        assert_eq!(cloud[1], Point3f::new(4.0, 5.0, 6.0));
+        
+        // Cleanup
+        let _ = fs::remove_file(temp_file);
+    }
+
+    #[test]
+    fn test_robust_ply_binary_big_endian() {
+        let temp_file = "test_binary_be.ply";
+        
+        // Create a simple binary PLY file
+        let header = "ply\nformat binary_big_endian 1.0\nelement vertex 1\nproperty float x\nproperty float y\nproperty float z\nend_header\n";
+        let mut file = std::fs::File::create(temp_file).unwrap();
+        file.write_all(header.as_bytes()).unwrap();
+        
+        // Write binary vertex data (big endian)
+        use byteorder::{BigEndian, WriteBytesExt};
+        file.write_f32::<BigEndian>(10.0).unwrap(); // x
+        file.write_f32::<BigEndian>(20.0).unwrap(); // y
+        file.write_f32::<BigEndian>(30.0).unwrap(); // z
+        file.flush().unwrap();
+        drop(file);
+        
+        // Test reading
+        let ply_data = ply::RobustPlyReader::read_ply_file(temp_file).unwrap();
+        assert_eq!(ply_data.header.format, ply::PlyFormat::BinaryBigEndian);
+        
+        let vertices = ply_data.elements.get("vertex").unwrap();
+        assert_eq!(vertices.len(), 1);
+        
+        let vertex = &vertices[0];
+        assert_eq!(vertex.get("x").unwrap().as_f32().unwrap(), 10.0);
+        assert_eq!(vertex.get("y").unwrap().as_f32().unwrap(), 20.0);
+        assert_eq!(vertex.get("z").unwrap().as_f32().unwrap(), 30.0);
+        
+        // Cleanup
+        let _ = fs::remove_file(temp_file);
+    }
+
+    #[test]
+    fn test_robust_ply_error_handling() {
+        let temp_file = "test_invalid.ply";
+        
+        // Test invalid magic number
+        std::fs::write(temp_file, "not_ply\n").unwrap();
+        let result = ply::RobustPlyReader::read_ply_file(temp_file);
+        assert!(result.is_err());
+        
+        // Test missing format
+        std::fs::write(temp_file, "ply\nelement vertex 1\nend_header\n").unwrap();
+        let result = ply::RobustPlyReader::read_ply_file(temp_file);
+        assert!(result.is_err());
+        
+        // Test invalid format
+        std::fs::write(temp_file, "ply\nformat unknown_format 1.0\nend_header\n").unwrap();
+        let result = ply::RobustPlyReader::read_ply_file(temp_file);
+        assert!(result.is_err());
+        
+        // Cleanup
+        let _ = fs::remove_file(temp_file);
+    }
+
+    #[test]
+    fn test_robust_ply_list_properties() {
+        let temp_file = "test_list_props.ply";
+        
+        // Create PLY with list properties
+        let ply_content = r#"ply
+format ascii 1.0
+element face 1
+property list uchar int vertex_indices
+end_header
+4 10 20 30 40
+"#;
+        
+        std::fs::write(temp_file, ply_content).unwrap();
+        
+        let ply_data = ply::RobustPlyReader::read_ply_file(temp_file).unwrap();
+        let faces = ply_data.elements.get("face").unwrap();
+        let face = &faces[0];
+        let indices = face.get("vertex_indices").unwrap().as_usize_list().unwrap();
+        assert_eq!(indices, vec![10, 20, 30, 40]);
         
         // Cleanup
         let _ = fs::remove_file(temp_file);
