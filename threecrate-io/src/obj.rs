@@ -251,15 +251,32 @@ impl FaceVertex {
     }
 }
 
-impl MeshReader for ObjReader {
-    fn read_mesh<P: AsRef<Path>>(path: P) -> Result<TriangleMesh> {
+impl crate::registry::MeshReader for ObjReader {
+    fn read_mesh(&self, path: &Path) -> Result<TriangleMesh> {
         let obj_data = RobustObjReader::read_obj_file(path)?;
         RobustObjReader::obj_data_to_mesh(&obj_data)
     }
+    
+    fn can_read(&self, path: &Path) -> bool {
+        // Check if file starts with "#" or "v " (vertex definition)
+        if let Ok(file) = File::open(path) {
+            let mut reader = BufReader::new(file);
+            let mut line = String::new();
+            if let Ok(_) = reader.read_line(&mut line) {
+                let trimmed = line.trim();
+                return trimmed.starts_with("#") || trimmed.starts_with("v ");
+            }
+        }
+        false
+    }
+    
+    fn format_name(&self) -> &'static str {
+        "obj"
+    }
 }
 
-impl MeshWriter for ObjWriter {
-    fn write_mesh<P: AsRef<Path>>(mesh: &TriangleMesh, path: P) -> Result<()> {
+impl crate::registry::MeshWriter for ObjWriter {
+    fn write_mesh(&self, mesh: &TriangleMesh, path: &Path) -> Result<()> {
         let file = File::create(path)?;
         let mut writer = BufWriter::new(file);
         
@@ -309,6 +326,25 @@ impl MeshWriter for ObjWriter {
         }
         
         Ok(())
+    }
+    
+    fn format_name(&self) -> &'static str {
+        "obj"
+    }
+}
+
+// Keep the legacy trait implementations for backward compatibility
+impl MeshReader for ObjReader {
+    fn read_mesh<P: AsRef<Path>>(path: P) -> Result<TriangleMesh> {
+        let reader = ObjReader;
+        crate::registry::MeshReader::read_mesh(&reader, path.as_ref())
+    }
+}
+
+impl MeshWriter for ObjWriter {
+    fn write_mesh<P: AsRef<Path>>(mesh: &TriangleMesh, path: P) -> Result<()> {
+        let writer = ObjWriter;
+        crate::registry::MeshWriter::write_mesh(&writer, mesh, path.as_ref())
     }
 }
 

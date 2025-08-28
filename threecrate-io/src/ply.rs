@@ -972,8 +972,9 @@ impl PlyValue {
 pub struct PlyReader;
 pub struct PlyWriter;
 
-impl PointCloudReader for PlyReader {
-    fn read_point_cloud<P: AsRef<Path>>(path: P) -> Result<PointCloud<Point3f>> {
+// Implement the new unified traits
+impl crate::registry::PointCloudReader for PlyReader {
+    fn read_point_cloud(&self, path: &Path) -> Result<PointCloud<Point3f>> {
         // Use the robust reader for better format support
         let ply_data = RobustPlyReader::read_ply_file(path)?;
         
@@ -997,10 +998,25 @@ impl PointCloudReader for PlyReader {
         
         Ok(PointCloud::from_points(points))
     }
+    
+    fn can_read(&self, path: &Path) -> bool {
+        // Check if file starts with "ply"
+        if let Ok(mut file) = File::open(path) {
+            let mut header = [0u8; 4];
+            if let Ok(_) = file.read(&mut header) {
+                return header.starts_with(b"ply");
+            }
+        }
+        false
+    }
+    
+    fn format_name(&self) -> &'static str {
+        "ply"
+    }
 }
 
-impl MeshReader for PlyReader {
-    fn read_mesh<P: AsRef<Path>>(path: P) -> Result<TriangleMesh> {
+impl crate::registry::MeshReader for PlyReader {
+    fn read_mesh(&self, path: &Path) -> Result<TriangleMesh> {
         let ply_data = RobustPlyReader::read_ply_file(path)?;
         
         // Extract vertices
@@ -1067,7 +1083,7 @@ impl MeshReader for PlyReader {
                 }
             }
             
-            if has_normals && !normals.is_empty() {
+            if has_normals {
                 Some(normals)
             } else {
                 None
@@ -1083,13 +1099,27 @@ impl MeshReader for PlyReader {
         
         Ok(mesh)
     }
+    
+    fn can_read(&self, path: &Path) -> bool {
+        // Check if file starts with "ply"
+        if let Ok(mut file) = File::open(path) {
+            let mut header = [0u8; 4];
+            if let Ok(_) = file.read(&mut header) {
+                return header.starts_with(b"ply");
+            }
+        }
+        false
+    }
+    
+    fn format_name(&self) -> &'static str {
+        "ply"
+    }
 }
 
-impl PointCloudWriter for PlyWriter {
-    fn write_point_cloud<P: AsRef<Path>>(cloud: &PointCloud<Point3f>, path: P) -> Result<()> {
+impl crate::registry::PointCloudWriter for PlyWriter {
+    fn write_point_cloud(&self, cloud: &PointCloud<Point3f>, path: &Path) -> Result<()> {
         // Use the legacy ply-rs for writing for now
         use ply_rs::{
-
             writer::Writer,
             ply::{Property, PropertyDef, PropertyType, ScalarType, ElementDef, Ply, Addable, DefaultElement},
         };
@@ -1135,13 +1165,16 @@ impl PointCloudWriter for PlyWriter {
         
         Ok(())
     }
+    
+    fn format_name(&self) -> &'static str {
+        "ply"
+    }
 }
 
-impl MeshWriter for PlyWriter {
-    fn write_mesh<P: AsRef<Path>>(mesh: &TriangleMesh, path: P) -> Result<()> {
+impl crate::registry::MeshWriter for PlyWriter {
+    fn write_mesh(&self, mesh: &TriangleMesh, path: &Path) -> Result<()> {
         // Use the legacy ply-rs for writing for now
         use ply_rs::{
-
             writer::Writer,
             ply::{Property, PropertyDef, PropertyType, ScalarType, ElementDef, Ply, Addable, DefaultElement},
         };
@@ -1186,50 +1219,52 @@ impl MeshWriter for PlyWriter {
         
         ply.header.elements.add(vertex_element);
         
-        // Define face element
-        let mut face_element = ElementDef::new("face".to_string());
-        face_element.count = mesh.faces.len();
-        face_element.properties.add(PropertyDef::new(
-            "vertex_indices".to_string(),
-            PropertyType::List(ScalarType::UChar, ScalarType::Int),
-        ));
-        
-        ply.header.elements.add(face_element);
-        
         // Add vertex data
         let mut vertices = Vec::new();
-        for (i, vertex) in mesh.vertices.iter().enumerate() {
-            let mut vertex_element = DefaultElement::new();
-            vertex_element.insert("x".to_string(), Property::Float(vertex.x));
-            vertex_element.insert("y".to_string(), Property::Float(vertex.y));
-            vertex_element.insert("z".to_string(), Property::Float(vertex.z));
+        for (i, point) in mesh.vertices.iter().enumerate() {
+            let mut vertex = DefaultElement::new();
+            vertex.insert("x".to_string(), Property::Float(point.x));
+            vertex.insert("y".to_string(), Property::Float(point.y));
+            vertex.insert("z".to_string(), Property::Float(point.z));
             
             // Add normals if available
-            if let Some(normals) = &mesh.normals {
+            if let Some(ref normals) = mesh.normals {
                 if i < normals.len() {
-                    vertex_element.insert("nx".to_string(), Property::Float(normals[i].x));
-                    vertex_element.insert("ny".to_string(), Property::Float(normals[i].y));
-                    vertex_element.insert("nz".to_string(), Property::Float(normals[i].z));
+                    vertex.insert("nx".to_string(), Property::Float(normals[i].x));
+                    vertex.insert("ny".to_string(), Property::Float(normals[i].y));
+                    vertex.insert("nz".to_string(), Property::Float(normals[i].z));
                 }
             }
             
-            vertices.push(vertex_element);
+            vertices.push(vertex);
         }
         ply.payload.insert("vertex".to_string(), vertices);
         
-        // Add face data
-        let mut faces = Vec::new();
-        for face in &mesh.faces {
-            let mut face_element = DefaultElement::new();
-            let indices = vec![
-                face[0] as i32,
-                face[1] as i32,
-                face[2] as i32,
-            ];
-            face_element.insert("vertex_indices".to_string(), Property::ListInt(indices));
-            faces.push(face_element);
+        // Define face element if we have faces
+        if !mesh.faces.is_empty() {
+            let mut face_element = ElementDef::new("face".to_string());
+            face_element.count = mesh.faces.len();
+            face_element.properties.add(PropertyDef::new(
+                "vertex_indices".to_string(),
+                PropertyType::List(ScalarType::UChar, ScalarType::Int),
+            ));
+            
+            ply.header.elements.add(face_element);
+            
+            // Add face data
+            let mut faces = Vec::new();
+            for face in &mesh.faces {
+                let mut face_data = DefaultElement::new();
+                let indices = vec![
+                    face[0] as i32,
+                    face[1] as i32,
+                    face[2] as i32,
+                ];
+                face_data.insert("vertex_indices".to_string(), Property::ListInt(indices));
+                faces.push(face_data);
+            }
+            ply.payload.insert("face".to_string(), faces);
         }
-        ply.payload.insert("face".to_string(), faces);
         
         // Write PLY file
         let writer_instance = Writer::new();
@@ -1237,6 +1272,37 @@ impl MeshWriter for PlyWriter {
         
         Ok(())
     }
+    
+    fn format_name(&self) -> &'static str {
+        "ply"
+    }
 }
 
-// Helper functions moved to where they're needed or removed since we use the new implementation
+// Keep the legacy trait implementations for backward compatibility
+impl PointCloudReader for PlyReader {
+    fn read_point_cloud<P: AsRef<Path>>(path: P) -> Result<PointCloud<Point3f>> {
+        let reader = PlyReader;
+        crate::registry::PointCloudReader::read_point_cloud(&reader, path.as_ref())
+    }
+}
+
+impl MeshReader for PlyReader {
+    fn read_mesh<P: AsRef<Path>>(path: P) -> Result<TriangleMesh> {
+        let reader = PlyReader;
+        crate::registry::MeshReader::read_mesh(&reader, path.as_ref())
+    }
+}
+
+impl PointCloudWriter for PlyWriter {
+    fn write_point_cloud<P: AsRef<Path>>(cloud: &PointCloud<Point3f>, path: P) -> Result<()> {
+        let writer = PlyWriter;
+        crate::registry::PointCloudWriter::write_point_cloud(&writer, cloud, path.as_ref())
+    }
+}
+
+impl MeshWriter for PlyWriter {
+    fn write_mesh<P: AsRef<Path>>(mesh: &TriangleMesh, path: P) -> Result<()> {
+        let writer = PlyWriter;
+        crate::registry::MeshWriter::write_mesh(&writer, mesh, path.as_ref())
+    }
+}

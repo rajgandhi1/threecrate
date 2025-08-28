@@ -19,6 +19,7 @@ serde = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 byteorder = "1.5"
+lazy_static = "1.4"
 
 [dev-dependencies]
 approx = { workspace = true } 

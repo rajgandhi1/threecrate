@@ -7,33 +7,64 @@
 //! more complex API handling that will be implemented in future versions.
 
 use crate::{PointCloudReader, PointCloudWriter};
+use crate::registry::{PointCloudReader as RegistryPointCloudReader, PointCloudWriter as RegistryPointCloudWriter};
 use threecrate_core::{PointCloud, Point3f, Result};
 use std::path::Path;
 
 pub struct PastureReader;
 pub struct PastureWriter;
 
-impl PointCloudReader for PastureReader {
-    fn read_point_cloud<P: AsRef<Path>>(path: P) -> Result<PointCloud<Point3f>> {
-        let _path = path.as_ref();
-        
+// Implement the new unified traits
+impl RegistryPointCloudReader for PastureReader {
+    fn read_point_cloud(&self, _path: &Path) -> Result<PointCloud<Point3f>> {
         // TODO: Implement pasture-based point cloud reading
         // This requires understanding the complex pasture API better
         Err(threecrate_core::Error::Unsupported(
             "Pasture-based point cloud reading not yet implemented".to_string()
         ))
     }
+    
+    fn can_read(&self, path: &Path) -> bool {
+        // Check file extension for supported pasture formats
+        if let Some(extension) = path.extension() {
+            if let Some(ext_str) = extension.to_str() {
+                return matches!(ext_str.to_lowercase().as_str(), "las" | "laz" | "pcd");
+            }
+        }
+        false
+    }
+    
+    fn format_name(&self) -> &'static str {
+        "pasture"
+    }
 }
 
-impl PointCloudWriter for PastureWriter {
-    fn write_point_cloud<P: AsRef<Path>>(_cloud: &PointCloud<Point3f>, path: P) -> Result<()> {
-        let _path = path.as_ref();
-        
+impl RegistryPointCloudWriter for PastureWriter {
+    fn write_point_cloud(&self, _cloud: &PointCloud<Point3f>, _path: &Path) -> Result<()> {
         // TODO: Implement pasture-based point cloud writing
         // This requires understanding the complex pasture API better
         Err(threecrate_core::Error::Unsupported(
             "Pasture-based point cloud writing not yet implemented".to_string()
         ))
+    }
+    
+    fn format_name(&self) -> &'static str {
+        "pasture"
+    }
+}
+
+// Keep the legacy trait implementations for backward compatibility
+impl PointCloudReader for PastureReader {
+    fn read_point_cloud<P: AsRef<Path>>(path: P) -> Result<PointCloud<Point3f>> {
+        let reader = PastureReader;
+        RegistryPointCloudReader::read_point_cloud(&reader, path.as_ref())
+    }
+}
+
+impl PointCloudWriter for PastureWriter {
+    fn write_point_cloud<P: AsRef<Path>>(_cloud: &PointCloud<Point3f>, path: P) -> Result<()> {
+        let writer = PastureWriter;
+        RegistryPointCloudWriter::write_point_cloud(&writer, _cloud, path.as_ref())
     }
 }
 

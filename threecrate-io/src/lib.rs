@@ -7,13 +7,17 @@ pub mod ply;
 pub mod obj;
 pub mod pasture;
 pub mod error;
+pub mod registry;
 
 pub use error::*;
 pub use ply::{RobustPlyReader, RobustPlyWriter, PlyWriteOptions, PlyFormat, PlyValue};
 pub use obj::{RobustObjReader, RobustObjWriter, ObjData, ObjWriteOptions, Material, FaceVertex, Face, Group};
+pub use registry::{IoRegistry, FormatHandler};
 
 use threecrate_core::{PointCloud, TriangleMesh, Result, Point3f};
+use std::path::Path;
 
+// Legacy traits for backward compatibility
 /// Trait for reading point clouds from files
 pub trait PointCloudReader {
     fn read_point_cloud<P: AsRef<std::path::Path>>(path: P) -> Result<PointCloud<Point3f>>;
@@ -34,34 +38,84 @@ pub trait MeshWriter {
     fn write_mesh<P: AsRef<std::path::Path>>(mesh: &TriangleMesh, path: P) -> Result<()>;
 }
 
-/// Auto-detect format and read point cloud
-pub fn read_point_cloud<P: AsRef<std::path::Path>>(path: P) -> Result<PointCloud<Point3f>> {
-    let path = path.as_ref();
-    match path.extension().and_then(|s| s.to_str()) {
-        Some("ply") => ply::PlyReader::read_point_cloud(path),
-        Some("las") | Some("laz") | Some("pcd") => {
-            // For now, return an error since pasture is not fully implemented
-            Err(threecrate_core::Error::Unsupported(
-                format!("Point cloud format {:?} not yet supported (pasture integration incomplete)", 
-                        path.extension())
-            ))
-        }
-        _ => Err(threecrate_core::Error::UnsupportedFormat(
-            format!("Unsupported point cloud format: {:?}", path.extension())
-        )),
-    }
+// Global IO registry instance
+lazy_static::lazy_static! {
+    static ref IO_REGISTRY: IoRegistry = {
+        let mut registry = IoRegistry::new();
+        
+        // Register PLY format handlers
+        registry.register_point_cloud_handler("ply", Box::new(ply::PlyReader));
+        registry.register_mesh_handler("ply", Box::new(ply::PlyReader));
+        registry.register_point_cloud_writer("ply", Box::new(ply::PlyWriter));
+        registry.register_mesh_writer("ply", Box::new(ply::PlyWriter));
+        
+        // Register OBJ format handlers
+        registry.register_mesh_handler("obj", Box::new(obj::ObjReader));
+        registry.register_mesh_writer("obj", Box::new(obj::ObjWriter));
+        
+        // Register pasture format handlers (when implemented)
+        registry.register_point_cloud_handler("las", Box::new(pasture::PastureReader));
+        registry.register_point_cloud_handler("laz", Box::new(pasture::PastureReader));
+        registry.register_point_cloud_handler("pcd", Box::new(pasture::PastureReader));
+        registry.register_point_cloud_writer("las", Box::new(pasture::PastureWriter));
+        registry.register_point_cloud_writer("laz", Box::new(pasture::PastureWriter));
+        registry.register_point_cloud_writer("pcd", Box::new(pasture::PastureWriter));
+        
+        registry
+    };
 }
 
-/// Auto-detect format and read mesh
-pub fn read_mesh<P: AsRef<std::path::Path>>(path: P) -> Result<TriangleMesh> {
+/// Auto-detect format and read point cloud using the unified registry
+pub fn read_point_cloud<P: AsRef<Path>>(path: P) -> Result<PointCloud<Point3f>> {
     let path = path.as_ref();
-    match path.extension().and_then(|s| s.to_str()) {
-        Some("obj") => obj::ObjReader::read_mesh(path),
-        Some("ply") => ply::PlyReader::read_mesh(path),
-        _ => Err(threecrate_core::Error::UnsupportedFormat(
-            format!("Unsupported mesh format: {:?}", path.extension())
-        )),
-    }
+    let extension = path.extension()
+        .and_then(|s| s.to_str())
+        .ok_or_else(|| threecrate_core::Error::UnsupportedFormat(
+            "No file extension found".to_string()
+        ))?;
+    
+    IO_REGISTRY.read_point_cloud(path, extension)
+}
+
+/// Auto-detect format and read mesh using the unified registry
+pub fn read_mesh<P: AsRef<Path>>(path: P) -> Result<TriangleMesh> {
+    let path = path.as_ref();
+    let extension = path.extension()
+        .and_then(|s| s.to_str())
+        .ok_or_else(|| threecrate_core::Error::UnsupportedFormat(
+            "No file extension found".to_string()
+        ))?;
+    
+    IO_REGISTRY.read_mesh(path, extension)
+}
+
+/// Write point cloud with format auto-detection using the unified registry
+pub fn write_point_cloud<P: AsRef<Path>>(cloud: &PointCloud<Point3f>, path: P) -> Result<()> {
+    let path = path.as_ref();
+    let extension = path.extension()
+        .and_then(|s| s.to_str())
+        .ok_or_else(|| threecrate_core::Error::UnsupportedFormat(
+            "No file extension found".to_string()
+        ))?;
+    
+    IO_REGISTRY.write_point_cloud(cloud, path, extension)
+}
+
+/// Write mesh with format auto-detection using the unified registry
+pub fn write_mesh<P: AsRef<Path>>(mesh: &TriangleMesh, path: P) -> Result<()> {
+    let path = path.as_ref();
+    let extension = path.extension()
+        .and_then(|s| s.to_str())
+        .ok_or_else(|| threecrate_core::Error::UnsupportedFormat(
+            "No file extension found".to_string()
+        ))?;
+    
+    IO_REGISTRY.write_mesh(mesh, path, extension)
+}
+
+/// Get the global IO registry for advanced usage
+pub fn get_io_registry() -> &'static IoRegistry {
+    &IO_REGISTRY
 }
 
 #[cfg(test)]
@@ -71,6 +125,172 @@ mod tests {
     use std::fs;
     use std::io::Write;
     use std::collections::HashMap;
+
+    #[test]
+    fn test_registry_dispatch_correctness() {
+        let registry = get_io_registry();
+        
+        // Test that PLY format is registered for both point clouds and meshes
+        assert!(registry.supports_point_cloud_reading("ply"));
+        assert!(registry.supports_point_cloud_writing("ply"));
+        assert!(registry.supports_mesh_reading("ply"));
+        assert!(registry.supports_mesh_writing("ply"));
+        
+        // Test that OBJ format is registered for meshes
+        assert!(registry.supports_mesh_reading("obj"));
+        assert!(registry.supports_mesh_writing("obj"));
+        
+        // Test that pasture formats are registered for point clouds
+        assert!(registry.supports_point_cloud_reading("las"));
+        assert!(registry.supports_point_cloud_reading("laz"));
+        assert!(registry.supports_point_cloud_reading("pcd"));
+        
+        // Test unsupported formats
+        assert!(!registry.supports_point_cloud_reading("xyz"));
+        assert!(!registry.supports_mesh_reading("stl"));
+    }
+    
+    #[test]
+    fn test_unified_ply_point_cloud_dispatch() {
+        let temp_file = "test_dispatch_pc.ply";
+        
+        // Create test point cloud
+        let mut cloud = PointCloud::new();
+        cloud.push(Point3f::new(1.0, 2.0, 3.0));
+        cloud.push(Point3f::new(4.0, 5.0, 6.0));
+        
+        // Test writing through unified interface
+        write_point_cloud(&cloud, temp_file).unwrap();
+        
+        // Test reading through unified interface
+        let loaded_cloud = read_point_cloud(temp_file).unwrap();
+        assert_eq!(cloud.len(), loaded_cloud.len());
+        
+        for (orig, loaded) in cloud.iter().zip(loaded_cloud.iter()) {
+            assert!((orig.x - loaded.x).abs() < 1e-6);
+            assert!((orig.y - loaded.y).abs() < 1e-6);
+            assert!((orig.z - loaded.z).abs() < 1e-6);
+        }
+        
+        // Cleanup
+        let _ = fs::remove_file(temp_file);
+    }
+    
+    #[test]
+    fn test_unified_ply_mesh_dispatch() {
+        let temp_file = "test_dispatch_mesh.ply";
+        
+        // Create test mesh
+        let vertices = vec![
+            Point3f::new(0.0, 0.0, 0.0),
+            Point3f::new(1.0, 0.0, 0.0),
+            Point3f::new(0.5, 1.0, 0.0),
+        ];
+        let faces = vec![[0, 1, 2]];
+        let mesh = TriangleMesh::from_vertices_and_faces(vertices, faces);
+        
+        // Test writing through unified interface
+        write_mesh(&mesh, temp_file).unwrap();
+        
+        // Test reading through unified interface
+        let loaded_mesh = read_mesh(temp_file).unwrap();
+        assert_eq!(mesh.vertex_count(), loaded_mesh.vertex_count());
+        assert_eq!(mesh.face_count(), loaded_mesh.face_count());
+        
+        // Cleanup
+        let _ = fs::remove_file(temp_file);
+    }
+    
+    #[test]
+    fn test_unified_obj_mesh_dispatch() {
+        let temp_file = "test_dispatch_mesh.obj";
+        
+        // Create test mesh
+        let vertices = vec![
+            Point3f::new(0.0, 0.0, 0.0),
+            Point3f::new(1.0, 0.0, 0.0),
+            Point3f::new(0.5, 1.0, 0.0),
+        ];
+        let faces = vec![[0, 1, 2]];
+        let mesh = TriangleMesh::from_vertices_and_faces(vertices, faces);
+        
+        // Test writing through unified interface
+        write_mesh(&mesh, temp_file).unwrap();
+        
+        // Test reading through unified interface
+        let loaded_mesh = read_mesh(temp_file).unwrap();
+        assert_eq!(mesh.vertex_count(), loaded_mesh.vertex_count());
+        assert_eq!(mesh.face_count(), loaded_mesh.face_count());
+        
+        // Cleanup
+        let _ = fs::remove_file(temp_file);
+    }
+    
+    #[test]
+    fn test_format_detection_by_extension() {
+        // Test PLY detection
+        let result = read_point_cloud("nonexistent.ply");
+        assert!(result.is_err()); // File doesn't exist, but format is supported
+        
+        // Test OBJ detection
+        let result = read_mesh("nonexistent.obj");
+        assert!(result.is_err()); // File doesn't exist, but format is supported
+        
+        // Test unsupported format
+        let result = read_point_cloud("test.xyz");
+        assert!(result.is_err());
+        match result {
+            Err(threecrate_core::Error::UnsupportedFormat(_)) => {},
+            _ => panic!("Expected UnsupportedFormat error"),
+        }
+    }
+    
+    #[test]
+    fn test_pasture_format_registration() {
+        // Test that pasture formats are registered but not implemented
+        let result = read_point_cloud("test.las");
+        assert!(result.is_err());
+        match result {
+            Err(threecrate_core::Error::Unsupported(_)) => {},
+            _ => panic!("Expected Unsupported error for pasture formats"),
+        }
+    }
+    
+    #[test]
+    fn test_format_agnostic_downstream_usage() {
+        // This test demonstrates how downstream crates can use the format-agnostic interface
+        fn process_any_point_cloud(path: &str) -> Result<usize> {
+            let cloud = read_point_cloud(path)?;
+            Ok(cloud.len())
+        }
+        
+        fn process_any_mesh(path: &str) -> Result<usize> {
+            let mesh = read_mesh(path)?;
+            Ok(mesh.vertex_count())
+        }
+        
+        // Create test files
+        let ply_file = "test_agnostic.ply";
+        let obj_file = "test_agnostic.obj";
+        
+        // Create and write test data
+        let cloud = PointCloud::from_points(vec![Point3f::new(0.0, 0.0, 0.0)]);
+        write_point_cloud(&cloud, ply_file).unwrap();
+        
+        let mesh = TriangleMesh::from_vertices_and_faces(
+            vec![Point3f::new(0.0, 0.0, 0.0), Point3f::new(1.0, 0.0, 0.0), Point3f::new(0.5, 1.0, 0.0)],
+            vec![[0, 1, 2]]
+        );
+        write_mesh(&mesh, obj_file).unwrap();
+        
+        // Test format-agnostic processing
+        assert_eq!(process_any_point_cloud(ply_file).unwrap(), 1);
+        assert_eq!(process_any_mesh(obj_file).unwrap(), 3);
+        
+        // Cleanup
+        let _ = fs::remove_file(ply_file);
+        let _ = fs::remove_file(obj_file);
+    }
 
     #[test]
     fn test_ply_point_cloud_roundtrip() {
