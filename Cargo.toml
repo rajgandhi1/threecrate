@@ -54,7 +54,7 @@ spade = "2.13"   # Delaunay triangulation and Voronoi diagrams
 poisson_reconstruction = "0.4"  # Poisson surface reconstruction
 
 # GPU computing
-wgpu = "0.20"
+wgpu = "26.0"
 pollster = "0.3"
 
 # I/O
