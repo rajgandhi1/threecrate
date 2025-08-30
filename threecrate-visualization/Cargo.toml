@@ -30,4 +30,4 @@ rfd = "0.14"  # Native file dialogs
 instant = "0.1"
 
 [dev-dependencies]
-pollster = "0.3" 
+pollster = "0.4" 
