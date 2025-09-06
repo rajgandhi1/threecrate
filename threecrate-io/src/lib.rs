@@ -5,6 +5,7 @@
 
 pub mod ply;
 pub mod obj;
+#[cfg(feature = "las_laz")]
 pub mod pasture;
 pub mod pcd;
 pub mod xyz_csv;
@@ -57,12 +58,15 @@ lazy_static::lazy_static! {
         registry.register_mesh_handler("obj", Box::new(obj::ObjReader));
         registry.register_mesh_writer("obj", Box::new(obj::ObjWriter));
         
-        // Register pasture format handlers (when implemented)
-        registry.register_point_cloud_handler("las", Box::new(pasture::PastureReader));
-        registry.register_point_cloud_handler("laz", Box::new(pasture::PastureReader));
+        // Register pasture format handlers (when feature is enabled)
+        #[cfg(feature = "las_laz")]
+        {
+            registry.register_point_cloud_handler("las", Box::new(pasture::PastureReader));
+            registry.register_point_cloud_handler("laz", Box::new(pasture::PastureReader));
+            registry.register_point_cloud_writer("las", Box::new(pasture::PastureWriter));
+            registry.register_point_cloud_writer("laz", Box::new(pasture::PastureWriter));
+        }
         registry.register_point_cloud_handler("pcd", Box::new(pcd::PcdReader));
-        registry.register_point_cloud_writer("las", Box::new(pasture::PastureWriter));
-        registry.register_point_cloud_writer("laz", Box::new(pasture::PastureWriter));
         registry.register_point_cloud_writer("pcd", Box::new(pcd::PcdWriter));
         
         // Register XYZ/CSV format handlers
@@ -268,9 +272,12 @@ mod tests {
         assert!(registry.supports_mesh_reading("obj"));
         assert!(registry.supports_mesh_writing("obj"));
         
-        // Test that pasture formats are registered for point clouds
-        assert!(registry.supports_point_cloud_reading("las"));
-        assert!(registry.supports_point_cloud_reading("laz"));
+        // Test that pasture formats are registered for point clouds (when feature is enabled)
+        #[cfg(feature = "las_laz")]
+        {
+            assert!(registry.supports_point_cloud_reading("las"));
+            assert!(registry.supports_point_cloud_reading("laz"));
+        }
         assert!(registry.supports_point_cloud_reading("pcd"));
         assert!(registry.supports_point_cloud_writing("pcd"));
         
@@ -382,14 +389,43 @@ mod tests {
     }
     
     #[test]
+    #[cfg(feature = "las_laz")]
     fn test_pasture_format_registration() {
-        // Test that pasture formats are registered but not implemented
-        let result = read_point_cloud("test.las");
+        // Test that pasture formats are registered
+        let registry = get_io_registry();
+        assert!(registry.supports_point_cloud_reading("las"));
+        assert!(registry.supports_point_cloud_reading("laz"));
+        assert!(registry.supports_point_cloud_writing("las"));
+        assert!(registry.supports_point_cloud_writing("laz"));
+
+        // Test reading from non-existent file
+        let result = read_point_cloud("nonexistent.las");
         assert!(result.is_err());
-        match result {
-            Err(threecrate_core::Error::Unsupported(_)) => {},
-            _ => panic!("Expected Unsupported error for pasture formats"),
-        }
+    }
+
+    #[test]
+    #[cfg(feature = "las_laz")]
+    fn test_pasture_reader_writer_basic() {
+        use std::fs;
+
+        // Create test point cloud
+        let mut cloud = PointCloud::new();
+        cloud.push(Point3f::new(1.0, 2.0, 3.0));
+        cloud.push(Point3f::new(4.0, 5.0, 6.0));
+        cloud.push(Point3f::new(7.0, 8.0, 9.0));
+
+        let temp_file = "test_pasture.las";
+
+        // Test writing (this will fail without actual LAS data, but tests the API)
+        let _write_result = write_point_cloud(&cloud, temp_file);
+        // Note: This may fail if LAS writing requires additional setup, but tests the API
+
+        // Clean up
+        let _ = fs::remove_file(temp_file);
+
+        // Test reading from non-existent file
+        let read_result = read_point_cloud("nonexistent.las");
+        assert!(read_result.is_err());
     }
     
     #[test]

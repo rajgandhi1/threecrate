@@ -9,12 +9,16 @@ homepage.workspace = true
 documentation.workspace = true
 description = "I/O operations for point clouds and meshes in threecrate"
 
+[features]
+default = []
+las_laz = ["pasture-core", "pasture-io"]
+
 [dependencies]
 threecrate-core = { path = "../threecrate-core" }
 ply-rs = { workspace = true }
 obj = { workspace = true }
-pasture-core = { workspace = true }
-pasture-io = { workspace = true }
+pasture-core = { workspace = true, optional = true }
+pasture-io = { workspace = true, optional = true }
 serde = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
