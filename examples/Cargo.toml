@@ -75,3 +75,11 @@ path = "read_obj.rs"
 [[bin]]
 name = "write_obj"
 path = "write_obj.rs"
+
+[[bin]]
+name = "stream_read"
+path = "stream_read.rs"
+
+[[bin]]
+name = "streaming_benchmark"
+path = "streaming_benchmark.rs"
