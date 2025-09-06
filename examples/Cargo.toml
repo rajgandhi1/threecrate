@@ -83,3 +83,7 @@ path = "stream_read.rs"
 [[bin]]
 name = "streaming_benchmark"
 path = "streaming_benchmark.rs"
+
+[[bin]]
+name = "xyz_csv_example"
+path = "xyz_csv_example.rs"
