@@ -6,12 +6,14 @@
 pub mod ply;
 pub mod obj;
 pub mod pasture;
+pub mod xyz_csv;
 pub mod error;
 pub mod registry;
 
 pub use error::*;
 pub use ply::{RobustPlyReader, RobustPlyWriter, PlyWriteOptions, PlyFormat, PlyValue};
 pub use obj::{RobustObjReader, RobustObjWriter, ObjData, ObjWriteOptions, Material, FaceVertex, Face, Group};
+pub use xyz_csv::{XyzCsvReader, XyzCsvWriter, XyzCsvStreamingReader, XyzCsvWriteOptions, XyzCsvSchema, XyzCsvPoint, Delimiter, ColumnType};
 pub use registry::{IoRegistry, FormatHandler};
 
 use threecrate_core::{PointCloud, TriangleMesh, Result, Point3f};
@@ -60,6 +62,14 @@ lazy_static::lazy_static! {
         registry.register_point_cloud_writer("las", Box::new(pasture::PastureWriter));
         registry.register_point_cloud_writer("laz", Box::new(pasture::PastureWriter));
         registry.register_point_cloud_writer("pcd", Box::new(pasture::PastureWriter));
+        
+        // Register XYZ/CSV format handlers
+        registry.register_point_cloud_handler("xyz", Box::new(xyz_csv::XyzCsvReader));
+        registry.register_point_cloud_handler("csv", Box::new(xyz_csv::XyzCsvReader));
+        registry.register_point_cloud_handler("txt", Box::new(xyz_csv::XyzCsvReader));
+        registry.register_point_cloud_writer("xyz", Box::new(xyz_csv::XyzCsvWriter));
+        registry.register_point_cloud_writer("csv", Box::new(xyz_csv::XyzCsvWriter));
+        registry.register_point_cloud_writer("txt", Box::new(xyz_csv::XyzCsvWriter));
         
         registry
     };
@@ -168,6 +178,10 @@ pub fn read_point_cloud_iter<P: AsRef<Path>>(
             let iter = obj::ObjStreamingReader::new(path, chunk_size.unwrap_or(1000))?;
             Ok(Box::new(iter))
         }
+        "xyz" | "csv" | "txt" => {
+            let iter = xyz_csv::XyzCsvStreamingReader::new(path, chunk_size.unwrap_or(1000))?;
+            Ok(Box::new(iter))
+        }
         _ => Err(threecrate_core::Error::UnsupportedFormat(
             format!("Streaming not supported for format: {}", extension)
         ))
@@ -257,8 +271,15 @@ mod tests {
         assert!(registry.supports_point_cloud_reading("laz"));
         assert!(registry.supports_point_cloud_reading("pcd"));
         
+        // Test XYZ/CSV formats
+        assert!(registry.supports_point_cloud_reading("xyz"));
+        assert!(registry.supports_point_cloud_reading("csv"));
+        assert!(registry.supports_point_cloud_reading("txt"));
+        assert!(registry.supports_point_cloud_writing("xyz"));
+        assert!(registry.supports_point_cloud_writing("csv"));
+        assert!(registry.supports_point_cloud_writing("txt"));
+        
         // Test unsupported formats
-        assert!(!registry.supports_point_cloud_reading("xyz"));
         assert!(!registry.supports_mesh_reading("stl"));
     }
     
@@ -1538,11 +1559,165 @@ illum 1
     }
 
     #[test]
-    fn test_unsupported_format() {
-        // Test unsupported point cloud format
-        let result = read_point_cloud("test.xyz");
+    fn test_xyz_csv_reader_basic() {
+        let temp_file = "test_xyz_basic.xyz";
+        let content = "1.0 2.0 3.0\n4.0 5.0 6.0\n7.0 8.0 9.0\n";
+        fs::write(temp_file, content).unwrap();
+        
+        let cloud = read_point_cloud(temp_file).unwrap();
+        assert_eq!(cloud.len(), 3);
+        assert_eq!(cloud[0], Point3f::new(1.0, 2.0, 3.0));
+        assert_eq!(cloud[1], Point3f::new(4.0, 5.0, 6.0));
+        assert_eq!(cloud[2], Point3f::new(7.0, 8.0, 9.0));
+        
+        fs::remove_file(temp_file).unwrap();
+    }
+    
+    #[test]
+    fn test_xyz_csv_reader_with_header() {
+        let temp_file = "test_xyz_header.csv";
+        let content = "x,y,z\n1.0,2.0,3.0\n4.0,5.0,6.0\n";
+        fs::write(temp_file, content).unwrap();
+        
+        let cloud = read_point_cloud(temp_file).unwrap();
+        assert_eq!(cloud.len(), 2);
+        assert_eq!(cloud[0], Point3f::new(1.0, 2.0, 3.0));
+        assert_eq!(cloud[1], Point3f::new(4.0, 5.0, 6.0));
+        
+        fs::remove_file(temp_file).unwrap();
+    }
+    
+    #[test]
+    fn test_xyz_csv_writer_basic() {
+        let temp_file = "test_xyz_write.xyz";
+        let cloud = PointCloud::from_points(vec![
+            Point3f::new(1.0, 2.0, 3.0),
+            Point3f::new(4.0, 5.0, 6.0),
+        ]);
+        
+        write_point_cloud(&cloud, temp_file).unwrap();
+        
+        let content = fs::read_to_string(temp_file).unwrap();
+        assert!(content.contains("1 2 3"));
+        assert!(content.contains("4 5 6"));
+        
+        fs::remove_file(temp_file).unwrap();
+    }
+    
+    #[test]
+    fn test_xyz_csv_writer_csv() {
+        let temp_file = "test_xyz_write.csv";
+        let cloud = PointCloud::from_points(vec![
+            Point3f::new(1.0, 2.0, 3.0),
+            Point3f::new(4.0, 5.0, 6.0),
+        ]);
+        
+        write_point_cloud(&cloud, temp_file).unwrap();
+        
+        let content = fs::read_to_string(temp_file).unwrap();
+        assert!(content.starts_with("x,y,z"));
+        assert!(content.contains("1,2,3"));
+        assert!(content.contains("4,5,6"));
+        
+        fs::remove_file(temp_file).unwrap();
+    }
+    
+    #[test]
+    fn test_xyz_csv_streaming_reader() {
+        let temp_file = "test_xyz_streaming.xyz";
+        let content = "1.0 2.0 3.0\n4.0 5.0 6.0\n7.0 8.0 9.0\n";
+        fs::write(temp_file, content).unwrap();
+        
+        let iter = read_point_cloud_iter(temp_file, Some(100)).unwrap();
+        let points: Vec<Point3f> = iter.collect::<Result<Vec<_>>>().unwrap();
+        
+        assert_eq!(points.len(), 3);
+        assert_eq!(points[0], Point3f::new(1.0, 2.0, 3.0));
+        assert_eq!(points[1], Point3f::new(4.0, 5.0, 6.0));
+        assert_eq!(points[2], Point3f::new(7.0, 8.0, 9.0));
+        
+        fs::remove_file(temp_file).unwrap();
+    }
+    
+    #[test]
+    fn test_xyz_csv_detailed_points() {
+        let temp_file = "test_xyz_detailed.csv";
+        let content = "x,y,z,intensity,r,g,b,nx,ny,nz\n1.0,2.0,3.0,0.5,255,0,0,0.0,0.0,1.0\n";
+        fs::write(temp_file, content).unwrap();
+        
+        let points = xyz_csv::XyzCsvReader::read_detailed_points(temp_file).unwrap();
+        assert_eq!(points.len(), 1);
+        
+        let point = &points[0];
+        assert_eq!(point.position, Point3f::new(1.0, 2.0, 3.0));
+        assert_eq!(point.intensity, Some(0.5));
+        assert_eq!(point.color, Some([255, 0, 0]));
+        assert_eq!(point.normal, Some(Vector3f::new(0.0, 0.0, 1.0)));
+        
+        fs::remove_file(temp_file).unwrap();
+    }
+    
+    #[test]
+    fn test_xyz_csv_delimiter_detection() {
+        // Test comma delimiter
+        let temp_file = "test_comma.csv";
+        let content = "x,y,z\n1,2,3\n";
+        fs::write(temp_file, content).unwrap();
+        
+        let schema = xyz_csv::XyzCsvSchema::detect_from_file(temp_file).unwrap();
+        assert_eq!(schema.delimiter, xyz_csv::Delimiter::Comma);
+        assert!(schema.has_header);
+        
+        fs::remove_file(temp_file).unwrap();
+        
+        // Test space delimiter
+        let temp_file = "test_space.xyz";
+        let content = "x y z\n1 2 3\n";
+        fs::write(temp_file, content).unwrap();
+        
+        let schema = xyz_csv::XyzCsvSchema::detect_from_file(temp_file).unwrap();
+        assert_eq!(schema.delimiter, xyz_csv::Delimiter::Space);
+        assert!(schema.has_header);
+        
+        fs::remove_file(temp_file).unwrap();
+        
+        // Test tab delimiter
+        let temp_file = "test_tab.txt";
+        let content = "x\ty\tz\n1\t2\t3\n";
+        fs::write(temp_file, content).unwrap();
+        
+        let schema = xyz_csv::XyzCsvSchema::detect_from_file(temp_file).unwrap();
+        assert_eq!(schema.delimiter, xyz_csv::Delimiter::Tab);
+        assert!(schema.has_header);
+        
+        fs::remove_file(temp_file).unwrap();
+    }
+    
+    #[test]
+    fn test_xyz_csv_error_handling() {
+        // Test missing coordinates
+        let temp_file = "test_error.xyz";
+        let content = "1.0 2.0\n"; // Missing z coordinate
+        fs::write(temp_file, content).unwrap();
+        
+        let result = read_point_cloud(temp_file);
         assert!(result.is_err());
         
+        fs::remove_file(temp_file).unwrap();
+        
+        // Test invalid numeric data
+        let temp_file = "test_invalid.xyz";
+        let content = "1.0 invalid 3.0\n";
+        fs::write(temp_file, content).unwrap();
+        
+        let result = read_point_cloud(temp_file);
+        assert!(result.is_err());
+        
+        fs::remove_file(temp_file).unwrap();
+    }
+    
+    #[test]
+    fn test_unsupported_format() {
         // Test unsupported mesh format
         let result = read_mesh("test.stl");
         assert!(result.is_err());
