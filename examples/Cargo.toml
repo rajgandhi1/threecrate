@@ -7,10 +7,13 @@ license.workspace = true
 description = "Examples for threecrate"
 publish = false
 
+[features]
+las_laz = []
+
 [dependencies]
 threecrate-core = { path = "../threecrate-core" }
 threecrate-gpu = { path = "../threecrate-gpu" }
-threecrate-io = { path = "../threecrate-io" }
+threecrate-io = { path = "../threecrate-io", features = ["las_laz"] }
 threecrate-algorithms = { path = "../threecrate-algorithms" }
 threecrate-visualization = { path = "../threecrate-visualization" }
 anyhow = { workspace = true }
@@ -87,3 +90,7 @@ path = "streaming_benchmark.rs"
 [[bin]]
 name = "xyz_csv_example"
 path = "xyz_csv_example.rs"
+
+[[bin]]
+name = "las_laz_example"
+path = "las_laz_example.rs"
