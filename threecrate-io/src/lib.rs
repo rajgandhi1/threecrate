@@ -6,6 +6,7 @@
 pub mod ply;
 pub mod obj;
 pub mod pasture;
+pub mod pcd;
 pub mod xyz_csv;
 pub mod error;
 pub mod registry;
@@ -13,6 +14,7 @@ pub mod registry;
 pub use error::*;
 pub use ply::{RobustPlyReader, RobustPlyWriter, PlyWriteOptions, PlyFormat, PlyValue};
 pub use obj::{RobustObjReader, RobustObjWriter, ObjData, ObjWriteOptions, Material, FaceVertex, Face, Group};
+pub use pcd::{RobustPcdReader, RobustPcdWriter, PcdWriteOptions, PcdDataFormat, PcdFieldType, PcdHeader, PcdValue};
 pub use xyz_csv::{XyzCsvReader, XyzCsvWriter, XyzCsvStreamingReader, XyzCsvWriteOptions, XyzCsvSchema, XyzCsvPoint, Delimiter, ColumnType};
 pub use registry::{IoRegistry, FormatHandler};
 
@@ -58,10 +60,10 @@ lazy_static::lazy_static! {
         // Register pasture format handlers (when implemented)
         registry.register_point_cloud_handler("las", Box::new(pasture::PastureReader));
         registry.register_point_cloud_handler("laz", Box::new(pasture::PastureReader));
-        registry.register_point_cloud_handler("pcd", Box::new(pasture::PastureReader));
+        registry.register_point_cloud_handler("pcd", Box::new(pcd::PcdReader));
         registry.register_point_cloud_writer("las", Box::new(pasture::PastureWriter));
         registry.register_point_cloud_writer("laz", Box::new(pasture::PastureWriter));
-        registry.register_point_cloud_writer("pcd", Box::new(pasture::PastureWriter));
+        registry.register_point_cloud_writer("pcd", Box::new(pcd::PcdWriter));
         
         // Register XYZ/CSV format handlers
         registry.register_point_cloud_handler("xyz", Box::new(xyz_csv::XyzCsvReader));
@@ -270,6 +272,7 @@ mod tests {
         assert!(registry.supports_point_cloud_reading("las"));
         assert!(registry.supports_point_cloud_reading("laz"));
         assert!(registry.supports_point_cloud_reading("pcd"));
+        assert!(registry.supports_point_cloud_writing("pcd"));
         
         // Test XYZ/CSV formats
         assert!(registry.supports_point_cloud_reading("xyz"));
@@ -370,7 +373,7 @@ mod tests {
         assert!(result.is_err()); // File doesn't exist, but format is supported
         
         // Test unsupported format
-        let result = read_point_cloud("test.xyz");
+        let result = read_point_cloud("test.stl");
         assert!(result.is_err());
         match result {
             Err(threecrate_core::Error::UnsupportedFormat(_)) => {},
@@ -1721,5 +1724,169 @@ illum 1
         // Test unsupported mesh format
         let result = read_mesh("test.stl");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_pcd_ascii_roundtrip() {
+        let temp_file = "test_pcd_ascii.pcd";
+
+        // Create test point cloud
+        let mut cloud = PointCloud::new();
+        cloud.push(Point3f::new(1.0, 2.0, 3.0));
+        cloud.push(Point3f::new(4.0, 5.0, 6.0));
+        cloud.push(Point3f::new(7.0, 8.0, 9.0));
+
+        // Write with ASCII format
+        let options = pcd::PcdWriteOptions {
+            data_format: pcd::PcdDataFormat::Ascii,
+            ..Default::default()
+        };
+        pcd::RobustPcdWriter::write_point_cloud(&cloud, temp_file, &options).unwrap();
+
+        // Read back
+        let loaded_cloud = pcd::PcdReader::read_point_cloud(temp_file).unwrap();
+
+        // Verify
+        assert_eq!(cloud.len(), loaded_cloud.len());
+        for (original, loaded) in cloud.iter().zip(loaded_cloud.iter()) {
+            assert!((original.x - loaded.x).abs() < 1e-6);
+            assert!((original.y - loaded.y).abs() < 1e-6);
+            assert!((original.z - loaded.z).abs() < 1e-6);
+        }
+
+        // Cleanup
+        let _ = fs::remove_file(temp_file);
+    }
+
+    #[test]
+    fn test_pcd_binary_roundtrip() {
+        let temp_file = "test_pcd_binary.pcd";
+
+        // Create test point cloud
+        let mut cloud = PointCloud::new();
+        cloud.push(Point3f::new(1.5, 2.5, 3.5));
+        cloud.push(Point3f::new(4.5, 5.5, 6.5));
+
+        // Write with binary format
+        let options = pcd::PcdWriteOptions {
+            data_format: pcd::PcdDataFormat::Binary,
+            ..Default::default()
+        };
+        pcd::RobustPcdWriter::write_point_cloud(&cloud, temp_file, &options).unwrap();
+
+        // Read back
+        let loaded_cloud = pcd::PcdReader::read_point_cloud(temp_file).unwrap();
+
+        // Verify
+        assert_eq!(cloud.len(), loaded_cloud.len());
+        for (original, loaded) in cloud.iter().zip(loaded_cloud.iter()) {
+            assert!((original.x - loaded.x).abs() < 1e-6);
+            assert!((original.y - loaded.y).abs() < 1e-6);
+            assert!((original.z - loaded.z).abs() < 1e-6);
+        }
+
+        // Cleanup
+        let _ = fs::remove_file(temp_file);
+    }
+
+    #[test]
+    fn test_pcd_header_parsing() {
+        let temp_file = "test_pcd_header.pcd";
+
+        // Create a PCD file with comprehensive header
+        let pcd_content = r#"# .PCD v0.7 - Test file
+VERSION 0.7
+FIELDS x y z
+SIZE 4 4 4
+TYPE F F F
+COUNT 1 1 1
+WIDTH 2
+HEIGHT 1
+VIEWPOINT 0 0 0 1 0 0 0
+POINTS 2
+DATA ascii
+1.0 2.0 3.0
+4.0 5.0 6.0
+"#;
+
+        fs::write(temp_file, pcd_content).unwrap();
+
+        // Test header parsing
+        let (header, points) = pcd::RobustPcdReader::read_pcd_file(temp_file).unwrap();
+
+        assert_eq!(header.version, "0.7");
+        assert_eq!(header.fields.len(), 3);
+        assert_eq!(header.fields[0].name, "x");
+        assert_eq!(header.fields[0].field_type, pcd::PcdFieldType::F32);
+        assert_eq!(header.width, 2);
+        assert_eq!(header.height, 1);
+        assert_eq!(header.data_format, pcd::PcdDataFormat::Ascii);
+        assert_eq!(points.len(), 2);
+
+        // Test conversion to point cloud
+        let cloud = pcd::RobustPcdReader::pcd_to_point_cloud(&header, &points).unwrap();
+        assert_eq!(cloud.len(), 2);
+        assert_eq!(cloud[0], Point3f::new(1.0, 2.0, 3.0));
+        assert_eq!(cloud[1], Point3f::new(4.0, 5.0, 6.0));
+
+        // Cleanup
+        let _ = fs::remove_file(temp_file);
+    }
+
+    #[test]
+    fn test_pcd_unified_interface() {
+        let temp_file = "test_pcd_unified.pcd";
+
+        // Create test point cloud
+        let cloud = PointCloud::from_points(vec![
+            Point3f::new(10.0, 20.0, 30.0),
+            Point3f::new(40.0, 50.0, 60.0),
+        ]);
+
+        // Test writing through unified interface
+        write_point_cloud(&cloud, temp_file).unwrap();
+
+        // Test reading through unified interface
+        let loaded_cloud = read_point_cloud(temp_file).unwrap();
+        assert_eq!(cloud.len(), loaded_cloud.len());
+
+        // Cleanup
+        let _ = fs::remove_file(temp_file);
+    }
+
+    #[test]
+    fn test_pcd_error_handling() {
+        // Test missing file
+        let result = pcd::PcdReader::read_point_cloud("nonexistent.pcd");
+        assert!(result.is_err());
+
+        // Test invalid PCD file
+        let temp_file = "test_invalid.pcd";
+        fs::write(temp_file, "not a pcd file").unwrap();
+
+        let result = pcd::RobustPcdReader::read_pcd_file(temp_file);
+        assert!(result.is_err());
+
+        // Test PCD without required fields
+        let invalid_pcd = "test_invalid_fields.pcd";
+        let content = r#"VERSION 0.7
+FIELDS y z
+SIZE 4 4
+TYPE F F
+COUNT 1 1
+WIDTH 1
+HEIGHT 1
+POINTS 1
+DATA ascii
+1.0 2.0
+"#;
+        fs::write(invalid_pcd, content).unwrap();
+
+        let result = pcd::PcdReader::read_point_cloud(invalid_pcd);
+        assert!(result.is_err());
+
+        // Cleanup
+        let _ = fs::remove_file(temp_file);
+        let _ = fs::remove_file(invalid_pcd);
     }
 } 
