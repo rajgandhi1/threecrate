@@ -118,6 +118,118 @@ pub fn get_io_registry() -> &'static IoRegistry {
     &IO_REGISTRY
 }
 
+/// Streaming point cloud reader for large files
+/// 
+/// This function returns an iterator that reads points one by one without loading
+/// the entire file into memory. Useful for processing very large point cloud files.
+/// 
+/// # Arguments
+/// * `path` - Path to the point cloud file
+/// * `chunk_size` - Optional chunk size for internal buffering (default: 1000)
+/// 
+/// # Returns
+/// An iterator over `Result<Point3f>` where each item is either a point or an error
+/// 
+/// # Example
+/// ```rust
+/// use threecrate_io::read_point_cloud_iter;
+/// 
+/// // Note: This will fail if the file doesn't exist, but demonstrates the API
+/// match read_point_cloud_iter("large_cloud.ply", Some(5000)) {
+///     Ok(iter) => {
+///         for result in iter {
+///             match result {
+///                 Ok(point) => println!("Point: {:?}", point),
+///                 Err(e) => eprintln!("Error: {}", e),
+///             }
+///         }
+///     }
+///     Err(e) => eprintln!("Failed to open file: {}", e),
+/// }
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+pub fn read_point_cloud_iter<P: AsRef<Path>>(
+    path: P, 
+    chunk_size: Option<usize>
+) -> Result<Box<dyn Iterator<Item = Result<Point3f>> + Send + Sync>> {
+    let path = path.as_ref();
+    let extension = path.extension()
+        .and_then(|s| s.to_str())
+        .ok_or_else(|| threecrate_core::Error::UnsupportedFormat(
+            "No file extension found".to_string()
+        ))?;
+    
+    match extension {
+        "ply" => {
+            let iter = ply::PlyStreamingReader::new(path, chunk_size.unwrap_or(1000))?;
+            Ok(Box::new(iter))
+        }
+        "obj" => {
+            let iter = obj::ObjStreamingReader::new(path, chunk_size.unwrap_or(1000))?;
+            Ok(Box::new(iter))
+        }
+        _ => Err(threecrate_core::Error::UnsupportedFormat(
+            format!("Streaming not supported for format: {}", extension)
+        ))
+    }
+}
+
+/// Streaming mesh reader for large files
+/// 
+/// This function returns an iterator that reads mesh faces one by one without loading
+/// the entire file into memory. Useful for processing very large mesh files.
+/// 
+/// # Arguments
+/// * `path` - Path to the mesh file
+/// * `chunk_size` - Optional chunk size for internal buffering (default: 1000)
+/// 
+/// # Returns
+/// An iterator over `Result<[usize; 3]>` where each item is either a face or an error
+/// 
+/// # Example
+/// ```rust
+/// use threecrate_io::read_mesh_iter;
+/// 
+/// // Note: This will fail if the file doesn't exist, but demonstrates the API
+/// match read_mesh_iter("large_mesh.obj", Some(5000)) {
+///     Ok(iter) => {
+///         for result in iter {
+///             match result {
+///                 Ok(face) => println!("Face: {:?}", face),
+///                 Err(e) => eprintln!("Error: {}", e),
+///             }
+///         }
+///     }
+///     Err(e) => eprintln!("Failed to open file: {}", e),
+/// }
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+pub fn read_mesh_iter<P: AsRef<Path>>(
+    path: P, 
+    chunk_size: Option<usize>
+) -> Result<Box<dyn Iterator<Item = Result<[usize; 3]>> + Send + Sync>> {
+    let path = path.as_ref();
+    let extension = path.extension()
+        .and_then(|s| s.to_str())
+        .ok_or_else(|| threecrate_core::Error::UnsupportedFormat(
+            "No file extension found".to_string()
+        ))?;
+    
+    match extension {
+        "ply" => {
+            let iter = ply::PlyMeshStreamingReader::new(path, chunk_size.unwrap_or(1000))?;
+            Ok(Box::new(iter))
+        }
+        "obj" => {
+            let iter = obj::ObjMeshStreamingReader::new(path, chunk_size.unwrap_or(1000))?;
+            Ok(Box::new(iter))
+        }
+        _ => Err(threecrate_core::Error::UnsupportedFormat(
+            format!("Streaming not supported for format: {}", extension)
+        ))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

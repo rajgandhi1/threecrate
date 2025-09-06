@@ -1070,4 +1070,276 @@ impl RobustObjWriter {
             .map(|s| format!("{}.mtl", s))
             .unwrap_or_else(|| "materials.mtl".to_string())
     }
+}
+
+/// Streaming OBJ reader for point clouds (vertices only)
+pub struct ObjStreamingReader {
+    reader: BufReader<File>,
+    current_line: usize,
+    total_vertices: usize,
+    vertices_read: usize,
+    chunk_size: usize,
+    buffer: Vec<String>,
+}
+
+impl ObjStreamingReader {
+    /// Create a new streaming OBJ reader for vertices
+    pub fn new<P: AsRef<Path>>(path: P, chunk_size: usize) -> Result<Self> {
+        let path = path.as_ref();
+        let file = File::open(path)?;
+        let mut reader = BufReader::new(file);
+        
+        // First pass: count vertices
+        let mut total_vertices = 0;
+        let mut line = String::new();
+        while reader.read_line(&mut line)? > 0 {
+            let trimmed = line.trim();
+            if trimmed.starts_with("v ") && !trimmed.starts_with("vt ") && !trimmed.starts_with("vn ") {
+                total_vertices += 1;
+            }
+            line.clear();
+        }
+        
+        // Reset file position
+        let file = File::open(path)?;
+        let reader = BufReader::new(file);
+        
+        Ok(Self {
+            reader,
+            current_line: 0,
+            total_vertices,
+            vertices_read: 0,
+            chunk_size,
+            buffer: Vec::with_capacity(chunk_size),
+        })
+    }
+}
+
+impl Iterator for ObjStreamingReader {
+    type Item = Result<Point3f>;
+    
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.vertices_read >= self.total_vertices {
+            return None;
+        }
+        
+        // Read a chunk if buffer is empty
+        if self.buffer.is_empty() {
+            let remaining = self.total_vertices - self.vertices_read;
+            let to_read = std::cmp::min(remaining, self.chunk_size);
+            
+            for _ in 0..to_read {
+                let mut line = String::new();
+                loop {
+                    match self.reader.read_line(&mut line) {
+                        Ok(0) => return None, // EOF
+                        Ok(_) => {
+                            self.current_line += 1;
+                            let trimmed = line.trim();
+                            
+                            // Skip non-vertex lines
+                            if trimmed.starts_with("v ") && !trimmed.starts_with("vt ") && !trimmed.starts_with("vn ") {
+                                self.buffer.push(line.clone());
+                                line.clear();
+                                break;
+                            }
+                            line.clear();
+                        }
+                        Err(e) => return Some(Err(Error::Io(e))),
+                    }
+                }
+            }
+        }
+        
+        // Process next vertex from buffer
+        if !self.buffer.is_empty() {
+            let vertex_line = self.buffer.remove(0);
+            let parts: Vec<&str> = vertex_line.trim().split_whitespace().collect();
+            if parts.len() < 4 {
+                return Some(Err(Error::InvalidData(
+                    format!("Invalid vertex at line {}: expected 3 coordinates", self.current_line)
+                )));
+            }
+            
+            let x = match parts[1].parse::<f32>() {
+                Ok(v) => v,
+                Err(_) => return Some(Err(Error::InvalidData(
+                    format!("Invalid x coordinate at line {}", self.current_line)
+                ))),
+            };
+            let y = match parts[2].parse::<f32>() {
+                Ok(v) => v,
+                Err(_) => return Some(Err(Error::InvalidData(
+                    format!("Invalid y coordinate at line {}", self.current_line)
+                ))),
+            };
+            let z = match parts[3].parse::<f32>() {
+                Ok(v) => v,
+                Err(_) => return Some(Err(Error::InvalidData(
+                    format!("Invalid z coordinate at line {}", self.current_line)
+                ))),
+            };
+            
+            self.vertices_read += 1;
+            Some(Ok(Point3f::new(x, y, z)))
+        } else {
+            None
+        }
+    }
+}
+
+/// Streaming OBJ reader for mesh faces
+pub struct ObjMeshStreamingReader {
+    reader: BufReader<File>,
+    current_line: usize,
+    total_faces: usize,
+    faces_read: usize,
+    chunk_size: usize,
+    buffer: Vec<String>,
+    vertices: Vec<Point3f>, // We need to store vertices to convert face indices
+}
+
+impl ObjMeshStreamingReader {
+    /// Create a new streaming OBJ reader for faces
+    pub fn new<P: AsRef<Path>>(path: P, chunk_size: usize) -> Result<Self> {
+        let path = path.as_ref();
+        let file = File::open(path)?;
+        let mut reader = BufReader::new(file);
+        
+        // First pass: collect vertices and count faces
+        let mut vertices = Vec::new();
+        let mut total_faces = 0;
+        let mut line = String::new();
+        
+        while reader.read_line(&mut line)? > 0 {
+            let trimmed = line.trim();
+            if trimmed.starts_with("v ") && !trimmed.starts_with("vt ") && !trimmed.starts_with("vn ") {
+                let parts: Vec<&str> = trimmed.split_whitespace().collect();
+                if parts.len() >= 4 {
+                    if let (Ok(x), Ok(y), Ok(z)) = (
+                        parts[1].parse::<f32>(),
+                        parts[2].parse::<f32>(),
+                        parts[3].parse::<f32>()
+                    ) {
+                        vertices.push(Point3f::new(x, y, z));
+                    }
+                }
+            } else if trimmed.starts_with("f ") {
+                total_faces += 1;
+            }
+            line.clear();
+        }
+        
+        // Reset file position
+        let file = File::open(path)?;
+        let reader = BufReader::new(file);
+        
+        Ok(Self {
+            reader,
+            current_line: 0,
+            total_faces,
+            faces_read: 0,
+            chunk_size,
+            buffer: Vec::with_capacity(chunk_size),
+            vertices,
+        })
+    }
+}
+
+impl Iterator for ObjMeshStreamingReader {
+    type Item = Result<[usize; 3]>;
+    
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.faces_read >= self.total_faces {
+            return None;
+        }
+        
+        // Read a chunk if buffer is empty
+        if self.buffer.is_empty() {
+            let remaining = self.total_faces - self.faces_read;
+            let to_read = std::cmp::min(remaining, self.chunk_size);
+            
+            for _ in 0..to_read {
+                let mut line = String::new();
+                loop {
+                    match self.reader.read_line(&mut line) {
+                        Ok(0) => return None, // EOF
+                        Ok(_) => {
+                            self.current_line += 1;
+                            let trimmed = line.trim();
+                            
+                            // Skip non-face lines
+                            if trimmed.starts_with("f ") {
+                                self.buffer.push(line.clone());
+                                line.clear();
+                                break;
+                            }
+                            line.clear();
+                        }
+                        Err(e) => return Some(Err(Error::Io(e))),
+                    }
+                }
+            }
+        }
+        
+        // Process next face from buffer
+        if !self.buffer.is_empty() {
+            let face_line = self.buffer.remove(0);
+            let parts: Vec<&str> = face_line.trim().split_whitespace().collect();
+            if parts.len() < 4 {
+                return Some(Err(Error::InvalidData(
+                    format!("Invalid face at line {}: expected at least 3 vertices", self.current_line)
+                )));
+            }
+            
+            // Parse face vertices (only need vertex indices, not texture/normal)
+            let mut face_vertices = Vec::new();
+            for vertex_str in &parts[1..] {
+                let face_vertex = match FaceVertex::parse(vertex_str) {
+                    Ok(fv) => fv.vertex,
+                    Err(e) => return Some(Err(Error::InvalidData(
+                        format!("Invalid face vertex '{}' at line {}: {}", vertex_str, self.current_line, e)
+                    ))),
+                };
+                face_vertices.push(face_vertex);
+            }
+            
+            // Triangulate if necessary
+            let triangulated_faces = RobustObjReader::triangulate_face(
+                &face_vertices.iter().map(|&v| FaceVertex { vertex: v, texture: None, normal: None }).collect::<Vec<_>>()
+            );
+            
+            if triangulated_faces.is_empty() {
+                return Some(Err(Error::InvalidData("Degenerate face".to_string())));
+            }
+            
+            // Return first triangle, store others for later
+            let first_triangle = &triangulated_faces[0];
+            let face_indices = [first_triangle[0].vertex, first_triangle[1].vertex, first_triangle[2].vertex];
+            
+            // Validate indices
+            for &idx in &face_indices {
+                if idx >= self.vertices.len() {
+                    return Some(Err(Error::InvalidData(
+                        format!("Face index {} out of range (max: {})", idx, self.vertices.len() - 1)
+                    )));
+                }
+            }
+            
+            // Store remaining triangles in buffer for next calls
+            for triangle in triangulated_faces.into_iter().skip(1) {
+                let face_str = format!("f {} {} {}", 
+                    triangle[0].vertex + 1, 
+                    triangle[1].vertex + 1, 
+                    triangle[2].vertex + 1
+                );
+                self.buffer.push(face_str);
+            }
+            
+            self.faces_read += 1;
+            Some(Ok(face_indices))
+        } else {
+            None
+        }
+    }
 } 
