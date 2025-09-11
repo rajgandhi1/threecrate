@@ -10,10 +10,10 @@ documentation.workspace = true
 description = "Visualization and rendering for threecrate point clouds and meshes"
 
 [dependencies]
-threecrate-core = { path = "../threecrate-core", features = ["gpu"] }
-threecrate-algorithms = { path = "../threecrate-algorithms" }
-threecrate-gpu = { path = "../threecrate-gpu" }
-threecrate-io = { path = "../threecrate-io" }
+threecrate-core = { path = "../threecrate-core", version = "0.4.0", features = ["gpu"] }
+threecrate-algorithms = { path = "../threecrate-algorithms", version = "0.4.0" }
+threecrate-gpu = { path = "../threecrate-gpu", version = "0.4.0" }
+threecrate-io = { path = "../threecrate-io", version = "0.4.0" }
 wgpu = { workspace = true }
 winit = { workspace = true }
 bytemuck = { workspace = true }
