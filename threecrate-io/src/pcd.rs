@@ -10,6 +10,8 @@ use std::path::Path;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::collections::HashMap;
+#[cfg(feature = "io-mmap")]
+use crate::mmap::MmapReader;
 
 /// PCD data format variants
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -93,9 +95,120 @@ pub struct RobustPcdReader;
 impl RobustPcdReader {
     /// Read PCD file and return header and point data
     pub fn read_pcd_file<P: AsRef<Path>>(path: P) -> Result<(PcdHeader, Vec<PcdPoint>)> {
+        let path = path.as_ref();
+        
+        // Try memory-mapped reading for binary files if feature is enabled
+        #[cfg(feature = "io-mmap")]
+        {
+            if let Some((header, points)) = Self::try_read_pcd_mmap(path)? {
+                return Ok((header, points));
+            }
+        }
+        
+        // Fall back to standard buffered reading
         let file = File::open(path)?;
         let mut reader = BufReader::new(file);
         Self::read_pcd_data(&mut reader)
+    }
+
+    /// Try to read PCD file using memory mapping (binary files only)
+    #[cfg(feature = "io-mmap")]
+    fn try_read_pcd_mmap<P: AsRef<Path>>(path: P) -> Result<Option<(PcdHeader, Vec<PcdPoint>)>> {
+        let path = path.as_ref();
+        
+        // Check if we should use memory mapping
+        if !crate::mmap::should_use_mmap(path) {
+            return Ok(None);
+        }
+        
+        // First, read the header using standard I/O to determine format
+        let file = File::open(path)?;
+        let mut reader = BufReader::new(file);
+        let header = Self::read_header(&mut reader)?;
+        
+        // Only use mmap for binary formats
+        match header.data_format {
+            PcdDataFormat::Binary => {
+                // Calculate header size by reading until "DATA binary"
+                let file = File::open(path)?;
+                let mut reader = BufReader::new(file);
+                let mut header_size = 0;
+                let mut line = String::new();
+                
+                loop {
+                    line.clear();
+                    let bytes_read = reader.read_line(&mut line)?;
+                    if bytes_read == 0 {
+                        return Err(Error::InvalidData("Unexpected end of file in PCD header".to_string()));
+                    }
+                    header_size += bytes_read;
+                    
+                    let line = line.trim();
+                    if line == "DATA binary" {
+                        break;
+                    }
+                }
+                
+                // Now use memory mapping for the data section
+                if let Some(mut mmap_reader) = MmapReader::new(path)? {
+                    // Skip to the data section
+                    mmap_reader.seek(header_size)?;
+                    
+                    // Read points using memory mapping
+                    let points = Self::read_binary_points_mmap(&mut mmap_reader, &header)?;
+                    
+                    return Ok(Some((header, points)));
+                }
+            }
+            PcdDataFormat::Ascii | PcdDataFormat::BinaryCompressed => {
+                // ASCII and compressed formats - use standard buffered I/O
+                return Ok(None);
+            }
+        }
+        
+        Ok(None)
+    }
+
+    /// Read binary format points using memory mapping
+    #[cfg(feature = "io-mmap")]
+    fn read_binary_points_mmap(reader: &mut MmapReader, header: &PcdHeader) -> Result<Vec<PcdPoint>> {
+        let mut points = Vec::with_capacity(header.width * header.height);
+
+        for _ in 0..(header.width * header.height) {
+            let mut point = PcdPoint::new();
+
+            for field in &header.fields {
+                let field_values = Self::read_binary_field_values_mmap(reader, field)?;
+                point.insert(field.name.clone(), field_values);
+            }
+
+            points.push(point);
+        }
+
+        Ok(points)
+    }
+
+    /// Read binary field values using memory mapping
+    #[cfg(feature = "io-mmap")]
+    fn read_binary_field_values_mmap(reader: &mut MmapReader, field: &PcdField) -> Result<Vec<PcdValue>> {
+        let mut field_values = Vec::with_capacity(field.count);
+
+        for _ in 0..field.count {
+            let value = match field.field_type {
+                PcdFieldType::I8 => PcdValue::I8(reader.read_u8()? as i8),
+                PcdFieldType::U8 => PcdValue::U8(reader.read_u8()?),
+                PcdFieldType::I16 => PcdValue::I16(reader.read_u16_le()? as i16),
+                PcdFieldType::U16 => PcdValue::U16(reader.read_u16_le()?),
+                PcdFieldType::I32 => PcdValue::I32(reader.read_u32_le()? as i32),
+                PcdFieldType::U32 => PcdValue::U32(reader.read_u32_le()?),
+                PcdFieldType::F32 => PcdValue::F32(reader.read_f32_le()?),
+                PcdFieldType::F64 => PcdValue::F64(reader.read_f64_le()?),
+            };
+
+            field_values.push(value);
+        }
+
+        Ok(field_values)
     }
 
     /// Read PCD data from a reader

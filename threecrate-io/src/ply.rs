@@ -15,6 +15,8 @@ use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter, Read};
 use std::collections::HashMap;
 use byteorder::{LittleEndian, BigEndian, ReadBytesExt};
+#[cfg(feature = "io-mmap")]
+use crate::mmap::MmapReader;
 
 /// PLY file format variants
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -650,9 +652,173 @@ impl RobustPlyReader {
     
     /// Read PLY file from path
     pub fn read_ply_file<P: AsRef<Path>>(path: P) -> Result<PlyData> {
+        let path = path.as_ref();
+        
+        // Try memory-mapped reading for binary files if feature is enabled
+        #[cfg(feature = "io-mmap")]
+        {
+            if let Some(ply_data) = Self::try_read_ply_mmap(path)? {
+                return Ok(ply_data);
+            }
+        }
+        
+        // Fall back to standard buffered reading
         let file = File::open(path)?;
         let mut reader = BufReader::new(file);
         Self::read_ply_data(&mut reader)
+    }
+
+    /// Try to read PLY file using memory mapping (binary files only)
+    #[cfg(feature = "io-mmap")]
+    fn try_read_ply_mmap<P: AsRef<Path>>(path: P) -> Result<Option<PlyData>> {
+        let path = path.as_ref();
+        
+        // Check if we should use memory mapping
+        if !crate::mmap::should_use_mmap(path) {
+            return Ok(None);
+        }
+        
+        // First, read the header using standard I/O to determine format
+        let file = File::open(path)?;
+        let mut reader = BufReader::new(file);
+        let header = Self::read_header(&mut reader)?;
+        
+        // Only use mmap for binary formats
+        match header.format {
+            PlyFormat::BinaryLittleEndian | PlyFormat::BinaryBigEndian => {
+                // Calculate header size by reading until "end_header"
+                let file = File::open(path)?;
+                let mut reader = BufReader::new(file);
+                let mut header_size = 0;
+                let mut line = String::new();
+                
+                loop {
+                    let line_start = header_size;
+                    line.clear();
+                    let bytes_read = reader.read_line(&mut line)?;
+                    if bytes_read == 0 {
+                        return Err(Error::InvalidData("Unexpected end of file in header".to_string()));
+                    }
+                    header_size += bytes_read;
+                    
+                    if line.trim() == "end_header" {
+                        break;
+                    }
+                }
+                
+                // Now use memory mapping for the data section
+                if let Some(mut mmap_reader) = MmapReader::new(path)? {
+                    // Skip to the data section
+                    mmap_reader.seek(header_size)?;
+                    
+                    // Read elements using memory mapping
+                    let elements = Self::read_elements_mmap(&mut mmap_reader, &header)?;
+                    
+                    return Ok(Some(PlyData { header, elements }));
+                }
+            }
+            PlyFormat::Ascii => {
+                // ASCII format - use standard buffered I/O
+                return Ok(None);
+            }
+        }
+        
+        Ok(None)
+    }
+
+    /// Read elements using memory mapping
+    #[cfg(feature = "io-mmap")]
+    fn read_elements_mmap(
+        reader: &mut MmapReader, 
+        header: &PlyHeader
+    ) -> Result<HashMap<String, Vec<HashMap<String, PlyValue>>>> {
+        let mut elements = HashMap::new();
+        
+        for element_def in &header.elements {
+            let mut element_data = Vec::with_capacity(element_def.count);
+            
+            for _ in 0..element_def.count {
+                let mut instance = HashMap::new();
+                
+                match header.format {
+                    PlyFormat::BinaryLittleEndian => {
+                        for property in &element_def.properties {
+                            let value = Self::read_binary_property_value_mmap_le(reader, &property.property_type)?;
+                            instance.insert(property.name.clone(), value);
+                        }
+                    }
+                    PlyFormat::BinaryBigEndian => {
+                        for property in &element_def.properties {
+                            let value = Self::read_binary_property_value_mmap_be(reader, &property.property_type)?;
+                            instance.insert(property.name.clone(), value);
+                        }
+                    }
+                    PlyFormat::Ascii => {
+                        return Err(Error::InvalidData("ASCII format should not use mmap reader".to_string()));
+                    }
+                }
+                
+                element_data.push(instance);
+            }
+            
+            elements.insert(element_def.name.clone(), element_data);
+        }
+        
+        Ok(elements)
+    }
+
+    /// Read binary property value using memory mapping (little endian)
+    #[cfg(feature = "io-mmap")]
+    fn read_binary_property_value_mmap_le(reader: &mut MmapReader, property_type: &PlyPropertyType) -> Result<PlyValue> {
+        match property_type {
+            PlyPropertyType::Char => Ok(PlyValue::Char(reader.read_u8()? as i8)),
+            PlyPropertyType::UChar => Ok(PlyValue::UChar(reader.read_u8()?)),
+            PlyPropertyType::Short => Ok(PlyValue::Short(reader.read_u16_le()? as i16)),
+            PlyPropertyType::UShort => Ok(PlyValue::UShort(reader.read_u16_le()?)),
+            PlyPropertyType::Int => Ok(PlyValue::Int(reader.read_u32_le()? as i32)),
+            PlyPropertyType::UInt => Ok(PlyValue::UInt(reader.read_u32_le()?)),
+            PlyPropertyType::Float => Ok(PlyValue::Float(reader.read_f32_le()?)),
+            PlyPropertyType::Double => Ok(PlyValue::Double(reader.read_f64_le()?)),
+            PlyPropertyType::List(count_type, item_type) => {
+                let count_value = Self::read_binary_property_value_mmap_le(reader, count_type)?;
+                let count = count_value.as_usize()?;
+                
+                let mut list = Vec::with_capacity(count);
+                for _ in 0..count {
+                    let item = Self::read_binary_property_value_mmap_le(reader, item_type)?;
+                    list.push(item);
+                }
+                
+                Ok(PlyValue::List(list))
+            }
+        }
+    }
+
+    /// Read binary property value using memory mapping (big endian)
+    #[cfg(feature = "io-mmap")]
+    fn read_binary_property_value_mmap_be(reader: &mut MmapReader, property_type: &PlyPropertyType) -> Result<PlyValue> {
+        match property_type {
+            PlyPropertyType::Char => Ok(PlyValue::Char(reader.read_u8()? as i8)),
+            PlyPropertyType::UChar => Ok(PlyValue::UChar(reader.read_u8()?)),
+            PlyPropertyType::Short => Ok(PlyValue::Short(reader.read_u16_be()? as i16)),
+            PlyPropertyType::UShort => Ok(PlyValue::UShort(reader.read_u16_be()?)),
+            PlyPropertyType::Int => Ok(PlyValue::Int(reader.read_u32_be()? as i32)),
+            PlyPropertyType::UInt => Ok(PlyValue::UInt(reader.read_u32_be()?)),
+            PlyPropertyType::Float => Ok(PlyValue::Float(reader.read_f32_be()?)),
+            PlyPropertyType::Double => Ok(PlyValue::Double(reader.read_f64_be()?)),
+            PlyPropertyType::List(count_type, item_type) => {
+                let count_value = Self::read_binary_property_value_mmap_be(reader, count_type)?;
+                let count = count_value.as_usize()?;
+                
+                let mut list = Vec::with_capacity(count);
+                for _ in 0..count {
+                    let item = Self::read_binary_property_value_mmap_be(reader, item_type)?;
+                    list.push(item);
+                }
+                
+                Ok(PlyValue::List(list))
+            }
+        }
     }
     
     /// Read and parse PLY header

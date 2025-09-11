@@ -12,6 +12,7 @@ description = "I/O operations for point clouds and meshes in threecrate"
 [features]
 default = []
 las_laz = ["pasture-core", "pasture-io"]
+io-mmap = ["memmap2"]
 
 [dependencies]
 threecrate-core = { path = "../threecrate-core" }
@@ -24,6 +25,13 @@ anyhow = { workspace = true }
 thiserror = { workspace = true }
 byteorder = "1.5"
 lazy_static = "1.4"
+memmap2 = { version = "0.9", optional = true }
 
 [dev-dependencies]
-approx = { workspace = true } 
+approx = { workspace = true }
+criterion = { version = "0.5", features = ["html_reports"] }
+tempfile = "3.8"
+
+[[bench]]
+name = "mmap_benchmarks"
+harness = false 

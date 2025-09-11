@@ -13,6 +13,8 @@ pub mod error;
 pub mod registry;
 pub mod mesh_attributes;
 pub mod serialization;
+#[cfg(feature = "io-mmap")]
+pub mod mmap;
 
 #[cfg(test)]
 pub mod tests;
