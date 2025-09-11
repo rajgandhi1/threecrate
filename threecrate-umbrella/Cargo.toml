@@ -1,6 +1,6 @@
 [package]
 name = "threecrate"
-version = "0.3.1"
+version = "0.4.0"
 edition = "2021"
 authors = ["rajgandhi1"]
 license = "MIT OR Apache-2.0"
@@ -17,6 +17,7 @@ default = ["algorithms", "io", "simplification"]
 algorithms = ["dep:threecrate-algorithms"]
 gpu = ["dep:threecrate-gpu"]
 io = ["dep:threecrate-io"]
+io-mmap = ["threecrate-io/io-mmap"]
 simplification = ["dep:threecrate-simplification"]
 reconstruction = ["dep:threecrate-reconstruction"]
 visualization = ["dep:threecrate-visualization"]
