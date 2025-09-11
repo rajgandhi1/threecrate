@@ -9,6 +9,7 @@ publish = false
 
 [features]
 las_laz = []
+io-mmap = ["threecrate-io/io-mmap"]
 
 [dependencies]
 threecrate-core = { path = "../threecrate-core" }
@@ -98,3 +99,7 @@ path = "las_laz_example.rs"
 [[bin]]
 name = "mesh_serialization_example"
 path = "mesh_serialization_example.rs"
+
+[[bin]]
+name = "mmap_example"
+path = "mmap_example.rs"
