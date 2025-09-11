@@ -94,3 +94,7 @@ path = "xyz_csv_example.rs"
 [[bin]]
 name = "las_laz_example"
 path = "las_laz_example.rs"
+
+[[bin]]
+name = "mesh_serialization_example"
+path = "mesh_serialization_example.rs"
