@@ -61,7 +61,7 @@ pollster = "0.4"
 obj = "0.10"
 ply-rs = "0.1"
 pasture-core = "0.4"
-pasture-io = "0.4"
+pasture-io = "0.5"
 
 # Visualization
 winit = "0.29"
