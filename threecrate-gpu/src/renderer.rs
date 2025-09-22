@@ -463,7 +463,6 @@ impl<'window> PointCloudRenderer<'window> {
                         }),
                         store: wgpu::StoreOp::Store,
                     },
-                    depth_slice: None,
                 })],
                 depth_stencil_attachment: if self.config.enable_depth_test {
                     Some(wgpu::RenderPassDepthStencilAttachment {
