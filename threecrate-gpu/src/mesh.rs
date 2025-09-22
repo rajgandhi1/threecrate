@@ -513,13 +513,13 @@ impl<'window> MeshRenderer<'window> {
             layout: Some(&render_pipeline_layout),
             vertex: wgpu::VertexState {
                 module: shader,
-                entry_point: "vs_main",
+                entry_point: Some("vs_main"),
                 buffers: &[MeshVertex::desc()],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             },
             fragment: Some(wgpu::FragmentState {
                 module: shader,
-                entry_point: "fs_main",
+                entry_point: Some("fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: surface_format,
                     blend: Some(wgpu::BlendState::REPLACE),
@@ -561,6 +561,7 @@ impl<'window> MeshRenderer<'window> {
                 alpha_to_coverage_enabled: false,
             },
             multiview: None,
+            cache: None,
         })
     }
 
@@ -733,6 +734,7 @@ impl<'window> MeshRenderer<'window> {
                         }),
                         store: wgpu::StoreOp::Store,
                     },
+                    depth_slice: None,
                 })],
                 depth_stencil_attachment: if self.config.enable_depth_test {
                     Some(wgpu::RenderPassDepthStencilAttachment {

@@ -344,8 +344,9 @@ impl GpuContext {
                 push_constant_ranges: &[],
             })),
             module: &shader,
-            entry_point: "main",
+            entry_point: Some("main"),
             compilation_options: wgpu::PipelineCompilationOptions::default(),
+            cache: None,
         });
 
         let bind_group = self.create_bind_group("Centroid Bind Group", &bind_group_layout, &[
@@ -371,7 +372,7 @@ impl GpuContext {
         let buffer_slice = staging_buffer.slice(..);
         let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
         buffer_slice.map_async(wgpu::MapMode::Read, move |v| sender.send(v).unwrap());
-        self.device.poll(wgpu::Maintain::wait()).panic_on_timeout();
+        let _ = self.device.poll(wgpu::PollType::Wait);
 
         if let Some(Ok(())) = receiver.receive().await {
             let data = buffer_slice.get_mapped_range();
@@ -582,8 +583,9 @@ impl GpuContext {
                 push_constant_ranges: &[],
             })),
             module: &shader,
-            entry_point: "main",
+            entry_point: Some("main"),
             compilation_options: wgpu::PipelineCompilationOptions::default(),
+            cache: None,
         });
 
         let bind_group = self.create_bind_group(
@@ -670,7 +672,7 @@ impl GpuContext {
         corr_slice.map_async(wgpu::MapMode::Read, move |v| corr_sender.send(v).unwrap());
         dist_slice.map_async(wgpu::MapMode::Read, move |v| dist_sender.send(v).unwrap());
 
-        self.device.poll(wgpu::Maintain::wait()).panic_on_timeout();
+        let _ = self.device.poll(wgpu::PollType::Wait);
 
         if let (Some(Ok(())), Some(Ok(()))) = (corr_receiver.receive().await, dist_receiver.receive().await) {
             let corr_data = corr_slice.get_mapped_range();

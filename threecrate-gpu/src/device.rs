@@ -14,7 +14,7 @@ pub struct GpuContext {
 impl GpuContext {
     /// Create a new GPU context
     pub async fn new() -> Result<Self> {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             backends: wgpu::Backends::all(),
             flags: wgpu::InstanceFlags::default(),
             ..Default::default()
@@ -27,7 +27,7 @@ impl GpuContext {
                 force_fallback_adapter: false,
             })
             .await
-            .ok_or_else(|| threecrate_core::Error::Gpu("Failed to find suitable adapter".to_string()))?;
+            .map_err(|e| threecrate_core::Error::Gpu(format!("Failed to find suitable adapter: {:?}", e)))?;
 
         let (device, queue) = adapter
             .request_device(
@@ -36,8 +36,7 @@ impl GpuContext {
                     required_features: wgpu::Features::empty(),
                     required_limits: wgpu::Limits::default(),
                     ..Default::default()
-                },
-                None,
+                }
             )
             .await
             .map_err(|e| threecrate_core::Error::Gpu(format!("Failed to create device: {}", e)))?;
@@ -75,8 +74,9 @@ impl GpuContext {
             label: Some(label),
             layout: None,
             module: shader,
-            entry_point,
+            entry_point: Some(entry_point),
             compilation_options: wgpu::PipelineCompilationOptions::default(),
+            cache: None,
         })
     }
 

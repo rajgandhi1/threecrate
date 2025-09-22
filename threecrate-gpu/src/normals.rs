@@ -267,8 +267,9 @@ impl GpuContext {
                 push_constant_ranges: &[],
             })),
             module: &shader,
-            entry_point: "main",
+            entry_point: Some("main"),
             compilation_options: wgpu::PipelineCompilationOptions::default(),
+            cache: None,
         });
 
         // Create bind group
@@ -333,7 +334,7 @@ impl GpuContext {
         let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
         buffer_slice.map_async(wgpu::MapMode::Read, move |v| sender.send(v).unwrap());
 
-        self.device.poll(wgpu::Maintain::wait()).panic_on_timeout();
+        let _ = self.device.poll(wgpu::PollType::Wait);
 
         if let Some(Ok(())) = receiver.receive().await {
             let data = buffer_slice.get_mapped_range();

@@ -283,13 +283,13 @@ impl<'window> PointCloudRenderer<'window> {
             layout: Some(&render_pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &shader,
-                entry_point: "vs_main",
+                entry_point: Some("vs_main"),
                 buffers: &[PointVertex::desc()],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             },
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
-                entry_point: "fs_main",
+                entry_point: Some("fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: surface_config.format,
                     blend: if config.enable_alpha_blending {
@@ -327,6 +327,7 @@ impl<'window> PointCloudRenderer<'window> {
                 alpha_to_coverage_enabled: false,
             },
             multiview: None,
+            cache: None,
         });
 
         Ok(Self {
@@ -462,6 +463,7 @@ impl<'window> PointCloudRenderer<'window> {
                         }),
                         store: wgpu::StoreOp::Store,
                     },
+                    depth_slice: None,
                 })],
                 depth_stencil_attachment: if self.config.enable_depth_test {
                     Some(wgpu::RenderPassDepthStencilAttachment {

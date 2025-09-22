@@ -55,7 +55,7 @@ poisson_reconstruction = "0.4"  # Poisson surface reconstruction
 
 # GPU computing
 wgpu = "26.0"
-pollster = "0.3"
+pollster = "0.4"
 
 # I/O
 obj = "0.10"
