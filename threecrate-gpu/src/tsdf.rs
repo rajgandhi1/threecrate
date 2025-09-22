@@ -190,8 +190,9 @@ impl GpuContext {
             label: Some("TSDF Integration Pipeline"),
             layout: None,
             module: &shader,
-            entry_point: "main",
+            entry_point: Some("main"),
             compilation_options: wgpu::PipelineCompilationOptions::default(),
+            cache: None,
         });
 
         // Create bind group
@@ -275,7 +276,7 @@ impl GpuContext {
             sender.send(result).unwrap();
         });
 
-        self.device.poll(wgpu::Maintain::Wait);
+        let _ = self.device.poll(wgpu::PollType::Wait);
         receiver.recv_async().await.map_err(|_| Error::Gpu("Failed to receive mapping result".into()))?
             .map_err(|e| Error::Gpu(format!("Buffer mapping failed: {:?}", e)))?;
 
@@ -346,8 +347,9 @@ impl GpuContext {
             label: Some("Surface Extraction Pipeline"),
             layout: None,
             module: &shader,
-            entry_point: "main",
+            entry_point: Some("main"),
             compilation_options: wgpu::PipelineCompilationOptions::default(),
+            cache: None,
         });
 
         // Create bind group
@@ -419,7 +421,7 @@ impl GpuContext {
         point_count_slice.map_async(wgpu::MapMode::Read, move |result| {
             tx.send(result).unwrap();
         });
-        self.device.poll(wgpu::Maintain::Wait);
+        let _ = self.device.poll(wgpu::PollType::Wait);
         rx.receive().await.unwrap()?;
 
         let mapped_range = point_count_slice.get_mapped_range();
@@ -460,7 +462,7 @@ impl GpuContext {
         points_slice.map_async(wgpu::MapMode::Read, move |result| {
             tx.send(result).unwrap();
         });
-        self.device.poll(wgpu::Maintain::Wait);
+        let _ = self.device.poll(wgpu::PollType::Wait);
         rx.receive().await.unwrap()?;
 
         let mapped_range = points_slice.get_mapped_range();
@@ -570,8 +572,9 @@ impl TsdfVolumeGpu {
             label: Some("TSDF Integration Pipeline"),
             layout: None,
             module: &shader,
-            entry_point: "main",
+            entry_point: Some("main"),
             compilation_options: wgpu::PipelineCompilationOptions::default(),
+            cache: None,
         });
 
         // Create bind group
@@ -664,7 +667,7 @@ impl TsdfVolumeGpu {
             sender.send(result).unwrap();
         });
 
-        gpu.device.poll(wgpu::Maintain::Wait);
+        let _ = gpu.device.poll(wgpu::PollType::Wait);
         receiver.recv_async().await.map_err(|_| Error::Gpu("Failed to receive mapping result".into()))??;
 
         let data = buffer_slice.get_mapped_range();
