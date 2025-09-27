@@ -9,9 +9,11 @@ pub mod poisson;
 pub mod ball_pivoting;
 pub mod alpha_shape;
 pub mod delaunay;
+pub mod marching_cubes;
 
 // Re-export commonly used items
 pub use poisson::*;
 pub use ball_pivoting::*;
 pub use alpha_shape::*;
-pub use delaunay::*; 
+pub use delaunay::*;
+pub use marching_cubes::*; 
