@@ -23,7 +23,7 @@ poisson_reconstruction = { workspace = true }
 rstar = { workspace = true }
 kiddo = { workspace = true }
 bpa_rs = { workspace = true }
-glam = "0.28"
+glam = "0.30"
 
 [dev-dependencies]
 approx = { workspace = true } 
