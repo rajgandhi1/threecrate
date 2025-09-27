@@ -490,7 +490,7 @@ pub fn estimate_optimal_alpha(cloud: &PointCloud<Point3f>, k: usize) -> Result<f
     
     // Sample points to estimate average k-nearest neighbor distance
     let sample_size = (cloud.points.len() / 10).max(50).min(500);
-    let step = cloud.points.len().max(1) / sample_size.max(1);
+    let step = (cloud.points.len().max(1) / sample_size.max(1)).max(1);
     
     for i in (0..cloud.points.len()).step_by(step) {
         let point = &cloud.points[i];
