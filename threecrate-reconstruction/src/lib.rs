@@ -12,6 +12,7 @@ pub mod delaunay;
 pub mod marching_cubes;
 pub mod moving_least_squares;
 pub mod parallel;
+pub mod pipeline;
 
 // Re-export commonly used items
 pub use poisson::*;
@@ -20,4 +21,5 @@ pub use alpha_shape::*;
 pub use delaunay::*;
 pub use marching_cubes::*;
 pub use moving_least_squares::*;
-pub use parallel::*; 
+pub use parallel::*;
+pub use pipeline::*; 

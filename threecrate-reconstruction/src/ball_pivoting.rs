@@ -237,7 +237,7 @@ impl BallPivotingReconstructor {
 
         let mut local_densities = Vec::new();
         let sample_size = points.len().min(1000);
-        let step = points.len().max(1) / sample_size.max(1);
+        let step = (points.len().max(1) / sample_size.max(1)).max(1);
 
         for i in (0..points.len()).step_by(step) {
             let point = &points[i];
@@ -761,7 +761,7 @@ pub fn estimate_optimal_radius(cloud: &PointCloud<Point3f>, percentile: f32) -> 
     
     // Sample points to avoid O(n²) complexity
     let sample_size = (cloud.points.len() / 10).max(100).min(1000);
-    let step = cloud.points.len().max(1) / sample_size.max(1);
+    let step = (cloud.points.len().max(1) / sample_size.max(1)).max(1);
     
     for i in (0..cloud.points.len()).step_by(step) {
         let point = &cloud.points[i];
