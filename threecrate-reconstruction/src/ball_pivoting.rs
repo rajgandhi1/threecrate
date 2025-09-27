@@ -3,10 +3,10 @@
 //! This module provides a comprehensive ball pivoting implementation with multi-scale
 //! capabilities, adaptive radius selection, and improved quality metrics.
 
-use threecrate_core::{PointCloud, TriangleMesh, Result, Error, Point3f, NormalPoint3f};
 use crate::parallel;
-use std::collections::{HashMap, HashSet, BinaryHeap};
 use std::cmp::Ordering;
+use std::collections::{BinaryHeap, HashMap, HashSet};
+use threecrate_core::{Error, NormalPoint3f, Point3f, PointCloud, Result, TriangleMesh};
 
 /// Configuration for Enhanced Ball Pivoting Algorithm
 #[derive(Debug, Clone)]
@@ -196,7 +196,8 @@ impl BallPivotingReconstructor {
             let cell_y = ((point.y - grid.bounds_min.y) / cell_size) as i32;
             let cell_z = ((point.z - grid.bounds_min.z) / cell_size) as i32;
 
-            grid.cells.entry((cell_x, cell_y, cell_z))
+            grid.cells
+                .entry((cell_x, cell_y, cell_z))
                 .or_insert_with(Vec::new)
                 .push(i);
         }
@@ -248,7 +249,8 @@ impl BallPivotingReconstructor {
             };
 
             // Compute k-nearest neighbor distance
-            let mut distances: Vec<f32> = neighbors.iter()
+            let mut distances: Vec<f32> = neighbors
+                .iter()
                 .filter(|&&j| j != i)
                 .map(|&j| (point - &points[j]).magnitude())
                 .collect();
@@ -281,14 +283,20 @@ impl BallPivotingReconstructor {
         self.adaptive_radii.extend(&self.config.additional_radii);
 
         // Remove duplicates and sort
-        self.adaptive_radii.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        self.adaptive_radii
+            .sort_by(|a, b| a.partial_cmp(b).unwrap());
         self.adaptive_radii.dedup_by(|a, b| (*a - *b).abs() < 1e-6);
 
         Ok(())
     }
 
     /// Compute triangle quality metrics
-    fn compute_triangle_quality(&self, p1: &Point3f, p2: &Point3f, p3: &Point3f) -> TriangleQuality {
+    fn compute_triangle_quality(
+        &self,
+        p1: &Point3f,
+        p2: &Point3f,
+        p3: &Point3f,
+    ) -> TriangleQuality {
         let v1 = p2 - p1;
         let v2 = p3 - p2;
         let v3 = p1 - p3;
@@ -313,8 +321,12 @@ impl BallPivotingReconstructor {
         }
 
         // Angles using law of cosines
-        let angle_a = ((b*b + c*c - a*a) / (2.0 * b * c)).clamp(-1.0, 1.0).acos();
-        let angle_b = ((a*a + c*c - b*b) / (2.0 * a * c)).clamp(-1.0, 1.0).acos();
+        let angle_a = ((b * b + c * c - a * a) / (2.0 * b * c))
+            .clamp(-1.0, 1.0)
+            .acos();
+        let angle_b = ((a * a + c * c - b * b) / (2.0 * a * c))
+            .clamp(-1.0, 1.0)
+            .acos();
         let angle_c = std::f32::consts::PI - angle_a - angle_b;
 
         let min_angle = angle_a.min(angle_b).min(angle_c);
@@ -323,12 +335,20 @@ impl BallPivotingReconstructor {
         // Aspect ratio (ratio of inradius to circumradius)
         let circumradius = Self::compute_circumradius(p1, p2, p3);
         let inradius = area / ((a + b + c) * 0.5);
-        let aspect_ratio = if circumradius > 1e-10 { inradius / circumradius } else { 0.0 };
+        let aspect_ratio = if circumradius > 1e-10 {
+            inradius / circumradius
+        } else {
+            0.0
+        };
 
         // Edge ratio
         let min_edge = a.min(b).min(c);
         let max_edge = a.max(b).max(c);
-        let edge_ratio = if min_edge > 1e-10 { max_edge / min_edge } else { f32::INFINITY };
+        let edge_ratio = if min_edge > 1e-10 {
+            max_edge / min_edge
+        } else {
+            f32::INFINITY
+        };
 
         // Overall quality score (0 to 1, higher is better)
         let angle_quality = (min_angle / (std::f32::consts::PI / 6.0)).min(1.0); // Normalize to 30 degrees
@@ -367,7 +387,11 @@ impl BallPivotingReconstructor {
     }
 
     /// Advanced ball pivoting with multi-scale and adaptive features
-    fn advanced_ball_pivoting(&mut self, points: &[Point3f], normals: &[Point3f]) -> Result<Vec<[usize; 3]>> {
+    fn advanced_ball_pivoting(
+        &mut self,
+        points: &[Point3f],
+        normals: &[Point3f],
+    ) -> Result<Vec<[usize; 3]>> {
         let mut all_triangles = Vec::new();
         let mut used_points = HashSet::new();
 
@@ -385,23 +409,33 @@ impl BallPivotingReconstructor {
                 used_points.insert(seed[2]);
 
                 // Add edges to frontier
-                self.add_triangle_edges_to_frontier(&mut frontier, &seed, radius, &mut processed_edges);
+                self.add_triangle_edges_to_frontier(
+                    &mut frontier,
+                    &seed,
+                    radius,
+                    &mut processed_edges,
+                );
 
                 // Process frontier
                 while let Some(item) = frontier.pop() {
-                    if triangles.len() > 50000 { break; } // Prevent excessive triangulation
+                    if triangles.len() > 50000 {
+                        break;
+                    } // Prevent excessive triangulation
 
                     let edge = &item.edge;
-                    if processed_edges.contains(&(edge.v1, edge.v2)) ||
-                       processed_edges.contains(&(edge.v2, edge.v1)) {
+                    if processed_edges.contains(&(edge.v1, edge.v2))
+                        || processed_edges.contains(&(edge.v2, edge.v1))
+                    {
                         continue;
                     }
 
-                    if let Some(triangle) = self.try_ball_pivot(points, normals, edge, radius, &used_points) {
+                    if let Some(triangle) =
+                        self.try_ball_pivot(points, normals, edge, radius, &used_points)
+                    {
                         let quality = self.compute_triangle_quality(
                             &points[triangle[0]],
                             &points[triangle[1]],
-                            &points[triangle[2]]
+                            &points[triangle[2]],
                         );
 
                         if self.is_triangle_acceptable(&quality, radius) {
@@ -409,7 +443,12 @@ impl BallPivotingReconstructor {
                             used_points.insert(triangle[2]);
 
                             // Add new edges to frontier
-                            self.add_triangle_edges_to_frontier(&mut frontier, &triangle, radius, &mut processed_edges);
+                            self.add_triangle_edges_to_frontier(
+                                &mut frontier,
+                                &triangle,
+                                radius,
+                                &mut processed_edges,
+                            );
                         }
                     }
 
@@ -424,13 +463,23 @@ impl BallPivotingReconstructor {
     }
 
     /// Find a good seed triangle
-    fn find_seed_triangle(&self, points: &[Point3f], _normals: &[Point3f], radius: f32, used_points: &HashSet<usize>) -> Option<[usize; 3]> {
+    fn find_seed_triangle(
+        &self,
+        points: &[Point3f],
+        _normals: &[Point3f],
+        radius: f32,
+        used_points: &HashSet<usize>,
+    ) -> Option<[usize; 3]> {
         let max_attempts = 1000;
         let mut attempts = 0;
 
         for i in 0..points.len() {
-            if used_points.contains(&i) { continue; }
-            if attempts >= max_attempts { break; }
+            if used_points.contains(&i) {
+                continue;
+            }
+            if attempts >= max_attempts {
+                break;
+            }
             attempts += 1;
 
             let neighbors = if self.spatial_grid.is_some() {
@@ -440,13 +489,23 @@ impl BallPivotingReconstructor {
             };
 
             for &j in &neighbors {
-                if i == j || used_points.contains(&j) { continue; }
-                if (points[i] - points[j]).magnitude() > radius * 2.0 { continue; }
+                if i == j || used_points.contains(&j) {
+                    continue;
+                }
+                if (points[i] - points[j]).magnitude() > radius * 2.0 {
+                    continue;
+                }
 
                 for &k in &neighbors {
-                    if i == k || j == k || used_points.contains(&k) { continue; }
-                    if (points[i] - points[k]).magnitude() > radius * 2.0 { continue; }
-                    if (points[j] - points[k]).magnitude() > radius * 2.0 { continue; }
+                    if i == k || j == k || used_points.contains(&k) {
+                        continue;
+                    }
+                    if (points[i] - points[k]).magnitude() > radius * 2.0 {
+                        continue;
+                    }
+                    if (points[j] - points[k]).magnitude() > radius * 2.0 {
+                        continue;
+                    }
 
                     let quality = self.compute_triangle_quality(&points[i], &points[j], &points[k]);
                     if self.is_triangle_acceptable(&quality, radius) {
@@ -460,7 +519,13 @@ impl BallPivotingReconstructor {
     }
 
     /// Add triangle edges to the frontier
-    fn add_triangle_edges_to_frontier(&self, frontier: &mut BinaryHeap<ProcessingItem>, triangle: &[usize; 3], radius: f32, processed: &mut HashSet<(usize, usize)>) {
+    fn add_triangle_edges_to_frontier(
+        &self,
+        frontier: &mut BinaryHeap<ProcessingItem>,
+        triangle: &[usize; 3],
+        radius: f32,
+        processed: &mut HashSet<(usize, usize)>,
+    ) {
         let edges = [
             (triangle[0], triangle[1]),
             (triangle[1], triangle[2]),
@@ -469,15 +534,30 @@ impl BallPivotingReconstructor {
 
         for &(v1, v2) in &edges {
             if !processed.contains(&(v1, v2)) && !processed.contains(&(v2, v1)) {
-                let edge = PivotEdge { v1, v2, opposite_vertex: Some(triangle[2]) };
+                let edge = PivotEdge {
+                    v1,
+                    v2,
+                    opposite_vertex: Some(triangle[2]),
+                };
                 let priority = OrderedFloat(radius); // Simple priority based on radius
-                frontier.push(ProcessingItem { edge, priority, radius });
+                frontier.push(ProcessingItem {
+                    edge,
+                    priority,
+                    radius,
+                });
             }
         }
     }
 
     /// Try to pivot a ball around an edge to find a new triangle
-    fn try_ball_pivot(&self, points: &[Point3f], _normals: &[Point3f], edge: &PivotEdge, radius: f32, used_points: &HashSet<usize>) -> Option<[usize; 3]> {
+    fn try_ball_pivot(
+        &self,
+        points: &[Point3f],
+        _normals: &[Point3f],
+        edge: &PivotEdge,
+        radius: f32,
+        used_points: &HashSet<usize>,
+    ) -> Option<[usize; 3]> {
         let p1 = &points[edge.v1];
         let p2 = &points[edge.v2];
         let edge_vec = p2 - p1;
@@ -510,7 +590,9 @@ impl BallPivotingReconstructor {
 
             if dist1 <= radius && dist2 <= radius {
                 let quality = self.compute_triangle_quality(p1, p2, p3);
-                if self.is_triangle_acceptable(&quality, radius) && quality.quality_score > best_quality {
+                if self.is_triangle_acceptable(&quality, radius)
+                    && quality.quality_score > best_quality
+                {
                     best_quality = quality.quality_score;
                     best_candidate = Some([edge.v1, edge.v2, candidate]);
                 }
@@ -552,25 +634,31 @@ impl BallPivotingReconstructor {
                 } else {
                     Point3f::new(0.0, 0.0, 1.0)
                 }
-            }
+            },
         );
 
         Ok(normals)
     }
-    
+
     /// Simple triangulation using Delaunay-like approach
-    fn simple_triangulate(points: &[Point3f], _normals: &[Point3f], radius: f32) -> Result<Vec<[usize; 3]>> {
+    fn simple_triangulate(
+        points: &[Point3f],
+        _normals: &[Point3f],
+        radius: f32,
+    ) -> Result<Vec<[usize; 3]>> {
         if points.len() < 3 {
             return Ok(Vec::new());
         }
-        
+
         let mut triangles = Vec::new();
         let max_triangles = 10000; // Prevent infinite loops
-        
+
         // Simple approach: for each point, try to form triangles with nearby points
         for (i, center) in points.iter().enumerate() {
-            if triangles.len() >= max_triangles { break; }
-            
+            if triangles.len() >= max_triangles {
+                break;
+            }
+
             // Find nearby points
             let mut candidates = Vec::new();
             for (j, point) in points.iter().enumerate() {
@@ -581,24 +669,30 @@ impl BallPivotingReconstructor {
                     }
                 }
             }
-            
+
             // Try to form triangles
             for (idx_a, &a) in candidates.iter().enumerate() {
-                if triangles.len() >= max_triangles { break; }
+                if triangles.len() >= max_triangles {
+                    break;
+                }
                 for &b in candidates.iter().skip(idx_a + 1) {
-                    if triangles.len() >= max_triangles { break; }
-                    if a >= i || b >= i { continue; } // Avoid duplicates
-                    
+                    if triangles.len() >= max_triangles {
+                        break;
+                    }
+                    if a >= i || b >= i {
+                        continue;
+                    } // Avoid duplicates
+
                     // Check if triangle is valid
                     let p1 = &points[i];
                     let p2 = &points[a];
                     let p3 = &points[b];
-                    
+
                     // Compute triangle normal
                     let v1 = p2 - p1;
                     let v2 = p3 - p1;
                     let tri_normal = v1.cross(&v2);
-                    
+
                     if tri_normal.magnitude() > 1e-6 {
                         // Check if circumradius is reasonable
                         let circumradius = Self::compute_circumradius(p1, p2, p3);
@@ -609,29 +703,29 @@ impl BallPivotingReconstructor {
                 }
             }
         }
-        
+
         Ok(triangles)
     }
-    
+
     /// Compute circumradius of triangle
     fn compute_circumradius(p1: &Point3f, p2: &Point3f, p3: &Point3f) -> f32 {
         let a = (p2 - p1).magnitude();
         let b = (p3 - p2).magnitude();
         let c = (p1 - p3).magnitude();
-        
+
         // Area using cross product
         let v1 = p2 - p1;
         let v2 = p3 - p1;
         let area = v1.cross(&v2).magnitude() * 0.5;
-        
+
         if area < 1e-10 {
             return f32::INFINITY;
         }
-        
+
         // Circumradius formula
         (a * b * c) / (4.0 * area)
     }
-    
+
     /// Perform Ball Pivoting reconstruction
     pub fn reconstruct(&mut self, cloud: &PointCloud<Point3f>) -> Result<TriangleMesh> {
         if cloud.is_empty() {
@@ -663,26 +757,40 @@ impl BallPivotingReconstructor {
         };
 
         if faces.is_empty() {
-            return Err(Error::Algorithm("Ball pivoting generated no triangles".to_string()));
+            return Err(Error::Algorithm(
+                "Ball pivoting generated no triangles".to_string(),
+            ));
         }
 
         let mut mesh = TriangleMesh::from_vertices_and_faces(cloud.points.clone(), faces);
 
         // Set normals if available
-        mesh.set_normals(normals.iter().map(|n| nalgebra::Vector3::new(n.x, n.y, n.z)).collect());
+        mesh.set_normals(
+            normals
+                .iter()
+                .map(|n| nalgebra::Vector3::new(n.x, n.y, n.z))
+                .collect(),
+        );
 
         Ok(mesh)
     }
-    
+
     /// Perform Ball Pivoting reconstruction with existing normals
-    pub fn reconstruct_with_normals(&mut self, cloud: &PointCloud<NormalPoint3f>) -> Result<TriangleMesh> {
+    pub fn reconstruct_with_normals(
+        &mut self,
+        cloud: &PointCloud<NormalPoint3f>,
+    ) -> Result<TriangleMesh> {
         if cloud.is_empty() {
             return Err(Error::InvalidData("Point cloud is empty".to_string()));
         }
 
         // Extract points and normals
         let points: Vec<Point3f> = cloud.points.iter().map(|p| p.position).collect();
-        let normals: Vec<Point3f> = cloud.points.iter().map(|p| Point3f::from(p.normal)).collect();
+        let normals: Vec<Point3f> = cloud
+            .points
+            .iter()
+            .map(|p| Point3f::from(p.normal))
+            .collect();
 
         // Build spatial acceleration if enabled
         if self.config.use_spatial_index {
@@ -701,20 +809,30 @@ impl BallPivotingReconstructor {
         };
 
         if faces.is_empty() {
-            return Err(Error::Algorithm("Ball pivoting generated no triangles".to_string()));
+            return Err(Error::Algorithm(
+                "Ball pivoting generated no triangles".to_string(),
+            ));
         }
 
         let mut mesh = TriangleMesh::from_vertices_and_faces(points, faces);
 
         // Set normals
-        mesh.set_normals(normals.iter().map(|n| nalgebra::Vector3::new(n.x, n.y, n.z)).collect());
+        mesh.set_normals(
+            normals
+                .iter()
+                .map(|n| nalgebra::Vector3::new(n.x, n.y, n.z))
+                .collect(),
+        );
 
         Ok(mesh)
     }
 }
 
 /// Convenience function for ball pivoting reconstruction
-pub fn ball_pivoting_reconstruction(cloud: &PointCloud<Point3f>, radius: f32) -> Result<TriangleMesh> {
+pub fn ball_pivoting_reconstruction(
+    cloud: &PointCloud<Point3f>,
+    radius: f32,
+) -> Result<TriangleMesh> {
     let config = BallPivotingConfig {
         radius,
         ..Default::default()
@@ -751,21 +869,23 @@ pub fn estimate_optimal_radius(cloud: &PointCloud<Point3f>, percentile: f32) -> 
     if cloud.is_empty() {
         return Err(Error::InvalidData("Point cloud is empty".to_string()));
     }
-    
+
     if !(0.0..=1.0).contains(&percentile) {
-        return Err(Error::InvalidData("Percentile must be between 0.0 and 1.0".to_string()));
+        return Err(Error::InvalidData(
+            "Percentile must be between 0.0 and 1.0".to_string(),
+        ));
     }
-    
+
     // Simple approach: compute distances between points
     let mut distances = Vec::new();
-    
+
     // Sample points to avoid O(n²) complexity
     let sample_size = (cloud.points.len() / 10).max(100).min(1000);
     let step = (cloud.points.len().max(1) / sample_size.max(1)).max(1);
-    
+
     for i in (0..cloud.points.len()).step_by(step) {
         let point = &cloud.points[i];
-        
+
         // Find nearest neighbor
         let mut min_dist = f32::INFINITY;
         for (j, other_point) in cloud.points.iter().enumerate() {
@@ -776,20 +896,20 @@ pub fn estimate_optimal_radius(cloud: &PointCloud<Point3f>, percentile: f32) -> 
                 }
             }
         }
-        
+
         if min_dist < f32::INFINITY {
             distances.push(min_dist);
         }
     }
-    
+
     if distances.is_empty() {
         return Ok(0.1); // Default fallback
     }
-    
+
     // Sort and take percentile
     distances.sort_by(|a, b| a.partial_cmp(b).unwrap());
     let index = ((distances.len() - 1) as f32 * percentile) as usize;
-    
+
     // Optimal radius is typically 2-3 times the average nearest neighbor distance
     Ok(distances[index] * 2.5)
 }
@@ -830,12 +950,12 @@ mod tests {
     fn test_estimate_optimal_radius_invalid_percentile() {
         let points = vec![Point3::new(0.0, 0.0, 0.0)];
         let cloud = PointCloud::from_points(points);
-        
+
         assert!(estimate_optimal_radius(&cloud, -0.1).is_err());
         assert!(estimate_optimal_radius(&cloud, 1.1).is_err());
     }
 
-    #[test] 
+    #[test]
     fn test_ball_pivoting_simple() {
         // Create a simple triangle in 3D
         let points = vec![
@@ -845,9 +965,9 @@ mod tests {
             Point3::new(0.5, 0.33, 0.5),
         ];
         let cloud = PointCloud::from_points(points);
-        
+
         let result = ball_pivoting_reconstruction(&cloud, 2.0);
-        
+
         // Should succeed and create some triangles
         match result {
             Ok(mesh) => {
@@ -877,9 +997,9 @@ mod tests {
             },
         ];
         let cloud = PointCloud::from_points(normal_points);
-        
+
         let result = ball_pivoting_from_normals(&cloud, 2.0);
-        
+
         // Should succeed or fail gracefully
         match result {
             Ok(mesh) => {
@@ -896,10 +1016,10 @@ mod tests {
         let p1 = Point3::new(0.0, 0.0, 0.0);
         let p2 = Point3::new(1.0, 0.0, 0.0);
         let p3 = Point3::new(0.0, 1.0, 0.0);
-        
+
         let radius = BallPivotingReconstructor::compute_circumradius(&p1, &p2, &p3);
-        
+
         // For a right triangle with legs of length 1, circumradius should be ~0.707
         assert!((radius - 0.707).abs() < 0.1);
     }
-} 
+}

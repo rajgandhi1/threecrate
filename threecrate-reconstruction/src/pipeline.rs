@@ -3,9 +3,9 @@
 //! This module provides an intelligent reconstruction pipeline that automatically
 //! selects the best algorithm based on input data characteristics and user requirements.
 
-use threecrate_core::{PointCloud, TriangleMesh, Result, Point3f, NormalPoint3f, Error};
 use crate::parallel;
 use std::collections::HashMap;
+use threecrate_core::{Error, NormalPoint3f, Point3f, PointCloud, Result, TriangleMesh};
 
 /// Reconstruction algorithm types available in the pipeline
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -203,13 +203,12 @@ impl ReconstructionPipeline {
                 ];
             }
             UseCase::NoisyData => {
-                config.fallback_algorithms = vec![
-                    Algorithm::MovingLeastSquares,
-                    Algorithm::Delaunay,
-                ];
+                config.fallback_algorithms =
+                    vec![Algorithm::MovingLeastSquares, Algorithm::Delaunay];
             }
             UseCase::Sparse => {
-                config.fallback_algorithms = vec![Algorithm::Delaunay, Algorithm::MovingLeastSquares];
+                config.fallback_algorithms =
+                    vec![Algorithm::Delaunay, Algorithm::MovingLeastSquares];
             }
             UseCase::Dense => {
                 config.fallback_algorithms = vec![
@@ -241,14 +240,12 @@ impl ReconstructionPipeline {
         // Sample points for analysis to avoid O(n²) complexity
         let sample_size = point_count.min(1000);
         let step = (point_count.max(1) / sample_size.max(1)).max(1);
-        let sample_points: Vec<Point3f> = cloud.points.iter()
-            .step_by(step)
-            .cloned()
-            .collect();
+        let sample_points: Vec<Point3f> = cloud.points.iter().step_by(step).cloned().collect();
 
         // Analyze nearest neighbor distances
         let neighbor_distances = self.compute_neighbor_distances(&sample_points)?;
-        let avg_neighbor_distance = neighbor_distances.iter().sum::<f32>() / neighbor_distances.len() as f32;
+        let avg_neighbor_distance =
+            neighbor_distances.iter().sum::<f32>() / neighbor_distances.len() as f32;
 
         // Estimate density uniformity
         let density_uniformity = self.estimate_density_uniformity(&neighbor_distances);
@@ -280,10 +277,12 @@ impl ReconstructionPipeline {
     }
 
     /// Analyze input data characteristics for clouds with normals
-    pub fn analyze_data_with_normals(&self, cloud: &PointCloud<NormalPoint3f>) -> Result<DataCharacteristics> {
-        let point_cloud: PointCloud<Point3f> = PointCloud::from_points(
-            cloud.points.iter().map(|p| p.position).collect()
-        );
+    pub fn analyze_data_with_normals(
+        &self,
+        cloud: &PointCloud<NormalPoint3f>,
+    ) -> Result<DataCharacteristics> {
+        let point_cloud: PointCloud<Point3f> =
+            PointCloud::from_points(cloud.points.iter().map(|p| p.position).collect());
 
         let mut characteristics = self.analyze_data(&point_cloud)?;
         characteristics.has_normals = true;
@@ -306,7 +305,14 @@ impl ReconstructionPipeline {
         scores.insert(Algorithm::BallPivoting, 0.5);
         scores.insert(Algorithm::MovingLeastSquares, 0.5);
         scores.insert(Algorithm::MarchingCubes, 0.5);
-        scores.insert(Algorithm::Poisson, if characteristics.has_normals { 0.5 } else { 0.0 });
+        scores.insert(
+            Algorithm::Poisson,
+            if characteristics.has_normals {
+                0.5
+            } else {
+                0.0
+            },
+        );
 
         // Adjust scores based on point count
         match characteristics.point_count {
@@ -410,7 +416,8 @@ impl ReconstructionPipeline {
         }
 
         // Find algorithm with highest score
-        scores.into_iter()
+        scores
+            .into_iter()
             .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
             .map(|(algo, _)| algo)
             .unwrap_or(Algorithm::Delaunay)
@@ -437,7 +444,8 @@ impl ReconstructionPipeline {
                         match self.try_algorithm(cloud, fallback_algo) {
                             Ok(mesh) => {
                                 let processing_time = start_time.elapsed().as_secs_f32();
-                                let quality_metrics = self.compute_quality_metrics(&mesh, &characteristics);
+                                let quality_metrics =
+                                    self.compute_quality_metrics(&mesh, &characteristics);
 
                                 return Ok(ReconstructionResult {
                                     mesh,
@@ -468,7 +476,10 @@ impl ReconstructionPipeline {
     }
 
     /// Reconstruct surface from point cloud with normals
-    pub fn reconstruct_with_normals(&self, cloud: &PointCloud<NormalPoint3f>) -> Result<ReconstructionResult> {
+    pub fn reconstruct_with_normals(
+        &self,
+        cloud: &PointCloud<NormalPoint3f>,
+    ) -> Result<ReconstructionResult> {
         let start_time = std::time::Instant::now();
 
         // Analyze data characteristics
@@ -488,7 +499,8 @@ impl ReconstructionPipeline {
                         match self.try_algorithm_with_normals(cloud, fallback_algo) {
                             Ok(mesh) => {
                                 let processing_time = start_time.elapsed().as_secs_f32();
-                                let quality_metrics = self.compute_quality_metrics(&mesh, &characteristics);
+                                let quality_metrics =
+                                    self.compute_quality_metrics(&mesh, &characteristics);
 
                                 return Ok(ReconstructionResult {
                                     mesh,
@@ -537,7 +549,8 @@ impl ReconstructionPipeline {
             min_dist
         });
 
-        let finite_distances: Vec<f32> = distances.into_iter()
+        let finite_distances: Vec<f32> = distances
+            .into_iter()
             .filter(|&d| d.is_finite() && d > 0.0)
             .collect();
 
@@ -555,7 +568,11 @@ impl ReconstructionPipeline {
 
         let mean = distances.iter().sum::<f32>() / distances.len() as f32;
         let variance = self.compute_variance(distances);
-        let cv = if mean > 0.0 { variance.sqrt() / mean } else { 0.0 };
+        let cv = if mean > 0.0 {
+            variance.sqrt() / mean
+        } else {
+            0.0
+        };
 
         // Convert coefficient of variation to uniformity (0.0 = non-uniform, 1.0 = uniform)
         (1.0 / (1.0 + cv)).min(1.0)
@@ -567,14 +584,17 @@ impl ReconstructionPipeline {
         }
 
         let mean = values.iter().sum::<f32>() / values.len() as f32;
-        let variance = values.iter()
-            .map(|x| (x - mean).powi(2))
-            .sum::<f32>() / values.len() as f32;
+        let variance = values.iter().map(|x| (x - mean).powi(2)).sum::<f32>() / values.len() as f32;
 
         variance
     }
 
-    fn classify_distribution(&self, _points: &[Point3f], bounds_min: &Point3f, bounds_max: &Point3f) -> DistributionType {
+    fn classify_distribution(
+        &self,
+        _points: &[Point3f],
+        bounds_min: &Point3f,
+        bounds_max: &Point3f,
+    ) -> DistributionType {
         let extents = [
             bounds_max.x - bounds_min.x,
             bounds_max.y - bounds_min.y,
@@ -627,7 +647,8 @@ impl ReconstructionPipeline {
             for (j, other_point) in sample_points.iter().enumerate() {
                 if i != j {
                     let dist = (point - other_point).magnitude();
-                    if dist < 0.1 { // Fixed radius for simplicity
+                    if dist < 0.1 {
+                        // Fixed radius for simplicity
                         neighbors.push(*other_point);
                     }
                 }
@@ -643,7 +664,8 @@ impl ReconstructionPipeline {
         if curvature_variations.is_empty() {
             0.5
         } else {
-            let avg_variation = curvature_variations.iter().sum::<f32>() / curvature_variations.len() as f32;
+            let avg_variation =
+                curvature_variations.iter().sum::<f32>() / curvature_variations.len() as f32;
             avg_variation.min(1.0)
         }
     }
@@ -679,24 +701,28 @@ impl ReconstructionPipeline {
         let centroid = Point3f::from(centroid.coords / points.len() as f32);
 
         // Check if points are roughly uniformly distributed around centroid
-        let distances: Vec<f32> = points.iter()
-            .map(|p| (p - centroid).magnitude())
-            .collect();
+        let distances: Vec<f32> = points.iter().map(|p| (p - centroid).magnitude()).collect();
 
         let mean_dist = distances.iter().sum::<f32>() / distances.len() as f32;
         let variance = self.compute_variance(&distances);
-        let cv = if mean_dist > 0.0 { variance.sqrt() / mean_dist } else { 1.0 };
+        let cv = if mean_dist > 0.0 {
+            variance.sqrt() / mean_dist
+        } else {
+            1.0
+        };
 
         // If coefficient of variation is low, points are roughly at same distance from center
         cv < 0.3
     }
 
     // Helper methods for algorithm execution
-    fn try_algorithm(&self, cloud: &PointCloud<Point3f>, algorithm: Algorithm) -> Result<TriangleMesh> {
+    fn try_algorithm(
+        &self,
+        cloud: &PointCloud<Point3f>,
+        algorithm: Algorithm,
+    ) -> Result<TriangleMesh> {
         match algorithm {
-            Algorithm::Delaunay => {
-                crate::delaunay::delaunay_triangulation_auto(cloud)
-            }
+            Algorithm::Delaunay => crate::delaunay::delaunay_triangulation_auto(cloud),
             Algorithm::BallPivoting => {
                 let radius = crate::ball_pivoting::estimate_optimal_radius(cloud, 0.5)?;
                 crate::ball_pivoting::ball_pivoting_reconstruction(cloud, radius)
@@ -708,35 +734,37 @@ impl ReconstructionPipeline {
                 // Convert point cloud to volumetric representation
                 let mls = crate::moving_least_squares::MLSSurface::new(
                     cloud,
-                    crate::moving_least_squares::MLSConfig::default()
+                    crate::moving_least_squares::MLSConfig::default(),
                 )?;
                 mls.extract_mesh()
             }
             Algorithm::Poisson => {
                 // Cannot use Poisson without normals
-                Err(Error::InvalidData("Poisson reconstruction requires normals".to_string()))
+                Err(Error::InvalidData(
+                    "Poisson reconstruction requires normals".to_string(),
+                ))
             }
         }
     }
 
-    fn try_algorithm_with_normals(&self, cloud: &PointCloud<NormalPoint3f>, algorithm: Algorithm) -> Result<TriangleMesh> {
+    fn try_algorithm_with_normals(
+        &self,
+        cloud: &PointCloud<NormalPoint3f>,
+        algorithm: Algorithm,
+    ) -> Result<TriangleMesh> {
         match algorithm {
-            Algorithm::Poisson => {
-                crate::poisson::poisson_reconstruction_default(cloud)
-            }
+            Algorithm::Poisson => crate::poisson::poisson_reconstruction_default(cloud),
             Algorithm::BallPivoting => {
                 let radius = {
-                    let point_cloud: PointCloud<Point3f> = PointCloud::from_points(
-                        cloud.points.iter().map(|p| p.position).collect()
-                    );
+                    let point_cloud: PointCloud<Point3f> =
+                        PointCloud::from_points(cloud.points.iter().map(|p| p.position).collect());
                     crate::ball_pivoting::estimate_optimal_radius(&point_cloud, 0.5)?
                 };
                 crate::ball_pivoting::ball_pivoting_from_normals(cloud, radius)
             }
             Algorithm::Delaunay => {
-                let point_cloud: PointCloud<Point3f> = PointCloud::from_points(
-                    cloud.points.iter().map(|p| p.position).collect()
-                );
+                let point_cloud: PointCloud<Point3f> =
+                    PointCloud::from_points(cloud.points.iter().map(|p| p.position).collect());
                 crate::delaunay::delaunay_triangulation_auto(&point_cloud)
             }
             Algorithm::MovingLeastSquares => {
@@ -746,20 +774,28 @@ impl ReconstructionPipeline {
                 // Convert to MLS and extract
                 let mls = crate::moving_least_squares::MLSSurface::from_normals(
                     cloud,
-                    crate::moving_least_squares::MLSConfig::default()
+                    crate::moving_least_squares::MLSConfig::default(),
                 )?;
                 mls.extract_mesh()
             }
         }
     }
 
-    fn compute_quality_metrics(&self, mesh: &TriangleMesh, characteristics: &DataCharacteristics) -> QualityMetrics {
+    fn compute_quality_metrics(
+        &self,
+        mesh: &TriangleMesh,
+        characteristics: &DataCharacteristics,
+    ) -> QualityMetrics {
         let vertex_count = mesh.vertex_count();
         let triangle_count = mesh.face_count();
 
         // Simple quality metrics - in a real implementation these would be more sophisticated
         let avg_triangle_quality = 0.75; // Placeholder
-        let watertightness = if characteristics.is_closed_surface { 0.8 } else { 0.6 };
+        let watertightness = if characteristics.is_closed_surface {
+            0.8
+        } else {
+            0.6
+        };
         let smoothness = 1.0 - characteristics.noise_level;
         let geometric_accuracy = 0.8; // Placeholder
 
@@ -787,7 +823,10 @@ pub fn auto_reconstruct_with_normals(cloud: &PointCloud<NormalPoint3f>) -> Resul
 }
 
 /// Convenience function for reconstruction with specific quality level
-pub fn auto_reconstruct_with_quality(cloud: &PointCloud<Point3f>, quality: QualityLevel) -> Result<TriangleMesh> {
+pub fn auto_reconstruct_with_quality(
+    cloud: &PointCloud<Point3f>,
+    quality: QualityLevel,
+) -> Result<TriangleMesh> {
     let mut config = PipelineConfig::default();
     config.quality = quality;
     let pipeline = ReconstructionPipeline::new(config);
@@ -795,7 +834,10 @@ pub fn auto_reconstruct_with_quality(cloud: &PointCloud<Point3f>, quality: Quali
 }
 
 /// Convenience function for reconstruction optimized for a use case
-pub fn auto_reconstruct_for_use_case(cloud: &PointCloud<Point3f>, use_case: UseCase) -> Result<TriangleMesh> {
+pub fn auto_reconstruct_for_use_case(
+    cloud: &PointCloud<Point3f>,
+    use_case: UseCase,
+) -> Result<TriangleMesh> {
     let pipeline = ReconstructionPipeline::for_use_case(use_case);
     Ok(pipeline.reconstruct(cloud)?.mesh)
 }
@@ -863,7 +905,10 @@ mod tests {
 
         let algorithm = pipeline.select_algorithm(&characteristics);
         // For sparse planar data, should prefer Delaunay
-        assert!(matches!(algorithm, Algorithm::Delaunay | Algorithm::MovingLeastSquares));
+        assert!(matches!(
+            algorithm,
+            Algorithm::Delaunay | Algorithm::MovingLeastSquares
+        ));
     }
 
     #[test]
@@ -883,7 +928,10 @@ mod tests {
 
         let algorithm = pipeline.select_algorithm(&characteristics);
         // For dense, uniform data with normals, should prefer Poisson or BallPivoting
-        assert!(matches!(algorithm, Algorithm::Poisson | Algorithm::BallPivoting));
+        assert!(matches!(
+            algorithm,
+            Algorithm::Poisson | Algorithm::BallPivoting
+        ));
     }
 
     #[test]
@@ -903,7 +951,9 @@ mod tests {
             }
             Err(_) => {
                 // Algorithm may fail on simple test data - that's acceptable
-                println!("Auto reconstruction failed on simple test data (expected for some algorithms)");
+                println!(
+                    "Auto reconstruction failed on simple test data (expected for some algorithms)"
+                );
             }
         }
     }
@@ -962,7 +1012,8 @@ mod tests {
         // Test spherical distribution
         let min_bounds_sphere = Point3f::new(-1.0, -1.0, -1.0);
         let max_bounds_sphere = Point3f::new(1.0, 1.0, 1.0);
-        let distribution = pipeline.classify_distribution(&planar_points, &min_bounds_sphere, &max_bounds_sphere);
+        let distribution =
+            pipeline.classify_distribution(&planar_points, &min_bounds_sphere, &max_bounds_sphere);
         assert_eq!(distribution, DistributionType::Spherical);
     }
 }

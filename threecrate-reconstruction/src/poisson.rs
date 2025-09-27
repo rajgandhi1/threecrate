@@ -1,7 +1,7 @@
 //! Poisson surface reconstruction
 
-use threecrate_core::{PointCloud, TriangleMesh, Result, Point3f, NormalPoint3f, Error};
 use crate::parallel;
+use threecrate_core::{Error, NormalPoint3f, Point3f, PointCloud, Result, TriangleMesh};
 
 /// Configuration parameters for Poisson reconstruction
 #[derive(Debug, Clone)]
@@ -52,7 +52,7 @@ impl Default for PoissonConfig {
 /// * `Result<TriangleMesh>` - Reconstructed triangle mesh
 pub fn poisson_reconstruction(
     cloud: &PointCloud<NormalPoint3f>,
-    config: &PoissonConfig
+    config: &PoissonConfig,
 ) -> Result<TriangleMesh> {
     if cloud.is_empty() {
         return Err(Error::InvalidData("Point cloud is empty".to_string()));
@@ -60,7 +60,9 @@ pub fn poisson_reconstruction(
 
     // Require minimum number of points for stable reconstruction
     if cloud.points.len() < 10 {
-        return Err(Error::InvalidData("Point cloud too small for Poisson reconstruction (minimum 10 points)".to_string()));
+        return Err(Error::InvalidData(
+            "Point cloud too small for Poisson reconstruction (minimum 10 points)".to_string(),
+        ));
     }
 
     // Convert our data types to what the poisson_reconstruction crate expects using parallel processing
@@ -68,23 +70,22 @@ pub fn poisson_reconstruction(
         nalgebra::Point3::new(
             p.position.x as f64,
             p.position.y as f64,
-            p.position.z as f64
+            p.position.z as f64,
         )
     });
 
     let normals: Vec<nalgebra::Vector3<f64>> = parallel::parallel_map(&cloud.points, |p| {
-        nalgebra::Vector3::new(
-            p.normal.x as f64,
-            p.normal.y as f64,
-            p.normal.z as f64
-        )
+        nalgebra::Vector3::new(p.normal.x as f64, p.normal.y as f64, p.normal.z as f64)
     });
 
     // Validate that normals are normalized
     for (i, normal) in normals.iter().enumerate() {
         let magnitude = normal.magnitude();
         if magnitude < 1e-6 || (magnitude - 1.0).abs() > 0.1 {
-            return Err(Error::InvalidData(format!("Invalid normal at point {}: magnitude {}", i, magnitude)));
+            return Err(Error::InvalidData(format!(
+                "Invalid normal at point {}: magnitude {}",
+                i, magnitude
+            )));
         }
     }
 
@@ -96,10 +97,10 @@ pub fn poisson_reconstruction(
     let poisson = poisson_reconstruction::PoissonReconstruction::from_points_and_normals(
         &points,
         &normals,
-        config.scale as f64,        // screening parameter
-        depth,                      // depth (limited)
-        cg_depth,                   // max relaxation iterations (limited)
-        0,                          // max memory usage (0 = unlimited)
+        config.scale as f64, // screening parameter
+        depth,               // depth (limited)
+        cg_depth,            // max relaxation iterations (limited)
+        0,                   // max memory usage (0 = unlimited)
     );
 
     // Perform reconstruction
@@ -107,7 +108,9 @@ pub fn poisson_reconstruction(
 
     // Validate output
     if mesh_buffers.vertices().is_empty() {
-        return Err(Error::Algorithm("Poisson reconstruction generated no vertices".to_string()));
+        return Err(Error::Algorithm(
+            "Poisson reconstruction generated no vertices".to_string(),
+        ));
     }
 
     // Convert back to our format using parallel processing
@@ -118,15 +121,20 @@ pub fn poisson_reconstruction(
     // Convert indices to triangle faces
     let indices = mesh_buffers.indices();
     if indices.len() % 3 != 0 {
-        return Err(Error::Algorithm("Invalid triangle indices from Poisson reconstruction".to_string()));
+        return Err(Error::Algorithm(
+            "Invalid triangle indices from Poisson reconstruction".to_string(),
+        ));
     }
 
-    let faces: Vec<[usize; 3]> = parallel::parallel_map(&indices.chunks(3).collect::<Vec<_>>(), |chunk| {
-        [chunk[0] as usize, chunk[1] as usize, chunk[2] as usize]
-    });
+    let faces: Vec<[usize; 3]> =
+        parallel::parallel_map(&indices.chunks(3).collect::<Vec<_>>(), |chunk| {
+            [chunk[0] as usize, chunk[1] as usize, chunk[2] as usize]
+        });
 
     if faces.is_empty() {
-        return Err(Error::Algorithm("Poisson reconstruction generated no triangles".to_string()));
+        return Err(Error::Algorithm(
+            "Poisson reconstruction generated no triangles".to_string(),
+        ));
     }
 
     // Create the final mesh
@@ -136,10 +144,10 @@ pub fn poisson_reconstruction(
 }
 
 /// Poisson surface reconstruction with default configuration
-/// 
+///
 /// # Arguments
 /// * `cloud` - Point cloud with normal information
-/// 
+///
 /// # Returns
 /// * `Result<TriangleMesh>` - Reconstructed triangle mesh
 pub fn poisson_reconstruction_default(cloud: &PointCloud<NormalPoint3f>) -> Result<TriangleMesh> {
@@ -147,12 +155,12 @@ pub fn poisson_reconstruction_default(cloud: &PointCloud<NormalPoint3f>) -> Resu
 }
 
 /// Estimate normals and perform Poisson reconstruction in one step
-/// 
+///
 /// # Arguments
 /// * `cloud` - Point cloud without normals
 /// * `k` - Number of neighbors for normal estimation
 /// * `config` - Configuration parameters for the reconstruction
-/// 
+///
 /// # Returns
 /// * `Result<TriangleMesh>` - Reconstructed triangle mesh
 pub fn poisson_reconstruction_with_normals(
@@ -162,13 +170,15 @@ pub fn poisson_reconstruction_with_normals(
 ) -> Result<TriangleMesh> {
     // First estimate normals
     let normals_cloud = threecrate_algorithms::estimate_normals(cloud, k)?;
-    
+
     // Then perform Poisson reconstruction
     poisson_reconstruction(&normals_cloud, config)
 }
 
 /// Wrapper function that matches the original API signature
-#[deprecated(note = "Use poisson_reconstruction_default or poisson_reconstruction_with_normals instead")]
+#[deprecated(
+    note = "Use poisson_reconstruction_default or poisson_reconstruction_with_normals instead"
+)]
 pub fn poisson_reconstruction_legacy(cloud: &PointCloud<Point3f>) -> Result<TriangleMesh> {
     poisson_reconstruction_with_normals(cloud, 20, &PoissonConfig::default())
 }
@@ -225,16 +235,21 @@ mod tests {
             Err(e) => {
                 let error_msg = e.to_string();
                 // Should NOT contain the old placeholder message
-                assert!(!error_msg.contains("temporarily disabled"),
-                        "API should no longer be disabled: {}", error_msg);
+                assert!(
+                    !error_msg.contains("temporarily disabled"),
+                    "API should no longer be disabled: {}",
+                    error_msg
+                );
 
                 // Should now get the new validation error for too few points
                 if error_msg.contains("too small for Poisson reconstruction") {
-                    println!("✓ Poisson reconstruction API fixed and working with proper validation");
+                    println!(
+                        "✓ Poisson reconstruction API fixed and working with proper validation"
+                    );
                 } else {
                     println!("Poisson reconstruction returned other error: {}", error_msg);
                 }
             }
         }
     }
-} 
+}

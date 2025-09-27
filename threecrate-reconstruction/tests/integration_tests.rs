@@ -3,9 +3,9 @@
 //! These tests verify that all reconstruction algorithms work together
 //! and that the unified pipeline functions correctly.
 
-use threecrate_reconstruction::*;
-use threecrate_core::{PointCloud, Point3f, NormalPoint3f};
 use nalgebra::{Point3, Vector3};
+use threecrate_core::{NormalPoint3f, Point3f, PointCloud};
+use threecrate_reconstruction::*;
 
 /// Create a simple test point cloud forming a square
 fn create_test_square() -> PointCloud<Point3f> {
@@ -23,11 +23,26 @@ fn create_test_square() -> PointCloud<Point3f> {
 fn create_test_square_with_normals() -> PointCloud<NormalPoint3f> {
     let normal = Vector3::new(0.0, 0.0, 1.0);
     let points = vec![
-        NormalPoint3f { position: Point3::new(0.0, 0.0, 0.0), normal },
-        NormalPoint3f { position: Point3::new(1.0, 0.0, 0.0), normal },
-        NormalPoint3f { position: Point3::new(1.0, 1.0, 0.0), normal },
-        NormalPoint3f { position: Point3::new(0.0, 1.0, 0.0), normal },
-        NormalPoint3f { position: Point3::new(0.5, 0.5, 0.0), normal },
+        NormalPoint3f {
+            position: Point3::new(0.0, 0.0, 0.0),
+            normal,
+        },
+        NormalPoint3f {
+            position: Point3::new(1.0, 0.0, 0.0),
+            normal,
+        },
+        NormalPoint3f {
+            position: Point3::new(1.0, 1.0, 0.0),
+            normal,
+        },
+        NormalPoint3f {
+            position: Point3::new(0.0, 1.0, 0.0),
+            normal,
+        },
+        NormalPoint3f {
+            position: Point3::new(0.5, 0.5, 0.0),
+            normal,
+        },
     ];
     PointCloud::from_points(points)
 }
@@ -82,11 +97,17 @@ fn test_unified_pipeline_auto_reconstruct() {
     match result {
         Ok(mesh) => {
             assert!(!mesh.is_empty());
-            println!("✓ Auto reconstruction succeeded with {} vertices, {} faces",
-                     mesh.vertex_count(), mesh.face_count());
+            println!(
+                "✓ Auto reconstruction succeeded with {} vertices, {} faces",
+                mesh.vertex_count(),
+                mesh.face_count()
+            );
         }
         Err(e) => {
-            println!("Auto reconstruction failed: {} (acceptable for simple test data)", e);
+            println!(
+                "Auto reconstruction failed: {} (acceptable for simple test data)",
+                e
+            );
         }
     }
 }
@@ -99,11 +120,17 @@ fn test_unified_pipeline_auto_reconstruct_with_normals() {
     match result {
         Ok(mesh) => {
             assert!(!mesh.is_empty());
-            println!("✓ Auto reconstruction with normals succeeded with {} vertices, {} faces",
-                     mesh.vertex_count(), mesh.face_count());
+            println!(
+                "✓ Auto reconstruction with normals succeeded with {} vertices, {} faces",
+                mesh.vertex_count(),
+                mesh.face_count()
+            );
         }
         Err(e) => {
-            println!("Auto reconstruction with normals failed: {} (acceptable for simple test data)", e);
+            println!(
+                "Auto reconstruction with normals failed: {} (acceptable for simple test data)",
+                e
+            );
         }
     }
 }
@@ -191,14 +218,20 @@ fn test_pipeline_full_workflow() {
             println!("  Processing time: {:.3}s", result.processing_time);
             println!("  Vertices: {}", result.quality_metrics.vertex_count);
             println!("  Triangles: {}", result.quality_metrics.triangle_count);
-            println!("  Quality score: {:.3}", result.quality_metrics.avg_triangle_quality);
+            println!(
+                "  Quality score: {:.3}",
+                result.quality_metrics.avg_triangle_quality
+            );
 
             assert!(!result.mesh.is_empty());
             assert!(result.processing_time >= 0.0);
             assert!(result.quality_metrics.vertex_count > 0);
         }
         Err(e) => {
-            println!("Full pipeline workflow failed: {} (may be acceptable for test data)", e);
+            println!(
+                "Full pipeline workflow failed: {} (may be acceptable for test data)",
+                e
+            );
         }
     }
 }
@@ -233,8 +266,11 @@ fn test_individual_algorithms_basic() {
     match delaunay_triangulation_auto(&cloud) {
         Ok(mesh) => {
             assert!(!mesh.is_empty());
-            println!("✓ Delaunay triangulation: {} vertices, {} faces",
-                     mesh.vertex_count(), mesh.face_count());
+            println!(
+                "✓ Delaunay triangulation: {} vertices, {} faces",
+                mesh.vertex_count(),
+                mesh.face_count()
+            );
         }
         Err(e) => println!("Delaunay failed: {}", e),
     }
@@ -243,8 +279,11 @@ fn test_individual_algorithms_basic() {
     match ball_pivoting_reconstruction(&cloud, 0.5) {
         Ok(mesh) => {
             assert!(!mesh.is_empty());
-            println!("✓ Ball Pivoting: {} vertices, {} faces",
-                     mesh.vertex_count(), mesh.face_count());
+            println!(
+                "✓ Ball Pivoting: {} vertices, {} faces",
+                mesh.vertex_count(),
+                mesh.face_count()
+            );
         }
         Err(e) => println!("Ball Pivoting failed: {}", e),
     }
@@ -253,8 +292,11 @@ fn test_individual_algorithms_basic() {
     match moving_least_squares_auto(&cloud) {
         Ok(mesh) => {
             assert!(!mesh.is_empty());
-            println!("✓ Moving Least Squares: {} vertices, {} faces",
-                     mesh.vertex_count(), mesh.face_count());
+            println!(
+                "✓ Moving Least Squares: {} vertices, {} faces",
+                mesh.vertex_count(),
+                mesh.face_count()
+            );
         }
         Err(e) => println!("MLS failed: {}", e),
     }
@@ -294,10 +336,16 @@ fn test_algorithm_selection_logic() {
     };
 
     let algorithm = pipeline.select_algorithm(&dense_characteristics);
-    println!("✓ Dense spherical data with normals -> Algorithm: {:?}", algorithm);
+    println!(
+        "✓ Dense spherical data with normals -> Algorithm: {:?}",
+        algorithm
+    );
 
     // Algorithm selection should be consistent
-    assert!(matches!(algorithm, Algorithm::Poisson | Algorithm::BallPivoting | Algorithm::MarchingCubes));
+    assert!(matches!(
+        algorithm,
+        Algorithm::Poisson | Algorithm::BallPivoting | Algorithm::MarchingCubes
+    ));
 }
 
 #[test]
@@ -310,15 +358,24 @@ fn test_data_characteristics_analysis() {
             println!("✓ Data analysis succeeded:");
             println!("  Point count: {}", characteristics.point_count);
             println!("  Has normals: {}", characteristics.has_normals);
-            println!("  Density uniformity: {:.3}", characteristics.density_uniformity);
+            println!(
+                "  Density uniformity: {:.3}",
+                characteristics.density_uniformity
+            );
             println!("  Noise level: {:.3}", characteristics.noise_level);
             println!("  Distribution: {:?}", characteristics.distribution_type);
             println!("  Closed surface: {}", characteristics.is_closed_surface);
-            println!("  Surface complexity: {:.3}", characteristics.surface_complexity);
+            println!(
+                "  Surface complexity: {:.3}",
+                characteristics.surface_complexity
+            );
 
             assert_eq!(characteristics.point_count, 200);
             assert!(!characteristics.has_normals);
-            assert!(characteristics.density_uniformity >= 0.0 && characteristics.density_uniformity <= 1.0);
+            assert!(
+                characteristics.density_uniformity >= 0.0
+                    && characteristics.density_uniformity <= 1.0
+            );
             assert!(characteristics.noise_level >= 0.0 && characteristics.noise_level <= 1.0);
         }
         Err(e) => panic!("Data analysis failed: {}", e),
@@ -356,10 +413,8 @@ fn test_parallel_processing_integration() {
 #[test]
 fn test_error_handling_and_fallbacks() {
     // Test with very small point cloud that might cause some algorithms to fail
-    let tiny_cloud = PointCloud::from_points(vec![
-        Point3::new(0.0, 0.0, 0.0),
-        Point3::new(0.1, 0.0, 0.0),
-    ]);
+    let tiny_cloud =
+        PointCloud::from_points(vec![Point3::new(0.0, 0.0, 0.0), Point3::new(0.1, 0.0, 0.0)]);
 
     let mut config = PipelineConfig::default();
     config.fallback_algorithms = vec![
@@ -373,7 +428,10 @@ fn test_error_handling_and_fallbacks() {
     // Even if it fails, it should fail gracefully
     match pipeline.reconstruct(&tiny_cloud) {
         Ok(result) => {
-            println!("✓ Tiny cloud reconstruction succeeded with algorithm: {:?}", result.algorithm_used);
+            println!(
+                "✓ Tiny cloud reconstruction succeeded with algorithm: {:?}",
+                result.algorithm_used
+            );
         }
         Err(e) => {
             println!("✓ Tiny cloud reconstruction failed gracefully: {}", e);
@@ -393,10 +451,12 @@ fn test_reconstruction_consistency() {
         match pipeline.reconstruct(&cloud) {
             Ok(result) => {
                 results.push(result);
-                println!("✓ Run {}: Algorithm {:?}, {} vertices",
-                         i + 1,
-                         results.last().unwrap().algorithm_used,
-                         results.last().unwrap().mesh.vertex_count());
+                println!(
+                    "✓ Run {}: Algorithm {:?}, {} vertices",
+                    i + 1,
+                    results.last().unwrap().algorithm_used,
+                    results.last().unwrap().mesh.vertex_count()
+                );
             }
             Err(e) => {
                 println!("Run {} failed: {}", i + 1, e);
@@ -408,8 +468,10 @@ fn test_reconstruction_consistency() {
     if results.len() > 1 {
         let first_algorithm = results[0].algorithm_used;
         for result in &results[1..] {
-            assert_eq!(result.algorithm_used, first_algorithm,
-                      "Algorithm selection should be consistent for the same input");
+            assert_eq!(
+                result.algorithm_used, first_algorithm,
+                "Algorithm selection should be consistent for the same input"
+            );
         }
     }
 }

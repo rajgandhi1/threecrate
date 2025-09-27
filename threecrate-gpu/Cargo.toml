@@ -10,7 +10,7 @@ documentation.workspace = true
 description = "GPU-accelerated algorithms for threecrate using wgpu"
 
 [dependencies]
-threecrate-core = { path = "../threecrate-core", version = "0.4.0", features = ["gpu"] }
+threecrate-core = { path = "../threecrate-core", version = "0.5.0", features = ["gpu"] }
 wgpu = { workspace = true }
 bytemuck = { workspace = true }
 nalgebra = { workspace = true }
@@ -30,5 +30,5 @@ wgpu = { version = "25.0.1", default-features = false, features = ["wgsl", "vulk
 approx = { workspace = true }
 pollster = "0.4"
 rand = { workspace = true }
-threecrate-algorithms = { path = "../threecrate-algorithms", version = "0.4.0" }
+threecrate-algorithms = { path = "../threecrate-algorithms", version = "0.5.0" }
 tokio = { version = "1.0", features = ["full"] } 
