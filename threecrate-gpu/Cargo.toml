@@ -21,7 +21,7 @@ futures-intrusive = "0.5"
 flume = "0.11"
 
 [target.'cfg(windows)'.dependencies]
-wgpu = { version = "25.0.1", default-features = false, features = ["wgsl", "vulkan", "dx12"] }
+wgpu = { version = "26.0.1", default-features = false, features = ["wgsl", "vulkan", "dx12"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 wgpu = { version = "25.0.1", default-features = false, features = ["wgsl", "vulkan", "metal"] }
