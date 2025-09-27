@@ -24,6 +24,7 @@ rstar = { workspace = true }
 kiddo = { workspace = true }
 bpa_rs = { workspace = true }
 glam = "0.30"
+num_cpus = "1.16"
 
 [dev-dependencies]
 approx = { workspace = true } 

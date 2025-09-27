@@ -4,6 +4,7 @@
 //! capabilities, adaptive radius selection, and improved quality metrics.
 
 use threecrate_core::{PointCloud, TriangleMesh, Result, Error, Point3f, NormalPoint3f};
+use crate::parallel;
 use std::collections::{HashMap, HashSet, BinaryHeap};
 use std::cmp::Ordering;
 
@@ -519,48 +520,41 @@ impl BallPivotingReconstructor {
         best_candidate
     }
 
-    /// Estimate normals using simple method if needed
+    /// Estimate normals using parallel processing and simple method if needed
     fn estimate_simple_normals(points: &[Point3f]) -> Result<Vec<Point3f>> {
-        // Simple normal estimation using local surface fitting
-        let mut normals = vec![Point3f::new(0.0, 0.0, 1.0); points.len()];
-        
-        for (i, point) in points.iter().enumerate() {
-            // Find nearby points within radius
-            let mut neighbors = Vec::new();
-            for (j, other_point) in points.iter().enumerate() {
-                if i != j {
-                    let dist = (point - other_point).magnitude();
-                    if dist < 0.2 { // Fixed radius for simplicity
-                        neighbors.push(*other_point);
+        // Use parallel normal estimation from the parallel module
+        let normals = parallel::point_cloud::parallel_compute_normals(
+            points,
+            0.2, // Fixed radius for simplicity
+            |_point, neighbors, _radius| {
+                if neighbors.len() >= 3 {
+                    // Compute covariance matrix for PCA
+                    let mut centroid = Point3f::origin();
+                    for neighbor in neighbors {
+                        centroid = Point3f::from(centroid.coords + neighbor.coords);
                     }
+                    centroid = Point3f::from(centroid.coords / neighbors.len() as f32);
+
+                    let mut covariance = nalgebra::Matrix3::zeros();
+                    for neighbor in neighbors {
+                        let diff = neighbor - centroid;
+                        covariance += diff * diff.transpose();
+                    }
+
+                    // Find smallest eigenvalue's eigenvector (normal direction)
+                    let eigen = covariance.symmetric_eigen();
+                    let normal_idx = eigen.eigenvalues.imin();
+                    let normal = eigen.eigenvectors.column(normal_idx).clone_owned();
+
+                    let normal_point = Point3f::new(normal.x, normal.y, normal.z);
+                    let normalized = normal_point.coords.normalize();
+                    Point3f::from(normalized)
+                } else {
+                    Point3f::new(0.0, 0.0, 1.0)
                 }
             }
-            
-            if neighbors.len() >= 3 {
-                // Compute covariance matrix for PCA
-                let mut centroid = Point3f::origin();
-                for neighbor in &neighbors {
-                    centroid = Point3f::from(centroid.coords + neighbor.coords);
-                }
-                centroid = Point3f::from(centroid.coords / neighbors.len() as f32);
-                
-                let mut covariance = nalgebra::Matrix3::zeros();
-                for neighbor in &neighbors {
-                    let diff = neighbor - centroid;
-                    covariance += diff * diff.transpose();
-                }
-                
-                // Find smallest eigenvalue's eigenvector (normal direction)
-                let eigen = covariance.symmetric_eigen();
-                let normal_idx = eigen.eigenvalues.imin();
-                let normal = eigen.eigenvectors.column(normal_idx).clone_owned();
-                
-                let normal_point = Point3f::new(normal.x, normal.y, normal.z);
-                let normalized = normal_point.coords.normalize();
-                normals[i] = Point3f::from(normalized);
-            }
-        }
-        
+        );
+
         Ok(normals)
     }
     
