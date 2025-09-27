@@ -1,6 +1,7 @@
 //! Poisson surface reconstruction
 
 use threecrate_core::{PointCloud, TriangleMesh, Result, Point3f, NormalPoint3f, Error};
+use crate::parallel;
 
 /// Configuration parameters for Poisson reconstruction
 #[derive(Debug, Clone)]
@@ -62,22 +63,22 @@ pub fn poisson_reconstruction(
         return Err(Error::InvalidData("Point cloud too small for Poisson reconstruction (minimum 10 points)".to_string()));
     }
 
-    // Convert our data types to what the poisson_reconstruction crate expects
-    let points: Vec<nalgebra::Point3<f64>> = cloud.points.iter()
-        .map(|p| nalgebra::Point3::new(
+    // Convert our data types to what the poisson_reconstruction crate expects using parallel processing
+    let points: Vec<nalgebra::Point3<f64>> = parallel::parallel_map(&cloud.points, |p| {
+        nalgebra::Point3::new(
             p.position.x as f64,
             p.position.y as f64,
             p.position.z as f64
-        ))
-        .collect();
+        )
+    });
 
-    let normals: Vec<nalgebra::Vector3<f64>> = cloud.points.iter()
-        .map(|p| nalgebra::Vector3::new(
+    let normals: Vec<nalgebra::Vector3<f64>> = parallel::parallel_map(&cloud.points, |p| {
+        nalgebra::Vector3::new(
             p.normal.x as f64,
             p.normal.y as f64,
             p.normal.z as f64
-        ))
-        .collect();
+        )
+    });
 
     // Validate that normals are normalized
     for (i, normal) in normals.iter().enumerate() {
@@ -109,10 +110,10 @@ pub fn poisson_reconstruction(
         return Err(Error::Algorithm("Poisson reconstruction generated no vertices".to_string()));
     }
 
-    // Convert back to our format
-    let vertices: Vec<Point3f> = mesh_buffers.vertices().iter()
-        .map(|v| Point3f::new(v.x as f32, v.y as f32, v.z as f32))
-        .collect();
+    // Convert back to our format using parallel processing
+    let vertices: Vec<Point3f> = parallel::parallel_map(mesh_buffers.vertices(), |v| {
+        Point3f::new(v.x as f32, v.y as f32, v.z as f32)
+    });
 
     // Convert indices to triangle faces
     let indices = mesh_buffers.indices();
@@ -120,9 +121,9 @@ pub fn poisson_reconstruction(
         return Err(Error::Algorithm("Invalid triangle indices from Poisson reconstruction".to_string()));
     }
 
-    let faces: Vec<[usize; 3]> = indices.chunks(3)
-        .map(|chunk| [chunk[0] as usize, chunk[1] as usize, chunk[2] as usize])
-        .collect();
+    let faces: Vec<[usize; 3]> = parallel::parallel_map(&indices.chunks(3).collect::<Vec<_>>(), |chunk| {
+        [chunk[0] as usize, chunk[1] as usize, chunk[2] as usize]
+    });
 
     if faces.is_empty() {
         return Err(Error::Algorithm("Poisson reconstruction generated no triangles".to_string()));

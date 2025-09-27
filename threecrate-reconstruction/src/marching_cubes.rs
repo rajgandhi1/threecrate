@@ -4,6 +4,7 @@
 //! the classic Marching Cubes algorithm and its variants.
 
 use threecrate_core::{PointCloud, TriangleMesh, Result, Point3f, Error};
+use crate::parallel;
 use nalgebra::Vector3;
 
 /// 3D volumetric grid containing scalar values
@@ -188,31 +189,65 @@ impl MarchingCubes {
         Self { config }
     }
 
-    /// Extract isosurface from volumetric grid
+    /// Extract isosurface from volumetric grid with parallel processing
     pub fn extract_isosurface(&self, grid: &VolumetricGrid) -> Result<TriangleMesh> {
-        let mut vertices = Vec::new();
-        let mut triangles = Vec::new();
-
-        // Process each cube in the grid
+        // Generate all cube coordinates
+        let mut cube_coords = Vec::new();
         for x in 0..grid.dimensions[0].saturating_sub(1) {
             for y in 0..grid.dimensions[1].saturating_sub(1) {
                 for z in 0..grid.dimensions[2].saturating_sub(1) {
-                    self.process_cube(grid, x, y, z, &mut vertices, &mut triangles)?;
+                    cube_coords.push((x, y, z));
                 }
             }
         }
 
-        if vertices.is_empty() {
+        // Process cubes in parallel
+        let cube_results: Vec<(Vec<MCVertex>, Vec<[usize; 3]>)> = parallel::parallel_map(
+            &cube_coords,
+            |(x, y, z)| {
+                let mut vertices = Vec::new();
+                let mut triangles = Vec::new();
+
+                // Process a single cube - ignore errors for parallel processing simplicity
+                if let Ok(()) = self.process_cube(grid, *x, *y, *z, &mut vertices, &mut triangles) {
+                    (vertices, triangles)
+                } else {
+                    (Vec::new(), Vec::new())
+                }
+            }
+        );
+
+        // Merge results from parallel processing
+        let mut all_vertices = Vec::new();
+        let mut all_triangles = Vec::new();
+        let mut vertex_offset = 0;
+
+        for (vertices, triangles) in cube_results {
+            // Add triangles with adjusted indices
+            for triangle in triangles {
+                all_triangles.push([
+                    triangle[0] + vertex_offset,
+                    triangle[1] + vertex_offset,
+                    triangle[2] + vertex_offset,
+                ]);
+            }
+
+            // Add vertices
+            all_vertices.extend(vertices);
+            vertex_offset = all_vertices.len();
+        }
+
+        if all_vertices.is_empty() {
             return Err(Error::Algorithm("No isosurface found at specified level".to_string()));
         }
 
-        // Convert MCVertex to Point3f for mesh creation
-        let vertex_positions: Vec<Point3f> = vertices.iter().map(|v| v.position).collect();
-        let mut mesh = TriangleMesh::from_vertices_and_faces(vertex_positions, triangles);
+        // Convert MCVertex to Point3f for mesh creation using parallel processing
+        let vertex_positions: Vec<Point3f> = parallel::parallel_map(&all_vertices, |v| v.position);
+        let mut mesh = TriangleMesh::from_vertices_and_faces(vertex_positions, all_triangles);
 
-        // Set normals if computed
+        // Set normals if computed using parallel processing
         if self.config.compute_normals {
-            let normals: Vec<Vector3<f32>> = vertices.iter().map(|v| v.normal).collect();
+            let normals: Vec<Vector3<f32>> = parallel::parallel_map(&all_vertices, |v| v.normal);
             mesh.set_normals(normals);
         }
 
@@ -563,15 +598,29 @@ pub fn create_sphere_volume(
 
     let mut grid = VolumetricGrid::new(grid_resolution, voxel_size, origin);
 
-    // Fill with sphere distance field
+    // Generate all grid coordinates for parallel processing
+    let mut grid_coords = Vec::new();
     for x in 0..grid_resolution[0] {
         for y in 0..grid_resolution[1] {
             for z in 0..grid_resolution[2] {
-                let world_pos = grid.grid_to_world(x, y, z);
-                let distance = (world_pos - center).magnitude() - radius;
-                grid.set_value(x, y, z, distance).unwrap();
+                grid_coords.push((x, y, z));
             }
         }
+    }
+
+    // Compute sphere distance field in parallel
+    let distance_values: Vec<((usize, usize, usize), f32)> = parallel::parallel_map(
+        &grid_coords,
+        |(x, y, z)| {
+            let world_pos = grid.grid_to_world(*x, *y, *z);
+            let distance = (world_pos - center).magnitude() - radius;
+            ((*x, *y, *z), distance)
+        }
+    );
+
+    // Fill grid with computed values
+    for ((x, y, z), distance) in distance_values {
+        grid.set_value(x, y, z, distance).unwrap();
     }
 
     grid

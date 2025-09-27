@@ -4,6 +4,7 @@
 //! For 3D point clouds, multiple projection strategies are available.
 
 use threecrate_core::{PointCloud, TriangleMesh, Result, Point3f, Error};
+use crate::parallel;
 use spade::{DelaunayTriangulation, Point2, Triangulation};
 use nalgebra::Matrix3;
 
@@ -84,7 +85,7 @@ pub fn delaunay_triangulation_2d(points: &[Point2<f64>]) -> Result<Vec<[usize; 3
     Ok(triangles)
 }
 
-/// Project 3D points to 2D using specified method
+/// Project 3D points to 2D using specified method with parallel processing
 pub fn project_3d_to_2d(points: &[Point3f], method: &ProjectionMethod) -> Result<Vec<Point2<f64>>> {
     if points.is_empty() {
         return Ok(Vec::new());
@@ -92,13 +93,13 @@ pub fn project_3d_to_2d(points: &[Point3f], method: &ProjectionMethod) -> Result
 
     match method {
         ProjectionMethod::XY => {
-            Ok(points.iter().map(|p| Point2::new(p.x as f64, p.y as f64)).collect())
+            Ok(parallel::parallel_map(points, |p| Point2::new(p.x as f64, p.y as f64)))
         }
         ProjectionMethod::XZ => {
-            Ok(points.iter().map(|p| Point2::new(p.x as f64, p.z as f64)).collect())
+            Ok(parallel::parallel_map(points, |p| Point2::new(p.x as f64, p.z as f64)))
         }
         ProjectionMethod::YZ => {
-            Ok(points.iter().map(|p| Point2::new(p.y as f64, p.z as f64)).collect())
+            Ok(parallel::parallel_map(points, |p| Point2::new(p.y as f64, p.z as f64)))
         }
         ProjectionMethod::PCA => {
             project_using_pca(points)
@@ -144,15 +145,13 @@ fn project_using_pca(points: &[Point3f]) -> Result<Vec<Point2<f64>>> {
     let u = eigen_pairs[0].1.normalize();
     let v = eigen_pairs[1].1.normalize();
 
-    // Project all points onto the 2D plane
-    let projected: Vec<Point2<f64>> = points.iter()
-        .map(|point| {
-            let diff = point - centroid;
-            let x = diff.dot(&u) as f64;
-            let y = diff.dot(&v) as f64;
-            Point2::new(x, y)
-        })
-        .collect();
+    // Project all points onto the 2D plane using parallel processing
+    let projected: Vec<Point2<f64>> = parallel::parallel_map(points, |point| {
+        let diff = point - centroid;
+        let x = diff.dot(&u) as f64;
+        let y = diff.dot(&v) as f64;
+        Point2::new(x, y)
+    });
 
     Ok(projected)
 }
@@ -195,15 +194,13 @@ fn project_using_best_fit_plane(points: &[Point3f]) -> Result<Vec<Point2<f64>>> 
     let w = (p3 - p1).cross(&u).normalize();
     let v = w.cross(&u).normalize();
 
-    // Project all points onto the plane
-    let projected: Vec<Point2<f64>> = points.iter()
-        .map(|point| {
-            let diff = *point - p1;
-            let x = diff.dot(&u) as f64;
-            let y = diff.dot(&v) as f64;
-            Point2::new(x, y)
-        })
-        .collect();
+    // Project all points onto the plane using parallel processing
+    let projected: Vec<Point2<f64>> = parallel::parallel_map(points, |point| {
+        let diff = *point - p1;
+        let x = diff.dot(&u) as f64;
+        let y = diff.dot(&v) as f64;
+        Point2::new(x, y)
+    });
 
     Ok(projected)
 }

@@ -4,6 +4,7 @@
 //! smooth implicit surfaces from point clouds using local polynomial fitting.
 
 use threecrate_core::{PointCloud, TriangleMesh, Result, Point3f, NormalPoint3f, Error};
+use crate::parallel;
 use nalgebra::{Vector3, DMatrix, DVector};
 use std::collections::HashMap;
 
@@ -250,23 +251,14 @@ impl MLSSurface {
 
     /// Extract surface mesh using marching cubes on the MLS implicit function
     pub fn extract_mesh(&self) -> Result<TriangleMesh> {
-        // Compute bounding box
-        let mut bounds_min = Point3f::new(f32::INFINITY, f32::INFINITY, f32::INFINITY);
-        let mut bounds_max = Point3f::new(f32::NEG_INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY);
-
-        for point in &self.points {
-            bounds_min.x = bounds_min.x.min(point.x);
-            bounds_min.y = bounds_min.y.min(point.y);
-            bounds_min.z = bounds_min.z.min(point.z);
-            bounds_max.x = bounds_max.x.max(point.x);
-            bounds_max.y = bounds_max.y.max(point.y);
-            bounds_max.z = bounds_max.z.max(point.z);
-        }
+        // Compute bounding box using parallel processing
+        let (bounds_min, bounds_max) = parallel::point_cloud::parallel_bounding_box(&self.points)
+            .unwrap_or((Point3f::origin(), Point3f::new(1.0, 1.0, 1.0)));
 
         // Add padding
         let padding = self.config.support_radius * 2.0;
-        bounds_min = Point3f::new(bounds_min.x - padding, bounds_min.y - padding, bounds_min.z - padding);
-        bounds_max = Point3f::new(bounds_max.x + padding, bounds_max.y + padding, bounds_max.z + padding);
+        let bounds_min = Point3f::new(bounds_min.x - padding, bounds_min.y - padding, bounds_min.z - padding);
+        let bounds_max = Point3f::new(bounds_max.x + padding, bounds_max.y + padding, bounds_max.z + padding);
 
         // Create volumetric grid
         let grid_resolution = self.config.grid_resolution;
@@ -279,15 +271,29 @@ impl MLSSurface {
         use crate::marching_cubes::{VolumetricGrid, marching_cubes};
         let mut grid = VolumetricGrid::new(grid_resolution, voxel_size, bounds_min);
 
-        // Sample MLS function on grid
+        // Generate all grid coordinates for parallel MLS sampling
+        let mut grid_coords = Vec::new();
         for x in 0..grid_resolution[0] {
             for y in 0..grid_resolution[1] {
                 for z in 0..grid_resolution[2] {
-                    let world_pos = grid.grid_to_world(x, y, z);
-                    let value = self.evaluate(&world_pos).unwrap_or(0.0);
-                    grid.set_value(x, y, z, value)?;
+                    grid_coords.push((x, y, z));
                 }
             }
+        }
+
+        // Sample MLS function on grid in parallel
+        let grid_values: Vec<((usize, usize, usize), f32)> = parallel::parallel_map(
+            &grid_coords,
+            |(x, y, z)| {
+                let world_pos = grid.grid_to_world(*x, *y, *z);
+                let value = self.evaluate(&world_pos).unwrap_or(0.0);
+                ((*x, *y, *z), value)
+            }
+        );
+
+        // Fill grid with computed values
+        for ((x, y, z), value) in grid_values {
+            grid.set_value(x, y, z, value)?;
         }
 
         // Extract mesh using marching cubes
