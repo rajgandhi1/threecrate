@@ -111,37 +111,42 @@ pub fn init_thread_pool(config: ThreadPoolConfig) -> Result<()> {
         builder = builder.thread_name(move |index| format!("{}-{}", prefix, index));
     }
 
-    let pool = builder.build()
-        .map_err(|e| threecrate_core::Error::Algorithm(format!("Failed to create thread pool: {}", e)))?;
+    let pool = builder.build().map_err(|e| {
+        threecrate_core::Error::Algorithm(format!("Failed to create thread pool: {}", e))
+    })?;
 
     // Store configuration
     if let Ok(mut global_config) = THREAD_POOL_CONFIG.lock() {
         *global_config = config;
     }
 
-    GLOBAL_THREAD_POOL.set(Arc::new(pool))
-        .map_err(|_| threecrate_core::Error::Algorithm("Thread pool already initialized".to_string()))?;
+    GLOBAL_THREAD_POOL.set(Arc::new(pool)).map_err(|_| {
+        threecrate_core::Error::Algorithm("Thread pool already initialized".to_string())
+    })?;
 
     Ok(())
 }
 
 /// Get the global thread pool, initializing with defaults if needed
 pub fn get_thread_pool() -> Arc<ThreadPool> {
-    GLOBAL_THREAD_POOL.get_or_init(|| {
-        let config = ThreadPoolConfig::default();
-        let pool = ThreadPoolBuilder::new()
-            .num_threads(config.num_threads.unwrap_or_else(num_cpus::get))
-            .stack_size(config.stack_size.unwrap_or(8 * 1024 * 1024))
-            .thread_name(|index| format!("threecrate-recon-{}", index))
-            .build()
-            .expect("Failed to create default thread pool");
-        Arc::new(pool)
-    }).clone()
+    GLOBAL_THREAD_POOL
+        .get_or_init(|| {
+            let config = ThreadPoolConfig::default();
+            let pool = ThreadPoolBuilder::new()
+                .num_threads(config.num_threads.unwrap_or_else(num_cpus::get))
+                .stack_size(config.stack_size.unwrap_or(8 * 1024 * 1024))
+                .thread_name(|index| format!("threecrate-recon-{}", index))
+                .build()
+                .expect("Failed to create default thread pool");
+            Arc::new(pool)
+        })
+        .clone()
 }
 
 /// Get current thread pool configuration
 pub fn get_config() -> ThreadPoolConfig {
-    THREAD_POOL_CONFIG.lock()
+    THREAD_POOL_CONFIG
+        .lock()
         .map(|config| config.clone())
         .unwrap_or_else(|_| ThreadPoolConfig::default())
 }
@@ -156,7 +161,10 @@ pub fn compute_chunk_size(data_size: usize) -> usize {
     let config = get_config();
 
     if !config.adaptive_chunks {
-        return config.min_chunk_size.max(data_size / num_cpus::get()).min(config.max_chunk_size);
+        return config
+            .min_chunk_size
+            .max(data_size / num_cpus::get())
+            .min(config.max_chunk_size);
     }
 
     let num_threads = get_thread_pool().current_num_threads();
@@ -191,9 +199,7 @@ where
         return data.iter().map(f).collect();
     }
 
-    execute_parallel(|| {
-        data.par_iter().map(f).collect()
-    })
+    execute_parallel(|| data.par_iter().map(f).collect())
 }
 
 /// Parallel map with index
@@ -207,12 +213,7 @@ where
         return data.iter().enumerate().map(|(i, x)| f(i, x)).collect();
     }
 
-    execute_parallel(|| {
-        data.par_iter()
-            .enumerate()
-            .map(|(i, x)| f(i, x))
-            .collect()
-    })
+    execute_parallel(|| data.par_iter().enumerate().map(|(i, x)| f(i, x)).collect())
 }
 
 /// Parallel filter operation
@@ -225,12 +226,7 @@ where
         return data.iter().filter(|x| predicate(*x)).cloned().collect();
     }
 
-    execute_parallel(|| {
-        data.par_iter()
-            .filter(|x| predicate(*x))
-            .cloned()
-            .collect()
-    })
+    execute_parallel(|| data.par_iter().filter(|x| predicate(*x)).cloned().collect())
 }
 
 /// Parallel reduce operation
@@ -268,7 +264,8 @@ pub mod point_cloud {
     {
         parallel_map(points, |point| {
             // Find neighbors within radius (simplified for parallel processing)
-            let neighbors: Vec<Point3f> = points.iter()
+            let neighbors: Vec<Point3f> = points
+                .iter()
                 .filter(|p| (*p - *point).magnitude() <= radius)
                 .cloned()
                 .collect();
@@ -278,12 +275,10 @@ pub mod point_cloud {
     }
 
     /// Parallel distance computation between point clouds
-    pub fn parallel_point_distances(
-        points1: &[Point3f],
-        points2: &[Point3f],
-    ) -> Vec<f32> {
+    pub fn parallel_point_distances(points1: &[Point3f], points2: &[Point3f]) -> Vec<f32> {
         parallel_map(points1, |p1| {
-            points2.iter()
+            points2
+                .iter()
                 .map(|p2| (p1 - p2).magnitude())
                 .fold(f32::INFINITY, f32::min)
         })
@@ -297,12 +292,16 @@ pub mod point_cloud {
 
         let (min_vals, max_vals) = parallel_reduce(
             points,
-            (Point3f::new(f32::INFINITY, f32::INFINITY, f32::INFINITY),
-             Point3f::new(f32::NEG_INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY)),
+            (
+                Point3f::new(f32::INFINITY, f32::INFINITY, f32::INFINITY),
+                Point3f::new(f32::NEG_INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY),
+            ),
             |point| (*point, *point),
             |(min1, max1), (min2, max2)| {
-                (Point3f::new(min1.x.min(min2.x), min1.y.min(min2.y), min1.z.min(min2.z)),
-                 Point3f::new(max1.x.max(max2.x), max1.y.max(max2.y), max1.z.max(max2.z)))
+                (
+                    Point3f::new(min1.x.min(min2.x), min1.y.min(min2.y), min1.z.min(min2.z)),
+                    Point3f::new(max1.x.max(max2.x), max1.y.max(max2.y), max1.z.max(max2.z)),
+                )
             },
         );
 

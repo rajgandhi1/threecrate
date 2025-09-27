@@ -3,10 +3,10 @@
 //! This module provides both 2D and 3D Delaunay triangulation capabilities.
 //! For 3D point clouds, multiple projection strategies are available.
 
-use threecrate_core::{PointCloud, TriangleMesh, Result, Point3f, Error};
 use crate::parallel;
-use spade::{DelaunayTriangulation, Point2, Triangulation};
 use nalgebra::Matrix3;
+use spade::{DelaunayTriangulation, Point2, Triangulation};
+use threecrate_core::{Error, Point3f, PointCloud, Result, TriangleMesh};
 
 /// Configuration for Delaunay triangulation
 #[derive(Debug, Clone)]
@@ -50,15 +50,21 @@ impl Default for DelaunayConfig {
 /// 2D Delaunay triangulation using spade crate
 pub fn delaunay_triangulation_2d(points: &[Point2<f64>]) -> Result<Vec<[usize; 3]>> {
     if points.len() < 3 {
-        return Err(Error::InvalidData("Need at least 3 points for triangulation".to_string()));
+        return Err(Error::InvalidData(
+            "Need at least 3 points for triangulation".to_string(),
+        ));
     }
 
     let mut triangulation: DelaunayTriangulation<Point2<f64>> = DelaunayTriangulation::new();
 
     // Insert points and track original indices
     for point in points {
-        triangulation.insert(*point)
-            .map_err(|e| Error::Algorithm(format!("Failed to insert point in Delaunay triangulation: {:?}", e)))?;
+        triangulation.insert(*point).map_err(|e| {
+            Error::Algorithm(format!(
+                "Failed to insert point in Delaunay triangulation: {:?}",
+                e
+            ))
+        })?;
     }
 
     // Extract triangles
@@ -70,10 +76,15 @@ pub fn delaunay_triangulation_2d(points: &[Point2<f64>]) -> Result<Vec<[usize; 3
         // Find original indices by matching positions
         let mut indices = Vec::new();
         for pos in positions {
-            if let Some(idx) = points.iter().position(|p| (p.x - pos.x).abs() < 1e-10 && (p.y - pos.y).abs() < 1e-10) {
+            if let Some(idx) = points
+                .iter()
+                .position(|p| (p.x - pos.x).abs() < 1e-10 && (p.y - pos.y).abs() < 1e-10)
+            {
                 indices.push(idx);
             } else {
-                return Err(Error::Algorithm("Failed to match triangle vertex to original point".to_string()));
+                return Err(Error::Algorithm(
+                    "Failed to match triangle vertex to original point".to_string(),
+                ));
             }
         }
 
@@ -92,28 +103,26 @@ pub fn project_3d_to_2d(points: &[Point3f], method: &ProjectionMethod) -> Result
     }
 
     match method {
-        ProjectionMethod::XY => {
-            Ok(parallel::parallel_map(points, |p| Point2::new(p.x as f64, p.y as f64)))
-        }
-        ProjectionMethod::XZ => {
-            Ok(parallel::parallel_map(points, |p| Point2::new(p.x as f64, p.z as f64)))
-        }
-        ProjectionMethod::YZ => {
-            Ok(parallel::parallel_map(points, |p| Point2::new(p.y as f64, p.z as f64)))
-        }
-        ProjectionMethod::PCA => {
-            project_using_pca(points)
-        }
-        ProjectionMethod::BestFitPlane => {
-            project_using_best_fit_plane(points)
-        }
+        ProjectionMethod::XY => Ok(parallel::parallel_map(points, |p| {
+            Point2::new(p.x as f64, p.y as f64)
+        })),
+        ProjectionMethod::XZ => Ok(parallel::parallel_map(points, |p| {
+            Point2::new(p.x as f64, p.z as f64)
+        })),
+        ProjectionMethod::YZ => Ok(parallel::parallel_map(points, |p| {
+            Point2::new(p.y as f64, p.z as f64)
+        })),
+        ProjectionMethod::PCA => project_using_pca(points),
+        ProjectionMethod::BestFitPlane => project_using_best_fit_plane(points),
     }
 }
 
 /// Project points using Principal Component Analysis to find best 2D plane
 fn project_using_pca(points: &[Point3f]) -> Result<Vec<Point2<f64>>> {
     if points.len() < 3 {
-        return Err(Error::InvalidData("Need at least 3 points for PCA projection".to_string()));
+        return Err(Error::InvalidData(
+            "Need at least 3 points for PCA projection".to_string(),
+        ));
     }
 
     // Compute centroid
@@ -134,7 +143,9 @@ fn project_using_pca(points: &[Point3f]) -> Result<Vec<Point2<f64>>> {
     let eigen = covariance.symmetric_eigen();
 
     // Use the two eigenvectors with largest eigenvalues as 2D basis
-    let mut eigen_pairs: Vec<(f32, nalgebra::Vector3<f32>)> = eigen.eigenvalues.iter()
+    let mut eigen_pairs: Vec<(f32, nalgebra::Vector3<f32>)> = eigen
+        .eigenvalues
+        .iter()
         .zip(eigen.eigenvectors.column_iter())
         .map(|(val, vec)| (*val, vec.clone_owned()))
         .collect();
@@ -159,7 +170,9 @@ fn project_using_pca(points: &[Point3f]) -> Result<Vec<Point2<f64>>> {
 /// Project points using a best-fit plane through the points
 fn project_using_best_fit_plane(points: &[Point3f]) -> Result<Vec<Point2<f64>>> {
     if points.len() < 3 {
-        return Err(Error::InvalidData("Need at least 3 points for best-fit plane projection".to_string()));
+        return Err(Error::InvalidData(
+            "Need at least 3 points for best-fit plane projection".to_string(),
+        ));
     }
 
     // Use first 3 non-collinear points to define the plane
@@ -175,7 +188,8 @@ fn project_using_best_fit_plane(points: &[Point3f]) -> Result<Vec<Point2<f64>>> 
         }
     }
 
-    let p2 = p2.ok_or_else(|| Error::InvalidData("All points are too close together".to_string()))?;
+    let p2 =
+        p2.ok_or_else(|| Error::InvalidData("All points are too close together".to_string()))?;
 
     // Find third point that's not collinear with first two
     for point in points.iter().skip(2) {
@@ -239,14 +253,16 @@ pub fn delaunay_triangulation(cloud: &PointCloud<Point3f>) -> Result<TriangleMes
 /// 3D Delaunay triangulation with configuration
 pub fn delaunay_triangulation_with_config(
     cloud: &PointCloud<Point3f>,
-    config: &DelaunayConfig
+    config: &DelaunayConfig,
 ) -> Result<TriangleMesh> {
     if cloud.is_empty() {
         return Err(Error::InvalidData("Point cloud is empty".to_string()));
     }
 
     if cloud.points.len() < 3 {
-        return Err(Error::InvalidData("Need at least 3 points for triangulation".to_string()));
+        return Err(Error::InvalidData(
+            "Need at least 3 points for triangulation".to_string(),
+        ));
     }
 
     // Project 3D points to 2D
@@ -305,7 +321,8 @@ pub fn auto_select_projection(points: &[Point3f]) -> ProjectionMethod {
     ];
 
     // Find the dimension with minimum extent
-    let min_extent_idx = extents.iter()
+    let min_extent_idx = extents
+        .iter()
         .enumerate()
         .min_by(|a, b| a.1.partial_cmp(b.1).unwrap())
         .map(|(idx, _)| idx)
@@ -392,10 +409,7 @@ mod tests {
 
     #[test]
     fn test_delaunay_triangulation_too_few_points() {
-        let points = vec![
-            Point3::new(0.0, 0.0, 0.0),
-            Point3::new(1.0, 0.0, 0.0),
-        ];
+        let points = vec![Point3::new(0.0, 0.0, 0.0), Point3::new(1.0, 0.0, 0.0)];
         let cloud = PointCloud::from_points(points);
 
         let result = delaunay_triangulation(&cloud);
@@ -448,6 +462,9 @@ mod tests {
 
         let projection = auto_select_projection(&many_points);
         // Should select XY projection for clearly planar data
-        assert!(matches!(projection, ProjectionMethod::XY | ProjectionMethod::PCA));
+        assert!(matches!(
+            projection,
+            ProjectionMethod::XY | ProjectionMethod::PCA
+        ));
     }
-} 
+}

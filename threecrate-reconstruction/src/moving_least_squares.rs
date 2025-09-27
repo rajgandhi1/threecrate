@@ -3,10 +3,10 @@
 //! This module implements various MLS surface reconstruction methods that create
 //! smooth implicit surfaces from point clouds using local polynomial fitting.
 
-use threecrate_core::{PointCloud, TriangleMesh, Result, Point3f, NormalPoint3f, Error};
 use crate::parallel;
-use nalgebra::{Vector3, DMatrix, DVector};
+use nalgebra::{DMatrix, DVector, Vector3};
 use std::collections::HashMap;
+use threecrate_core::{Error, NormalPoint3f, Point3f, PointCloud, Result, TriangleMesh};
 
 /// Weight function types for MLS reconstruction
 #[derive(Debug, Clone, PartialEq)]
@@ -214,7 +214,8 @@ impl MLSSurface {
         let weights = self.compute_weights(query_point, &neighbors)?;
 
         // Set up weighted least squares system
-        let (basis_matrix, values) = self.setup_weighted_system(query_point, &neighbors, &weights)?;
+        let (basis_matrix, values) =
+            self.setup_weighted_system(query_point, &neighbors, &weights)?;
 
         // Solve for polynomial coefficients
         let coefficients = self.solve_weighted_system(&basis_matrix, &values)?;
@@ -229,12 +230,36 @@ impl MLSSurface {
         let delta = 1e-4;
 
         // Compute gradient using finite differences
-        let fx_pos = self.evaluate(&Point3f::new(query_point.x + delta, query_point.y, query_point.z))?;
-        let fx_neg = self.evaluate(&Point3f::new(query_point.x - delta, query_point.y, query_point.z))?;
-        let fy_pos = self.evaluate(&Point3f::new(query_point.x, query_point.y + delta, query_point.z))?;
-        let fy_neg = self.evaluate(&Point3f::new(query_point.x, query_point.y - delta, query_point.z))?;
-        let fz_pos = self.evaluate(&Point3f::new(query_point.x, query_point.y, query_point.z + delta))?;
-        let fz_neg = self.evaluate(&Point3f::new(query_point.x, query_point.y, query_point.z - delta))?;
+        let fx_pos = self.evaluate(&Point3f::new(
+            query_point.x + delta,
+            query_point.y,
+            query_point.z,
+        ))?;
+        let fx_neg = self.evaluate(&Point3f::new(
+            query_point.x - delta,
+            query_point.y,
+            query_point.z,
+        ))?;
+        let fy_pos = self.evaluate(&Point3f::new(
+            query_point.x,
+            query_point.y + delta,
+            query_point.z,
+        ))?;
+        let fy_neg = self.evaluate(&Point3f::new(
+            query_point.x,
+            query_point.y - delta,
+            query_point.z,
+        ))?;
+        let fz_pos = self.evaluate(&Point3f::new(
+            query_point.x,
+            query_point.y,
+            query_point.z + delta,
+        ))?;
+        let fz_neg = self.evaluate(&Point3f::new(
+            query_point.x,
+            query_point.y,
+            query_point.z - delta,
+        ))?;
 
         let gradient = Vector3::new(
             (fx_pos - fx_neg) / (2.0 * delta),
@@ -257,8 +282,16 @@ impl MLSSurface {
 
         // Add padding
         let padding = self.config.support_radius * 2.0;
-        let bounds_min = Point3f::new(bounds_min.x - padding, bounds_min.y - padding, bounds_min.z - padding);
-        let bounds_max = Point3f::new(bounds_max.x + padding, bounds_max.y + padding, bounds_max.z + padding);
+        let bounds_min = Point3f::new(
+            bounds_min.x - padding,
+            bounds_min.y - padding,
+            bounds_min.z - padding,
+        );
+        let bounds_max = Point3f::new(
+            bounds_max.x + padding,
+            bounds_max.y + padding,
+            bounds_max.z + padding,
+        );
 
         // Create volumetric grid
         let grid_resolution = self.config.grid_resolution;
@@ -268,7 +301,7 @@ impl MLSSurface {
             (bounds_max.z - bounds_min.z) / (grid_resolution[2] - 1) as f32,
         ];
 
-        use crate::marching_cubes::{VolumetricGrid, marching_cubes};
+        use crate::marching_cubes::{marching_cubes, VolumetricGrid};
         let mut grid = VolumetricGrid::new(grid_resolution, voxel_size, bounds_min);
 
         // Generate all grid coordinates for parallel MLS sampling
@@ -282,14 +315,12 @@ impl MLSSurface {
         }
 
         // Sample MLS function on grid in parallel
-        let grid_values: Vec<((usize, usize, usize), f32)> = parallel::parallel_map(
-            &grid_coords,
-            |(x, y, z)| {
+        let grid_values: Vec<((usize, usize, usize), f32)> =
+            parallel::parallel_map(&grid_coords, |(x, y, z)| {
                 let world_pos = grid.grid_to_world(*x, *y, *z);
                 let value = self.evaluate(&world_pos).unwrap_or(0.0);
                 ((*x, *y, *z), value)
-            }
-        );
+            });
 
         // Fill grid with computed values
         for ((x, y, z), value) in grid_values {
@@ -303,7 +334,9 @@ impl MLSSurface {
         if self.config.compute_normals {
             let mut normals = Vec::new();
             for vertex in &mesh.vertices {
-                let normal = self.evaluate_gradient(vertex).unwrap_or_else(|_| Vector3::new(0.0, 0.0, 1.0));
+                let normal = self
+                    .evaluate_gradient(vertex)
+                    .unwrap_or_else(|_| Vector3::new(0.0, 0.0, 1.0));
                 normals.push(normal);
             }
             mesh.set_normals(normals);
@@ -318,13 +351,18 @@ impl MLSSurface {
             if let Some(k) = self.config.num_neighbors {
                 Ok(spatial_index.find_k_nearest(query_point, k, &self.points))
             } else {
-                Ok(spatial_index.find_neighbors(query_point, self.config.support_radius, &self.points))
+                Ok(spatial_index.find_neighbors(
+                    query_point,
+                    self.config.support_radius,
+                    &self.points,
+                ))
             }
         } else {
             // Fallback to brute force
             let mut neighbors = Vec::new();
             if let Some(k) = self.config.num_neighbors {
-                let mut distances: Vec<(f32, usize)> = self.points
+                let mut distances: Vec<(f32, usize)> = self
+                    .points
                     .iter()
                     .enumerate()
                     .map(|(i, p)| ((query_point - p).magnitude(), i))
@@ -361,9 +399,7 @@ impl MLSSurface {
         let h = self.config.support_radius;
 
         match self.config.weight_function {
-            WeightFunction::Gaussian => {
-                (-distance * distance / (h * h)).exp()
-            }
+            WeightFunction::Gaussian => (-distance * distance / (h * h)).exp(),
             WeightFunction::Wendland => {
                 if distance >= h {
                     0.0
@@ -430,7 +466,11 @@ impl MLSSurface {
     }
 
     /// Solve weighted least squares system
-    fn solve_weighted_system(&self, basis_matrix: &DMatrix<f32>, values: &DVector<f32>) -> Result<DVector<f32>> {
+    fn solve_weighted_system(
+        &self,
+        basis_matrix: &DMatrix<f32>,
+        values: &DVector<f32>,
+    ) -> Result<DVector<f32>> {
         // Solve A^T A x = A^T b with regularization
         let at = basis_matrix.transpose();
         let mut ata = &at * basis_matrix;
@@ -449,7 +489,7 @@ impl MLSSurface {
                 let svd = ata.svd(true, true);
                 match svd.solve(&atb, 1e-10) {
                     Ok(solution) => Ok(solution),
-                    Err(_) => Err(Error::Algorithm("Failed to solve MLS system".to_string()))
+                    Err(_) => Err(Error::Algorithm("Failed to solve MLS system".to_string())),
                 }
             }
         }
@@ -472,30 +512,42 @@ impl MLSSurface {
         let dz = point.z - center.z;
 
         match self.config.basis {
-            PolynomialBasis::Constant => {
-                DVector::from_vec(vec![1.0])
-            }
-            PolynomialBasis::Linear => {
-                DVector::from_vec(vec![1.0, dx, dy, dz])
-            }
-            PolynomialBasis::Quadratic => {
-                DVector::from_vec(vec![
-                    1.0, dx, dy, dz,
-                    dx*dx, dy*dy, dz*dz,
-                    dx*dy, dx*dz, dy*dz
-                ])
-            }
-            PolynomialBasis::Cubic => {
-                DVector::from_vec(vec![
-                    1.0, dx, dy, dz,
-                    dx*dx, dy*dy, dz*dz,
-                    dx*dy, dx*dz, dy*dz,
-                    dx*dx*dx, dy*dy*dy, dz*dz*dz,
-                    dx*dx*dy, dx*dx*dz, dx*dy*dy,
-                    dy*dy*dz, dx*dz*dz, dy*dz*dz,
-                    dx*dy*dz
-                ])
-            }
+            PolynomialBasis::Constant => DVector::from_vec(vec![1.0]),
+            PolynomialBasis::Linear => DVector::from_vec(vec![1.0, dx, dy, dz]),
+            PolynomialBasis::Quadratic => DVector::from_vec(vec![
+                1.0,
+                dx,
+                dy,
+                dz,
+                dx * dx,
+                dy * dy,
+                dz * dz,
+                dx * dy,
+                dx * dz,
+                dy * dz,
+            ]),
+            PolynomialBasis::Cubic => DVector::from_vec(vec![
+                1.0,
+                dx,
+                dy,
+                dz,
+                dx * dx,
+                dy * dy,
+                dz * dz,
+                dx * dy,
+                dx * dz,
+                dy * dz,
+                dx * dx * dx,
+                dy * dy * dy,
+                dz * dz * dz,
+                dx * dx * dy,
+                dx * dx * dz,
+                dx * dy * dy,
+                dy * dy * dz,
+                dx * dz * dz,
+                dy * dz * dz,
+                dx * dy * dz,
+            ]),
         }
     }
 }
@@ -507,13 +559,18 @@ pub fn moving_least_squares(cloud: &PointCloud<Point3f>) -> Result<TriangleMesh>
 }
 
 /// MLS reconstruction with custom configuration
-pub fn moving_least_squares_with_config(cloud: &PointCloud<Point3f>, config: &MLSConfig) -> Result<TriangleMesh> {
+pub fn moving_least_squares_with_config(
+    cloud: &PointCloud<Point3f>,
+    config: &MLSConfig,
+) -> Result<TriangleMesh> {
     let mls = MLSSurface::new(cloud, config.clone())?;
     mls.extract_mesh()
 }
 
 /// MLS reconstruction from point cloud with normals
-pub fn moving_least_squares_from_normals(cloud: &PointCloud<NormalPoint3f>) -> Result<TriangleMesh> {
+pub fn moving_least_squares_from_normals(
+    cloud: &PointCloud<NormalPoint3f>,
+) -> Result<TriangleMesh> {
     let mls = MLSSurface::from_normals(cloud, MLSConfig::default())?;
     mls.extract_mesh()
 }

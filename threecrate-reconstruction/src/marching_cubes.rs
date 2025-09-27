@@ -3,9 +3,9 @@
 //! This module provides isosurface extraction from 3D scalar fields using
 //! the classic Marching Cubes algorithm and its variants.
 
-use threecrate_core::{PointCloud, TriangleMesh, Result, Point3f, Error};
 use crate::parallel;
 use nalgebra::Vector3;
+use threecrate_core::{Error, Point3f, PointCloud, Result, TriangleMesh};
 
 /// 3D volumetric grid containing scalar values
 #[derive(Debug, Clone)]
@@ -22,18 +22,8 @@ pub struct VolumetricGrid {
 
 impl VolumetricGrid {
     /// Create a new volumetric grid
-    pub fn new(
-        dimensions: [usize; 3],
-        voxel_size: [f32; 3],
-        origin: Point3f,
-    ) -> Self {
-        let values = vec![
-            vec![
-                vec![0.0; dimensions[2]];
-                dimensions[1]
-            ];
-            dimensions[0]
-        ];
+    pub fn new(dimensions: [usize; 3], voxel_size: [f32; 3], origin: Point3f) -> Self {
+        let values = vec![vec![vec![0.0; dimensions[2]]; dimensions[1]]; dimensions[0]];
 
         Self {
             values,
@@ -177,7 +167,6 @@ struct MCVertex {
     normal: Vector3<f32>,
 }
 
-
 /// Marching Cubes implementation
 pub struct MarchingCubes {
     config: MarchingCubesConfig,
@@ -202,9 +191,8 @@ impl MarchingCubes {
         }
 
         // Process cubes in parallel
-        let cube_results: Vec<(Vec<MCVertex>, Vec<[usize; 3]>)> = parallel::parallel_map(
-            &cube_coords,
-            |(x, y, z)| {
+        let cube_results: Vec<(Vec<MCVertex>, Vec<[usize; 3]>)> =
+            parallel::parallel_map(&cube_coords, |(x, y, z)| {
                 let mut vertices = Vec::new();
                 let mut triangles = Vec::new();
 
@@ -214,8 +202,7 @@ impl MarchingCubes {
                 } else {
                     (Vec::new(), Vec::new())
                 }
-            }
-        );
+            });
 
         // Merge results from parallel processing
         let mut all_vertices = Vec::new();
@@ -238,7 +225,9 @@ impl MarchingCubes {
         }
 
         if all_vertices.is_empty() {
-            return Err(Error::Algorithm("No isosurface found at specified level".to_string()));
+            return Err(Error::Algorithm(
+                "No isosurface found at specified level".to_string(),
+            ));
         }
 
         // Convert MCVertex to Point3f for mesh creation using parallel processing
@@ -309,9 +298,18 @@ impl MarchingCubes {
         // Interpolate vertices on edges where surface crosses
         let mut edge_vertices = [None; 12];
         let edge_connections = [
-            [0, 1], [1, 2], [2, 3], [3, 0], // bottom face edges
-            [4, 5], [5, 6], [6, 7], [7, 4], // top face edges
-            [0, 4], [1, 5], [2, 6], [3, 7], // vertical edges
+            [0, 1],
+            [1, 2],
+            [2, 3],
+            [3, 0], // bottom face edges
+            [4, 5],
+            [5, 6],
+            [6, 7],
+            [7, 4], // top face edges
+            [0, 4],
+            [1, 5],
+            [2, 6],
+            [3, 7], // vertical edges
         ];
 
         for (edge_idx, &[v1, v2]) in edge_connections.iter().enumerate() {
@@ -322,7 +320,9 @@ impl MarchingCubes {
                     corner_values[v1],
                     corner_values[v2],
                     grid,
-                    x, y, z,
+                    x,
+                    y,
+                    z,
                 )?;
 
                 let vertex_index = vertices.len();
@@ -378,33 +378,37 @@ impl MarchingCubes {
     }
 
     /// Compute gradient (normal) at a position using finite differences
-    fn compute_gradient_at_position(&self, position: &Point3f, grid: &VolumetricGrid) -> Vector3<f32> {
+    fn compute_gradient_at_position(
+        &self,
+        position: &Point3f,
+        grid: &VolumetricGrid,
+    ) -> Vector3<f32> {
         let delta = 0.001; // Small offset for finite differences
 
         // Sample values around the position
         let dx_pos = self.sample_grid_at_world_position(
             &Point3f::new(position.x + delta, position.y, position.z),
-            grid
+            grid,
         );
         let dx_neg = self.sample_grid_at_world_position(
             &Point3f::new(position.x - delta, position.y, position.z),
-            grid
+            grid,
         );
         let dy_pos = self.sample_grid_at_world_position(
             &Point3f::new(position.x, position.y + delta, position.z),
-            grid
+            grid,
         );
         let dy_neg = self.sample_grid_at_world_position(
             &Point3f::new(position.x, position.y - delta, position.z),
-            grid
+            grid,
         );
         let dz_pos = self.sample_grid_at_world_position(
             &Point3f::new(position.x, position.y, position.z + delta),
-            grid
+            grid,
         );
         let dz_neg = self.sample_grid_at_world_position(
             &Point3f::new(position.x, position.y, position.z - delta),
-            grid
+            grid,
         );
 
         // Compute gradient
@@ -430,10 +434,13 @@ impl MarchingCubes {
         let gz = (position.z - grid.origin.z) / grid.voxel_size[2];
 
         // Check bounds
-        if gx < 0.0 || gy < 0.0 || gz < 0.0
+        if gx < 0.0
+            || gy < 0.0
+            || gz < 0.0
             || gx >= (grid.dimensions[0] - 1) as f32
             || gy >= (grid.dimensions[1] - 1) as f32
-            || gz >= (grid.dimensions[2] - 1) as f32 {
+            || gz >= (grid.dimensions[2] - 1) as f32
+        {
             return 0.0; // Outside grid
         }
 
@@ -486,16 +493,22 @@ impl MarchingCubes {
             // Simple cases - single triangle cutting through cube
             1 | 254 => {
                 // Single corner case
-                if let (Some(v0), Some(v1), Some(v2)) = (edge_vertices[0], edge_vertices[3], edge_vertices[8]) {
+                if let (Some(v0), Some(v1), Some(v2)) =
+                    (edge_vertices[0], edge_vertices[3], edge_vertices[8])
+                {
                     triangles.push([v0, v1, v2]);
                 }
             }
             3 | 252 => {
                 // Two adjacent corners
-                if let (Some(v0), Some(v1), Some(v2)) = (edge_vertices[1], edge_vertices[3], edge_vertices[8]) {
+                if let (Some(v0), Some(v1), Some(v2)) =
+                    (edge_vertices[1], edge_vertices[3], edge_vertices[8])
+                {
                     triangles.push([v0, v1, v2]);
                 }
-                if let (Some(v0), Some(v1), Some(v2)) = (edge_vertices[1], edge_vertices[8], edge_vertices[9]) {
+                if let (Some(v0), Some(v1), Some(v2)) =
+                    (edge_vertices[1], edge_vertices[8], edge_vertices[9])
+                {
                     triangles.push([v0, v1, v2]);
                 }
             }
@@ -503,9 +516,8 @@ impl MarchingCubes {
             _ => {
                 // For other cases, generate a simple approximation
                 // In a full implementation, this would use the complete lookup table
-                let available_vertices: Vec<usize> = edge_vertices.iter()
-                    .filter_map(|&v| v)
-                    .collect();
+                let available_vertices: Vec<usize> =
+                    edge_vertices.iter().filter_map(|&v| v).collect();
 
                 // Generate triangles from available vertices (simplified approach)
                 for chunk in available_vertices.chunks(3) {
@@ -609,14 +621,12 @@ pub fn create_sphere_volume(
     }
 
     // Compute sphere distance field in parallel
-    let distance_values: Vec<((usize, usize, usize), f32)> = parallel::parallel_map(
-        &grid_coords,
-        |(x, y, z)| {
+    let distance_values: Vec<((usize, usize, usize), f32)> =
+        parallel::parallel_map(&grid_coords, |(x, y, z)| {
             let world_pos = grid.grid_to_world(*x, *y, *z);
             let distance = (world_pos - center).magnitude() - radius;
             ((*x, *y, *z), distance)
-        }
-    );
+        });
 
     // Fill grid with computed values
     for ((x, y, z), distance) in distance_values {
@@ -633,11 +643,7 @@ mod tests {
 
     #[test]
     fn test_volumetric_grid_creation() {
-        let grid = VolumetricGrid::new(
-            [10, 10, 10],
-            [1.0, 1.0, 1.0],
-            Point3f::origin(),
-        );
+        let grid = VolumetricGrid::new([10, 10, 10], [1.0, 1.0, 1.0], Point3f::origin());
 
         assert_eq!(grid.dimensions, [10, 10, 10]);
         assert_eq!(grid.voxel_size, [1.0, 1.0, 1.0]);
@@ -646,11 +652,7 @@ mod tests {
 
     #[test]
     fn test_grid_value_operations() {
-        let mut grid = VolumetricGrid::new(
-            [3, 3, 3],
-            [1.0, 1.0, 1.0],
-            Point3f::origin(),
-        );
+        let mut grid = VolumetricGrid::new([3, 3, 3], [1.0, 1.0, 1.0], Point3f::origin());
 
         // Test setting and getting values
         assert!(grid.set_value(1, 1, 1, 5.0).is_ok());
@@ -663,11 +665,7 @@ mod tests {
 
     #[test]
     fn test_grid_to_world_conversion() {
-        let grid = VolumetricGrid::new(
-            [5, 5, 5],
-            [2.0, 2.0, 2.0],
-            Point3f::new(1.0, 1.0, 1.0),
-        );
+        let grid = VolumetricGrid::new([5, 5, 5], [2.0, 2.0, 2.0], Point3f::new(1.0, 1.0, 1.0));
 
         let world_pos = grid.grid_to_world(1, 1, 1);
         assert_eq!(world_pos, Point3f::new(3.0, 3.0, 3.0));
@@ -677,12 +675,7 @@ mod tests {
     fn test_sphere_volume_creation() {
         let center = Point3f::new(0.0, 0.0, 0.0);
         let radius = 1.0;
-        let grid = create_sphere_volume(
-            center,
-            radius,
-            [10, 10, 10],
-            [4.0, 4.0, 4.0],
-        );
+        let grid = create_sphere_volume(center, radius, [10, 10, 10], [4.0, 4.0, 4.0]);
 
         // Check that center has negative value (inside sphere)
         let center_value = grid.get_value(5, 5, 5).unwrap();
@@ -704,12 +697,7 @@ mod tests {
 
     #[test]
     fn test_marching_cubes_simple() {
-        let grid = create_sphere_volume(
-            Point3f::origin(),
-            0.5,
-            [8, 8, 8],
-            [2.0, 2.0, 2.0],
-        );
+        let grid = create_sphere_volume(Point3f::origin(), 0.5, [8, 8, 8], [2.0, 2.0, 2.0]);
 
         let result = marching_cubes(&grid, 0.0);
 
