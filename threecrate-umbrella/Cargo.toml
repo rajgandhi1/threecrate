@@ -1,6 +1,6 @@
 [package]
 name = "threecrate"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2021"
 authors = ["rajgandhi1"]
 license = "MIT OR Apache-2.0"
@@ -25,15 +25,15 @@ all = ["algorithms", "gpu", "io", "simplification", "reconstruction", "visualiza
 
 [dependencies]
 # Core is always included
-threecrate-core = { path = "../threecrate-core", version = "0.4.0" }
+threecrate-core = { path = "../threecrate-core", version = "0.5.0" }
 
 # Optional dependencies controlled by features
-threecrate-algorithms = { path = "../threecrate-algorithms", version = "0.4.0", optional = true }
-threecrate-gpu = { path = "../threecrate-gpu", version = "0.4.0", optional = true }
-threecrate-io = { path = "../threecrate-io", version = "0.4.0", optional = true }
-threecrate-simplification = { path = "../threecrate-simplification", version = "0.4.0", optional = true }
-threecrate-reconstruction = { path = "../threecrate-reconstruction", version = "0.4.0", optional = true }
-threecrate-visualization = { path = "../threecrate-visualization", version = "0.4.0", optional = true }
+threecrate-algorithms = { path = "../threecrate-algorithms", version = "0.5.0", optional = true }
+threecrate-gpu = { path = "../threecrate-gpu", version = "0.5.0", optional = true }
+threecrate-io = { path = "../threecrate-io", version = "0.5.0", optional = true }
+threecrate-simplification = { path = "../threecrate-simplification", version = "0.5.0", optional = true }
+threecrate-reconstruction = { path = "../threecrate-reconstruction", version = "0.5.0", optional = true }
+threecrate-visualization = { path = "../threecrate-visualization", version = "0.5.0", optional = true }
 
 [dev-dependencies]
 anyhow = "1.0" 

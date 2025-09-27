@@ -26,7 +26,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-threecrate = "0.1.0"
+threecrate = "0.5.0"
 ```
 
 Basic usage:
@@ -52,20 +52,20 @@ println!("Point cloud with {} points", cloud.len());
 
 ```toml
 [dependencies]
-threecrate = "0.1.0"
+threecrate = "0.5.0"
 ```
 
 ### Option 2: Individual Crates (For minimal dependencies)
 
 ```toml
 [dependencies]
-threecrate-core = "0.1.0"         # Core data structures
-threecrate-algorithms = "0.1.0"   # Processing algorithms
-threecrate-gpu = "0.1.0"          # GPU acceleration
-threecrate-io = "0.1.0"           # File I/O
-threecrate-simplification = "0.1.0"  # Simplification
-threecrate-reconstruction = "0.1.0"  # Surface reconstruction
-threecrate-visualization = "0.1.0"  # Visualization
+threecrate-core = "0.5.0"         # Core data structures
+threecrate-algorithms = "0.5.0"   # Processing algorithms
+threecrate-gpu = "0.5.0"          # GPU acceleration
+threecrate-io = "0.5.0"           # File I/O
+threecrate-simplification = "0.5.0"  # Simplification
+threecrate-reconstruction = "0.5.0"  # Surface reconstruction
+threecrate-visualization = "0.5.0"  # Visualization
 ```
 
 ## Feature Flags
@@ -74,7 +74,7 @@ The umbrella crate supports granular feature control:
 
 ```toml
 [dependencies]
-threecrate = { version = "0.1.0", features = ["all"] }
+threecrate = { version = "0.5.0", features = ["all"] }
 ```
 
 Available features:
@@ -136,13 +136,19 @@ Mesh and point cloud simplification algorithms.
 - Clustering-based simplification
 
 ### [`threecrate-reconstruction`](https://crates.io/crates/threecrate-reconstruction)
-Surface reconstruction from point clouds.
+Advanced surface reconstruction from point clouds with intelligent algorithm selection.
 
 **Features:**
-- Poisson surface reconstruction
-- Ball pivoting algorithm
-- Delaunay triangulation
-- Alpha shapes
+- Poisson surface reconstruction with automatic parameter tuning
+- Enhanced Ball Pivoting with multi-scale and adaptive radius selection
+- Complete Delaunay triangulation with multiple projection methods
+- Marching Cubes for volumetric reconstruction from implicit surfaces
+- Moving Least Squares (MLS) surface fitting with multiple weight functions
+- Alpha shapes for non-convex surface extraction
+- Unified reconstruction pipeline with automatic algorithm selection
+- Parallel processing using rayon for optimal performance
+- Comprehensive quality metrics and validation
+- Data analysis engine for point cloud characteristics
 
 ### [`threecrate-visualization`](https://crates.io/crates/threecrate-visualization)
 Interactive 3D visualization tools.
@@ -167,6 +173,16 @@ let points = vec![
     Point3f::new(0.0, 1.0, 0.0),
 ];
 let cloud = PointCloud::from_points(points);
+
+// Estimate normals
+let normals_cloud = estimate_normals(&cloud, 10)?;
+
+// Perform surface reconstruction
+let mesh = auto_reconstruct(&cloud)?;
+println!("Reconstructed mesh with {} triangles", mesh.face_count());
+
+// Or use specific algorithm
+let poisson_mesh = poisson_reconstruction_default(&normals_cloud)?;
 
 // Save processed cloud
 // cloud.save("output.ply")?; // I/O functionality
@@ -225,6 +241,20 @@ at your option.
 Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ## Changelog
+
+### v0.5.0
+
+- Major reconstruction module overhaul with 5 advanced algorithms
+- Fixed Poisson reconstruction with proper API integration
+- Enhanced Ball Pivoting with multi-scale capabilities and adaptive features
+- Complete Delaunay triangulation implementation with 5 projection methods
+- New Marching Cubes algorithm for volumetric surface reconstruction
+- New Moving Least Squares (MLS) surface fitting with 4 weight functions
+- Unified reconstruction pipeline with intelligent algorithm auto-selection
+- Comprehensive parallel processing integration using rayon
+- Advanced data analysis engine for point cloud characteristics
+- Quality metrics and validation for all reconstruction algorithms
+- 65 comprehensive tests ensuring reliability and correctness
 
 ### v0.1.0
 

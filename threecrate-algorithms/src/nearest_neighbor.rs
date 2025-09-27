@@ -93,12 +93,10 @@ impl KdTree {
         while left < right {
             let pivot_idx = Self::partition(points, left, right, axis);
             
-            if pivot_idx == target {
-                return;
-            } else if pivot_idx < target {
-                left = pivot_idx + 1;
-            } else {
-                right = pivot_idx - 1;
+            match pivot_idx.cmp(&target) {
+                Ordering::Equal => return,
+                Ordering::Less => left = pivot_idx + 1,
+                Ordering::Greater => right = pivot_idx - 1,
             }
         }
     }
@@ -181,13 +179,14 @@ impl NearestNeighborSearch for KdTree {
 
 impl KdTree {
     /// Search for k nearest neighbors using the KD-tree
+    #[allow(clippy::only_used_in_recursion)]
     fn search_k_nearest(
         &self,
         node: &KdNode,
         query: &Point3f,
         k: usize,
         heap: &mut BinaryHeap<Neighbor>,
-        depth: usize,
+        _depth: usize,
     ) {
         let distance_squared = Self::distance_squared(&node.point, query);
         let distance = distance_squared.sqrt();
@@ -230,7 +229,7 @@ impl KdTree {
         
         // Search near subtree first
         if let Some(ref near) = near_subtree {
-            self.search_k_nearest(near, query, k, heap, depth + 1);
+            self.search_k_nearest(near, query, k, heap, _depth + 1);
         }
         
         // Check if we need to search far subtree
@@ -243,19 +242,20 @@ impl KdTree {
         
         if should_search_far {
             if let Some(ref far) = far_subtree {
-                self.search_k_nearest(far, query, k, heap, depth + 1);
+                self.search_k_nearest(far, query, k, heap, _depth + 1);
             }
         }
     }
     
     /// Search for neighbors within radius using the KD-tree
+    #[allow(clippy::only_used_in_recursion)]
     fn search_radius_neighbors(
         &self,
         node: &KdNode,
         query: &Point3f,
         radius_squared: f32,
         result: &mut Vec<(usize, f32)>,
-        depth: usize,
+        _depth: usize,
     ) {
         let distance_squared = Self::distance_squared(&node.point, query);
         
@@ -286,14 +286,14 @@ impl KdTree {
         
         // Search near subtree
         if let Some(ref near) = near_subtree {
-            self.search_radius_neighbors(near, query, radius_squared, result, depth + 1);
+            self.search_radius_neighbors(near, query, radius_squared, result, _depth + 1);
         }
         
         // Check if far subtree might contain points within radius
         let axis_distance = (query_value - node_value).abs();
         if axis_distance * axis_distance <= radius_squared {
             if let Some(ref far) = far_subtree {
-                self.search_radius_neighbors(far, query, radius_squared, result, depth + 1);
+                self.search_radius_neighbors(far, query, radius_squared, result, _depth + 1);
             }
         }
     }
@@ -310,7 +310,7 @@ impl Eq for Neighbor {}
 
 impl PartialOrd for Neighbor {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        self.distance.partial_cmp(&other.distance)
+        Some(self.cmp(other))
     }
 }
 
