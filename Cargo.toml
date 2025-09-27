@@ -43,7 +43,7 @@ rayon = "1.10"
 kdtree = "0.7"
 kiddo = "4.2"
 ndarray = "0.16"
-itertools = "0.12"
+itertools = "0.14"
 rand = "0.8"
 
 # Additional spatial data structures
