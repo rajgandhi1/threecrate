@@ -170,29 +170,52 @@ impl QuadricErrorSimplifier {
     /// Find boundary edges in the mesh
     fn find_boundary_edges(&self, mesh: &TriangleMesh) -> HashSet<(usize, usize)> {
         let mut edge_count: HashMap<(usize, usize), usize> = HashMap::new();
-        
         for face in &mesh.faces {
             let edges = [
                 (face[0].min(face[1]), face[0].max(face[1])),
                 (face[1].min(face[2]), face[1].max(face[2])),
                 (face[2].min(face[0]), face[2].max(face[0])),
             ];
-            
             for edge in edges.iter() {
                 *edge_count.entry(*edge).or_insert(0) += 1;
             }
         }
-        
         edge_count.into_iter()
             .filter(|(_, count)| *count == 1)
             .map(|(edge, _)| edge)
             .collect()
     }
-    
-    /// Check if vertex is on boundary
-    #[allow(dead_code)]
-    fn is_boundary_vertex(&self, vertex_idx: usize, boundary_edges: &HashSet<(usize, usize)>) -> bool {
-        boundary_edges.iter().any(|&(v1, v2)| v1 == vertex_idx || v2 == vertex_idx)
+
+    /// Find boundary edges from a face list (used during simplification)
+    fn find_boundary_edges_from_faces(&self, faces: &[[usize; 3]]) -> HashSet<(usize, usize)> {
+        let mut edge_count: HashMap<(usize, usize), usize> = HashMap::new();
+
+        for face in faces {
+            let edges = [
+                (face[0].min(face[1]), face[0].max(face[1])),
+                (face[1].min(face[2]), face[1].max(face[2])),
+                (face[2].min(face[0]), face[2].max(face[0])),
+            ];
+
+            for edge in edges.iter() {
+                *edge_count.entry(*edge).or_insert(0) += 1;
+            }
+        }
+
+        edge_count.into_iter()
+            .filter(|(_, count)| *count == 1)
+            .map(|(edge, _)| edge)
+            .collect()
+    }
+
+    /// Get all boundary vertices from boundary edges
+    fn get_boundary_vertices(&self, boundary_edges: &HashSet<(usize, usize)>) -> HashSet<usize> {
+        let mut boundary_verts = HashSet::new();
+        for &(v1, v2) in boundary_edges {
+            boundary_verts.insert(v1);
+            boundary_verts.insert(v2);
+        }
+        boundary_verts
     }
     
     /// Compute optimal position and cost for edge collapse
@@ -249,25 +272,29 @@ impl QuadricErrorSimplifier {
     /// Generate all valid edge collapses
     fn generate_edge_collapses(&self, vertices: &[VertexInfo], boundary_edges: &HashSet<(usize, usize)>) -> Vec<EdgeCollapse> {
         let mut collapses = Vec::new();
-        
+
+        // Get all boundary vertices
+        let boundary_verts = if self.preserve_boundary {
+            self.get_boundary_vertices(boundary_edges)
+        } else {
+            HashSet::new()
+        };
+
         for (v1_idx, vertex) in vertices.iter().enumerate() {
             for &v2_idx in &vertex.neighbors {
                 if v1_idx < v2_idx { // Avoid duplicate edges
-                    // Skip boundary edges if preservation is enabled
+                    // Skip any edge involving a boundary vertex if preservation is enabled
                     if self.preserve_boundary {
-                        let edge = (v1_idx.min(v2_idx), v1_idx.max(v2_idx));
-                        if boundary_edges.contains(&edge) {
+                        if boundary_verts.contains(&v1_idx) || boundary_verts.contains(&v2_idx) {
                             continue;
                         }
                     }
-                    
                     if let Some(collapse) = self.compute_collapse_cost(v1_idx, v2_idx, vertices) {
                         collapses.push(collapse);
                     }
                 }
             }
         }
-        
         collapses
     }
     
@@ -396,11 +423,12 @@ impl MeshSimplifier for QuadricErrorSimplifier {
                 if vertices[collapse.vertex1].neighbors.contains(&collapse.vertex2) {
                     self.apply_collapse(&collapse, &mut vertices, &mut faces, &mut vertex_mapping)?;
                     collapse_counter += 1;
-                    
                     // Periodically regenerate collapses to maintain quality
                     if collapse_counter % 100 == 0 {
                         collapse_queue.clear();
-                        let new_collapses = self.generate_edge_collapses(&vertices, &boundary_edges);
+                        // Recompute boundary edges based on current face configuration
+                        let current_boundary_edges = self.find_boundary_edges_from_faces(&faces);
+                        let new_collapses = self.generate_edge_collapses(&vertices, &current_boundary_edges);
                         for (idx, collapse) in new_collapses.into_iter().enumerate() {
                             collapse_queue.push(collapse_counter * 1000 + idx, collapse);
                         }
@@ -498,7 +526,6 @@ mod tests {
     #[test]
     fn test_tetrahedron_simplification() {
         let simplifier = QuadricErrorSimplifier::new();
-        
         // Create a tetrahedron
         let vertices = vec![
             Point3::new(0.0, 0.0, 0.0),
@@ -513,11 +540,112 @@ mod tests {
             [1, 2, 3],
         ];
         let mesh = TriangleMesh::from_vertices_and_faces(vertices, faces);
-        
         let simplified = simplifier.simplify(&mesh, 0.5).unwrap();
-        
         // Should have fewer faces
         assert!(simplified.face_count() <= mesh.face_count());
         assert!(simplified.vertex_count() <= mesh.vertex_count());
+    }
+
+    #[test]
+    fn test_grid_boundary_preservation() {
+        // Reproduce issue #52: 11x11 grid mesh simplification
+        let simplifier = QuadricErrorSimplifier::new();
+
+        // Create 11x11 grid at Z=-2000, spacing 400 units
+        let grid_size = 11;
+        let spacing = 400.0;
+        let z = -2000.0;
+
+        let mut vertices = Vec::new();
+        for y in 0..grid_size {
+            for x in 0..grid_size {
+                vertices.push(Point3::new(
+                    x as f32 * spacing,
+                    y as f32 * spacing,
+                    z,
+                ));
+            }
+        }
+
+        // Generate triangle faces for the grid
+        let mut faces = Vec::new();
+        for y in 0..(grid_size - 1) {
+            for x in 0..(grid_size - 1) {
+                let top_left = y * grid_size + x;
+                let top_right = top_left + 1;
+                let bottom_left = (y + 1) * grid_size + x;
+                let bottom_right = bottom_left + 1;
+
+                // Two triangles per quad
+                faces.push([top_left, bottom_left, top_right]);
+                faces.push([top_right, bottom_left, bottom_right]);
+            }
+        }
+
+        let mesh = TriangleMesh::from_vertices_and_faces(vertices.clone(), faces.clone());
+
+        println!("Original mesh: {} vertices, {} faces", mesh.vertex_count(), mesh.face_count());
+
+        // Identify original boundary vertices (edges of the grid)
+        let mut original_boundary_verts = std::collections::HashSet::new();
+        for i in 0..grid_size {
+            // Top edge
+            original_boundary_verts.insert(i);
+            // Bottom edge
+            original_boundary_verts.insert((grid_size - 1) * grid_size + i);
+            // Left edge
+            original_boundary_verts.insert(i * grid_size);
+            // Right edge
+            original_boundary_verts.insert(i * grid_size + (grid_size - 1));
+        }
+
+        println!("Original boundary vertices: {}", original_boundary_verts.len());
+
+        // Debug: Check boundary edge detection
+        let boundary_edges = simplifier.find_boundary_edges(&mesh);
+        println!("Detected boundary edges: {}", boundary_edges.len());
+
+        // Count unique vertices in boundary edges
+        let mut detected_boundary_verts = std::collections::HashSet::new();
+        for &(v1, v2) in &boundary_edges {
+            detected_boundary_verts.insert(v1);
+            detected_boundary_verts.insert(v2);
+        }
+        println!("Detected boundary vertices: {}", detected_boundary_verts.len());
+
+        // Simplify with 50% reduction
+        let simplified = simplifier.simplify(&mesh, 0.5).unwrap();
+
+        println!("Simplified mesh: {} vertices, {} faces", simplified.vertex_count(), simplified.face_count());
+
+        // Check if boundary vertices are preserved
+        // We need to check if the boundary vertices' positions are still in the simplified mesh
+        let mut boundary_positions = std::collections::HashSet::new();
+        for &idx in &original_boundary_verts {
+            let pos = vertices[idx];
+            boundary_positions.insert((
+                (pos.x * 100.0) as i32,
+                (pos.y * 100.0) as i32,
+                (pos.z * 100.0) as i32,
+            ));
+        }
+
+        let mut simplified_positions = std::collections::HashSet::new();
+        for &pos in &simplified.vertices {
+            simplified_positions.insert((
+                (pos.x * 100.0) as i32,
+                (pos.y * 100.0) as i32,
+                (pos.z * 100.0) as i32,
+            ));
+        }
+
+        let preserved_boundary_count = boundary_positions.intersection(&simplified_positions).count();
+        println!("Preserved boundary vertices: {}/{}", preserved_boundary_count, boundary_positions.len());
+
+        // Boundary vertices should be preserved when preserve_boundary is true
+        // We expect all or most boundary vertices to remain
+        assert!(preserved_boundary_count as f32 / boundary_positions.len() as f32 > 0.9,
+            "Expected at least 90% of boundary vertices to be preserved, but only {}% were preserved",
+            (preserved_boundary_count as f32 / boundary_positions.len() as f32 * 100.0));
     }
 } 
