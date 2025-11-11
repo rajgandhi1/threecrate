@@ -17,10 +17,12 @@ thiserror = { workspace = true }
 bytemuck = { workspace = true }
 rand = { workspace = true }
 wgpu = { workspace = true, optional = true }
+bevy = { version = "0.15", optional = true, default-features = false, features = ["bevy_render"] }
 
 [features]
 default = []
 gpu = ["dep:wgpu"]
+bevy_interop = ["dep:bevy"]
 
 [target.'cfg(windows)'.dependencies]
 wgpu = { version = "25.0.1", default-features = false, features = ["wgsl", "vulkan", "dx12"], optional = true }

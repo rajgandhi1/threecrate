@@ -113,6 +113,7 @@ struct PivotEdge {
 struct ProcessingItem {
     edge: PivotEdge,
     priority: OrderedFloat,
+    #[allow(dead_code)]
     radius: f32,
 }
 

@@ -4,7 +4,10 @@
 //! including normals, tangents, and UV coordinates. It ensures that mesh attributes
 //! survive round-trip across different formats with optional recomputation.
 
-use threecrate_core::{TriangleMesh, Point3f, Vector3f, Result, Error};
+use threecrate_core::{TriangleMesh, Vector3f, Result, Error};
+
+#[cfg(test)]
+use threecrate_core::Point3f;
 
 /// Texture coordinates (UV mapping)
 pub type UV = [f32; 2];

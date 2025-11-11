@@ -10,6 +10,9 @@ pub mod traits;
 pub mod transform;
 pub mod error;
 
+#[cfg(feature = "bevy_interop")]
+pub mod bevy_interop;
+
 pub use point::*;
 pub use point_cloud::*;
 pub use mesh::*;
