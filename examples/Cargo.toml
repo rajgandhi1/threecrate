@@ -16,6 +16,7 @@ threecrate-core = { path = "../threecrate-core", version = "0.5.0" }
 threecrate-gpu = { path = "../threecrate-gpu", version = "0.5.0" }
 threecrate-io = { path = "../threecrate-io", version = "0.5.0", features = ["las_laz"] }
 threecrate-algorithms = { path = "../threecrate-algorithms", version = "0.5.0" }
+threecrate-reconstruction = { path = "../threecrate-reconstruction", version = "0.5.0" }
 threecrate-visualization = { path = "../threecrate-visualization", version = "0.5.0" }
 anyhow = { workspace = true }
 nalgebra = { workspace = true }
@@ -103,3 +104,7 @@ path = "mesh_serialization_example.rs"
 [[bin]]
 name = "mmap_example"
 path = "mmap_example.rs"
+
+[[bin]]
+name = "test_marching_cubes"
+path = "test_marching_cubes.rs"
