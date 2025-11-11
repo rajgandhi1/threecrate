@@ -918,6 +918,63 @@ pub fn create_sphere_volume(
     grid
 }
 
+/// Create a cube volume using signed distance field
+pub fn create_cube_volume(
+    center: Point3f,
+    half_size: f32,
+    grid_resolution: [usize; 3],
+    grid_size: [f32; 3],
+) -> VolumetricGrid {
+    let origin = Point3f::new(
+        center.x - grid_size[0] / 2.0,
+        center.y - grid_size[1] / 2.0,
+        center.z - grid_size[2] / 2.0,
+    );
+
+    let voxel_size = [
+        grid_size[0] / (grid_resolution[0] - 1) as f32,
+        grid_size[1] / (grid_resolution[1] - 1) as f32,
+        grid_size[2] / (grid_resolution[2] - 1) as f32,
+    ];
+
+    let mut grid = VolumetricGrid::new(grid_resolution, voxel_size, origin);
+
+    // Generate all grid coordinates for parallel processing
+    let mut grid_coords = Vec::new();
+    for x in 0..grid_resolution[0] {
+        for y in 0..grid_resolution[1] {
+            for z in 0..grid_resolution[2] {
+                grid_coords.push((x, y, z));
+            }
+        }
+    }
+
+    // Compute cube distance field in parallel (signed distance to a box)
+    let distance_values: Vec<((usize, usize, usize), f32)> =
+        parallel::parallel_map(&grid_coords, |(x, y, z)| {
+            let world_pos = grid.grid_to_world(*x, *y, *z);
+
+            // Distance to box (signed distance field)
+            let dx = (world_pos.x - center.x).abs() - half_size;
+            let dy = (world_pos.y - center.y).abs() - half_size;
+            let dz = (world_pos.z - center.z).abs() - half_size;
+
+            // Outside: distance to nearest surface
+            // Inside: negative distance to nearest surface
+            let outside_dist = dx.max(0.0).powi(2) + dy.max(0.0).powi(2) + dz.max(0.0).powi(2);
+            let distance = outside_dist.sqrt() + dx.max(dy).max(dz).min(0.0);
+
+            ((*x, *y, *z), distance)
+        });
+
+    // Fill grid with computed values
+    for ((x, y, z), distance) in distance_values {
+        grid.set_value(x, y, z, distance).unwrap();
+    }
+
+    grid
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

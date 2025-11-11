@@ -10,6 +10,7 @@ publish = false
 [features]
 las_laz = []
 io-mmap = ["threecrate-io/io-mmap"]
+bevy_interop = ["dep:bevy", "threecrate-core/bevy_interop"]
 
 [dependencies]
 threecrate-core = { path = "../threecrate-core", version = "0.5.0" }
@@ -18,6 +19,7 @@ threecrate-io = { path = "../threecrate-io", version = "0.5.0", features = ["las
 threecrate-algorithms = { path = "../threecrate-algorithms", version = "0.5.0" }
 threecrate-reconstruction = { path = "../threecrate-reconstruction", version = "0.5.0" }
 threecrate-visualization = { path = "../threecrate-visualization", version = "0.5.0" }
+bevy = { version = "0.15", optional = true }
 anyhow = { workspace = true }
 nalgebra = { workspace = true }
 tokio = { version = "1.0", features = ["full"] }
@@ -108,3 +110,18 @@ path = "mmap_example.rs"
 [[bin]]
 name = "test_marching_cubes"
 path = "test_marching_cubes.rs"
+
+[[bin]]
+name = "bevy_mesh_conversion"
+path = "bevy_mesh_conversion.rs"
+required-features = ["bevy_interop"]
+
+[[bin]]
+name = "bevy_mesh_viewer"
+path = "bevy_mesh_viewer.rs"
+required-features = ["bevy_interop"]
+
+[[bin]]
+name = "bevy_conversion_demo"
+path = "bevy_conversion_demo.rs"
+required-features = ["bevy_interop"]
