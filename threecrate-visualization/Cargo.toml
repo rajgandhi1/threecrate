@@ -20,7 +20,7 @@ bytemuck = { workspace = true }
 nalgebra = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
-egui = "0.28"
+egui = "0.33"
 egui-winit = "0.28"
 egui-wgpu = "0.32"
 pollster = { workspace = true }
