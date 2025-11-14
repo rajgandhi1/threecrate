@@ -21,19 +21,13 @@ nalgebra = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 egui = "0.33"
-egui-winit = "0.28"
-egui-wgpu = "0.32"
+egui-winit = "0.33"
+egui-wgpu = "0.33"
 pollster = { workspace = true }
 tokio = { version = "1.0", features = ["rt-multi-thread"] }
 image = "0.24"
 rfd = "0.14"  # Native file dialogs
 instant = "0.1"
-
-[target.'cfg(windows)'.dependencies]
-wgpu = { version = "25.0.1", default-features = false, features = ["wgsl", "vulkan", "dx12"] }
-
-[target.'cfg(target_os = "macos")'.dependencies]
-wgpu = { version = "25.0.1", default-features = false, features = ["wgsl", "vulkan", "metal"] }
 
 [dev-dependencies]
 pollster = "0.4" 
