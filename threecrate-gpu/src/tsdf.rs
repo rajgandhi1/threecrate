@@ -276,7 +276,10 @@ impl GpuContext {
             sender.send(result).unwrap();
         });
 
-        let _ = self.device.poll(wgpu::PollType::Wait);
+        self.device.poll(wgpu::PollType::Wait {
+            submission_index: None,
+            timeout: None,
+        });
         receiver.recv_async().await.map_err(|_| Error::Gpu("Failed to receive mapping result".into()))?
             .map_err(|e| Error::Gpu(format!("Buffer mapping failed: {:?}", e)))?;
 
@@ -421,7 +424,10 @@ impl GpuContext {
         point_count_slice.map_async(wgpu::MapMode::Read, move |result| {
             tx.send(result).unwrap();
         });
-        let _ = self.device.poll(wgpu::PollType::Wait);
+        self.device.poll(wgpu::PollType::Wait {
+            submission_index: None,
+            timeout: None,
+        });
         rx.receive().await.unwrap()?;
 
         let mapped_range = point_count_slice.get_mapped_range();
@@ -462,7 +468,10 @@ impl GpuContext {
         points_slice.map_async(wgpu::MapMode::Read, move |result| {
             tx.send(result).unwrap();
         });
-        let _ = self.device.poll(wgpu::PollType::Wait);
+        self.device.poll(wgpu::PollType::Wait {
+            submission_index: None,
+            timeout: None,
+        });
         rx.receive().await.unwrap()?;
 
         let mapped_range = points_slice.get_mapped_range();
@@ -667,7 +676,10 @@ impl TsdfVolumeGpu {
             sender.send(result).unwrap();
         });
 
-        let _ = gpu.device.poll(wgpu::PollType::Wait);
+        gpu.device.poll(wgpu::PollType::Wait {
+            submission_index: None,
+            timeout: None,
+        });
         receiver.recv_async().await.map_err(|_| Error::Gpu("Failed to receive mapping result".into()))??;
 
         let data = buffer_slice.get_mapped_range();

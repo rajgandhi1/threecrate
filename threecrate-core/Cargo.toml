@@ -24,11 +24,5 @@ default = []
 gpu = ["dep:wgpu"]
 bevy_interop = ["dep:bevy"]
 
-[target.'cfg(windows)'.dependencies]
-wgpu = { version = "27.0.1", default-features = false, features = ["wgsl", "vulkan", "dx12"], optional = true }
-
-[target.'cfg(target_os = "macos")'.dependencies]
-wgpu = { version = "25.0.1", default-features = false, features = ["wgsl", "vulkan", "metal"], optional = true }
-
 [dev-dependencies]
 approx = { workspace = true } 

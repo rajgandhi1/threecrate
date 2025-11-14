@@ -355,7 +355,10 @@ impl GpuContext {
         let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
         buffer_slice.map_async(wgpu::MapMode::Read, move |v| sender.send(v).unwrap());
 
-        let _ = self.device.poll(wgpu::PollType::Wait);
+        self.device.poll(wgpu::PollType::Wait {
+            submission_index: None,
+            timeout: None,
+        });
 
         if let Some(Ok(())) = receiver.receive().await {
             let data = buffer_slice.get_mapped_range();
@@ -579,7 +582,10 @@ impl GpuContext {
         let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
         buffer_slice.map_async(wgpu::MapMode::Read, move |v| sender.send(v).unwrap());
 
-        let _ = self.device.poll(wgpu::PollType::Wait);
+        self.device.poll(wgpu::PollType::Wait {
+            submission_index: None,
+            timeout: None,
+        });
 
         if let Some(Ok(())) = receiver.receive().await {
             let data = buffer_slice.get_mapped_range();
@@ -801,7 +807,10 @@ impl GpuContext {
         
         indices_slice.map_async(wgpu::MapMode::Read, move |v| indices_sender.send(v).unwrap());
 
-        let _ = self.device.poll(wgpu::PollType::Wait);
+        self.device.poll(wgpu::PollType::Wait {
+            submission_index: None,
+            timeout: None,
+        });
 
         if let Some(Ok(())) = indices_receiver.receive().await {
             let indices_data = indices_slice.get_mapped_range();
