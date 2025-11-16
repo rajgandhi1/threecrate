@@ -43,7 +43,7 @@ struct AllocationsFormatter;
 
 impl ValueFormatter for AllocationsFormatter {
     fn scale_values(&self, _: f64, _: &mut [f64]) -> &'static str {
-        "allocation times"
+        "allocations"
     }
 
     fn scale_throughputs(
@@ -52,10 +52,10 @@ impl ValueFormatter for AllocationsFormatter {
         _: &criterion::Throughput,
         _: &mut [f64],
     ) -> &'static str {
-        "allocation times"
+        "allocations"
     }
 
     fn scale_for_machines(&self, _: &mut [f64]) -> &'static str {
-        "allocation times"
+        "allocations"
     }
 }
