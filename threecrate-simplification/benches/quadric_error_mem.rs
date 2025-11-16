@@ -1,5 +1,5 @@
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use threecrate_bench::{ThreecrateMeasurment, mem::{Allocations, INSTRUMENTED_SYSTEM, InstrumentedSystem}};
+use threecrate_bench::{ThreecrateMeasurment, mem::{AllocationSize, Allocations, INSTRUMENTED_SYSTEM, InstrumentedSystem}};
 use threecrate_io::{AttributePreservingReader, ExtendedTriangleMesh, SerializationOptions};
 use threecrate_simplification::{MeshSimplifier, QuadricErrorSimplifier};
 
@@ -31,4 +31,13 @@ criterion_group!{
     targets = quadric_error_memory
 }
 
-criterion_main!(allocations);
+criterion_group!{
+    name = allocation_size;
+    config = Criterion::default().with_measurement(AllocationSize);
+    targets = quadric_error_memory
+}
+
+criterion_main!(
+    allocations, 
+    allocation_size,
+);

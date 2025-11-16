@@ -6,5 +6,5 @@ pub use stats_alloc::INSTRUMENTED_SYSTEM;
 mod allocations;
 pub use allocations::Allocations;
 
-
-
+mod allocation_size;
+pub use allocation_size::AllocationSize;
