@@ -1,5 +1,5 @@
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use threecrate_bench::{ThreecrateMeasurment, mem::{AllocationSize, Allocations, INSTRUMENTED_SYSTEM, InstrumentedSystem}};
+use threecrate_bench::{ThreecrateMeasurement, mem::{AllocationSize, Allocations, INSTRUMENTED_SYSTEM, InstrumentedSystem}};
 use threecrate_io::{AttributePreservingReader, ExtendedTriangleMesh, SerializationOptions};
 use threecrate_simplification::{MeshSimplifier, QuadricErrorSimplifier};
 
@@ -9,7 +9,7 @@ const REDUCTION_RATIOS: [f32; 5] = [0.1, 0.3, 0.5, 0.7, 0.9];
 #[global_allocator]
 static GLOBAL_ALLOCATOR: &InstrumentedSystem = &INSTRUMENTED_SYSTEM;
 
-fn quadric_error_memory<M: ThreecrateMeasurment>(c: &mut Criterion<M>) {
+fn quadric_error_memory<M: ThreecrateMeasurement>(c: &mut Criterion<M>) {
     let ExtendedTriangleMesh { mesh, .. } = AttributePreservingReader::read_extended_mesh(ASSET_PATH, &SerializationOptions::default()).unwrap();
     let simplifier = QuadricErrorSimplifier::default();
     

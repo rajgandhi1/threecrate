@@ -1,11 +1,11 @@
 use criterion::measurement::{Measurement, ValueFormatter};
 use stats_alloc::INSTRUMENTED_SYSTEM;
 
-use crate::ThreecrateMeasurment;
+use crate::ThreecrateMeasurement;
 
 pub struct Allocations;
 
-impl ThreecrateMeasurment for Allocations {
+impl ThreecrateMeasurement for Allocations {
     const NAME: &'static str = "allocations";
 }
 

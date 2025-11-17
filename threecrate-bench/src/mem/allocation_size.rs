@@ -1,11 +1,11 @@
 use criterion::measurement::{Measurement, ValueFormatter};
 use stats_alloc::INSTRUMENTED_SYSTEM;
 
-use crate::ThreecrateMeasurment;
+use crate::ThreecrateMeasurement;
 
 pub struct AllocationSize;
 
-impl ThreecrateMeasurment for AllocationSize {
+impl ThreecrateMeasurement for AllocationSize {
     const NAME: &'static str = "allocation size";
 }
 
@@ -44,8 +44,8 @@ struct AllocationSizeFormatter;
 
 
 impl ValueFormatter for AllocationSizeFormatter {
-    fn scale_values(&self, typycal_value: f64, values: &mut [f64]) -> &'static str {
-        let magnitude = typycal_value.log(2.0).floor() as i32 / 10;
+    fn scale_values(&self, tipycal_value: f64, values: &mut [f64]) -> &'static str {
+        let magnitude = tipycal_value.log(2.0).floor() as i32 / 10;
         let factor = 1.0 / 1024.0_f64.powi(magnitude);
 
         for value in values {
