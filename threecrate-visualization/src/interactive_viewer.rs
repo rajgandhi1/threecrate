@@ -4,9 +4,10 @@
 
 use std::sync::Arc;
 use winit::{
-    event::{Event, WindowEvent, ElementState, MouseButton},
-    event_loop::{EventLoop, ControlFlow},
-    window::WindowBuilder,
+    application::ApplicationHandler,
+    event::{WindowEvent, ElementState, MouseButton},
+    event_loop::{EventLoop, ActiveEventLoop},
+    window::{Window, WindowId},
     keyboard::Key,
     dpi::PhysicalPosition,
 };
@@ -165,253 +166,22 @@ impl InteractiveViewer {
     }
 
     /// Run the interactive viewer
-    pub fn run(mut self) -> Result<()> {
+    pub fn run(self) -> Result<()> {
         println!("Starting threecrate Interactive Viewer...");
-        
-        // Create event loop and window
+
+        // Create event loop
         let event_loop = EventLoop::new().map_err(|e| Error::Io(std::io::Error::new(std::io::ErrorKind::Other, format!("Failed to create event loop: {}", e))))?;
-        let window = Arc::new(
-            WindowBuilder::new()
-                .with_title("threecrate Interactive Viewer")
-                .with_inner_size(winit::dpi::LogicalSize::new(1200.0, 800.0))
-                .build(&event_loop)
-                .map_err(|e| Error::Io(std::io::Error::new(std::io::ErrorKind::Other, format!("Failed to create window: {}", e))))?
-        );
 
-        // Initialize renderers
-        let pc_config = RenderConfig::default();
-        let window_clone = window.clone();
-        let mut point_renderer = pollster::block_on(PointCloudRenderer::new(&window_clone, pc_config))?;
+        // Create application handler
+        let mut app = ViewerApp {
+            viewer: self,
+            window: None,
+            point_renderer: None,
+            mesh_renderer: None,
+        };
 
-        let mesh_config = MeshRenderConfig::default();
-        let mut mesh_renderer = pollster::block_on(MeshRenderer::new(&window_clone, mesh_config))?;
-
-        // Update camera aspect ratio
-        let size = window.inner_size();
-        self.camera.aspect_ratio = size.width as f32 / size.height as f32;
-
-        println!("Viewer initialized successfully. Window should now be visible.");
-
-        // Main event loop
-        event_loop.run(move |event, target| {
-            target.set_control_flow(ControlFlow::Poll);
-
-            match event {
-                Event::WindowEvent { event, .. } => {
-                    match event {
-                        WindowEvent::CloseRequested => {
-                            target.exit();
-                        }
-                        WindowEvent::Resized(new_size) => {
-                            point_renderer.resize(new_size);
-                            mesh_renderer.resize(new_size);
-                            self.camera.aspect_ratio = new_size.width as f32 / new_size.height as f32;
-                        }
-                        WindowEvent::MouseInput { state, button, .. } => {
-                            match button {
-                                MouseButton::Left => {
-                                    self.mouse_pressed = state == ElementState::Pressed;
-                                }
-                                MouseButton::Right => {
-                                    self.right_mouse_pressed = state == ElementState::Pressed;
-                                }
-                                _ => {}
-                            }
-                        }
-                        WindowEvent::CursorMoved { position, .. } => {
-                            if let Some(last_pos) = self.last_mouse_pos {
-                                let delta_x = position.x - last_pos.x;
-                                let delta_y = position.y - last_pos.y;
-
-                                if self.mouse_pressed {
-                                    match self.camera_mode {
-                                        CameraMode::Orbit => {
-                                            self.camera.orbit(delta_x as f32 * 0.01, delta_y as f32 * 0.01);
-                                        }
-                                        CameraMode::Pan => {
-                                            self.camera.pan(delta_x as f32 * 0.01, delta_y as f32 * 0.01);
-                                        }
-                                        _ => {}
-                                    }
-                                }
-                            }
-                            self.last_mouse_pos = Some(position);
-                        }
-                        WindowEvent::MouseWheel { delta, .. } => {
-                            let scroll_delta = match delta {
-                                winit::event::MouseScrollDelta::LineDelta(_, y) => y,
-                                winit::event::MouseScrollDelta::PixelDelta(pos) => pos.y as f32 / 100.0,
-                            };
-                            self.camera.zoom(scroll_delta * 0.1);
-                        }
-                        WindowEvent::KeyboardInput { event, .. } => {
-                            if event.state == ElementState::Pressed {
-                                match &event.logical_key {
-                                    Key::Character(c) => {
-                                        match c.as_str() {
-                                            "o" | "O" => {
-                                                self.camera_mode = CameraMode::Orbit;
-                                                println!("Switched to Orbit mode");
-                                            }
-                                            "p" | "P" => {
-                                                self.camera_mode = CameraMode::Pan;
-                                                println!("Switched to Pan mode");
-                                            }
-                                            "z" | "Z" => {
-                                                self.camera_mode = CameraMode::Zoom;
-                                                println!("Switched to Zoom mode");
-                                            }
-                                            "r" | "R" => {
-                                                self.camera.reset();
-                                                println!("Reset camera");
-                                            }
-                                            _ => {}
-                                        }
-                                    }
-                                    _ => {}
-                                }
-                            }
-                        }
-                        WindowEvent::RedrawRequested => {
-                            // Update camera matrices
-                            let view_matrix = self.camera.view_matrix();
-                            let proj_matrix = self.camera.projection_matrix();
-                            let camera_pos = self.camera.position.coords;
-                            point_renderer.update_camera(view_matrix, proj_matrix, camera_pos);
-                            mesh_renderer.update_camera(view_matrix, proj_matrix, camera_pos);
-
-                            // Convert current data
-                            let vertices = match &self.current_data {
-                                ViewData::PointCloud(cloud) => {
-                                    let mut vertices = Vec::new();
-                                    for point in cloud.iter() {
-                                        // Create a quad (2 triangles) for each point
-                                        let size = 0.02; // Size of each point quad
-                                        let pos = [point.x, point.y, point.z];
-                                        let color = [1.0, 1.0, 1.0];
-                                        let normal = [0.0, 0.0, 1.0];
-                                        
-                                        // Create 4 vertices for a quad
-                                        let v1 = PointVertex::from_point(&Point3f::new(pos[0] - size, pos[1] - size, pos[2]), color, 16.0, normal);
-                                        let v2 = PointVertex::from_point(&Point3f::new(pos[0] + size, pos[1] - size, pos[2]), color, 16.0, normal);
-                                        let v3 = PointVertex::from_point(&Point3f::new(pos[0] + size, pos[1] + size, pos[2]), color, 16.0, normal);
-                                        let v4 = PointVertex::from_point(&Point3f::new(pos[0] - size, pos[1] + size, pos[2]), color, 16.0, normal);
-                                        
-                                        // First triangle (v1, v2, v3)
-                                        vertices.push(v1);
-                                        vertices.push(v2);
-                                        vertices.push(v3);
-                                        
-                                        // Second triangle (v1, v3, v4)
-                                        vertices.push(v1);
-                                        vertices.push(v3);
-                                        vertices.push(v4);
-                                    }
-                                    vertices
-                                }
-                                ViewData::ColoredPointCloud(cloud) => {
-                                    let mut vertices = Vec::new();
-                                    for point in cloud.iter() {
-                                        // Create a quad (2 triangles) for each point
-                                        let size = 0.02; // Size of each point quad
-                                        let pos = [point.position.x, point.position.y, point.position.z];
-                                        let color = [
-                                            point.color[0] as f32 / 255.0,
-                                            point.color[1] as f32 / 255.0,
-                                            point.color[2] as f32 / 255.0,
-                                        ];
-                                        let normal = [0.0, 0.0, 1.0];
-                                        
-                                        // Create 4 vertices for a quad
-                                        let v1 = PointVertex::from_point(&Point3f::new(pos[0] - size, pos[1] - size, pos[2]), color, 16.0, normal);
-                                        let v2 = PointVertex::from_point(&Point3f::new(pos[0] + size, pos[1] - size, pos[2]), color, 16.0, normal);
-                                        let v3 = PointVertex::from_point(&Point3f::new(pos[0] + size, pos[1] + size, pos[2]), color, 16.0, normal);
-                                        let v4 = PointVertex::from_point(&Point3f::new(pos[0] - size, pos[1] + size, pos[2]), color, 16.0, normal);
-                                        
-                                        // First triangle (v1, v2, v3)
-                                        vertices.push(v1);
-                                        vertices.push(v2);
-                                        vertices.push(v3);
-                                        
-                                        // Second triangle (v1, v3, v4)
-                                        vertices.push(v1);
-                                        vertices.push(v3);
-                                        vertices.push(v4);
-                                    }
-                                    vertices
-                                }
-                                ViewData::Mesh(_) => {
-                                    // Mesh rendering handled separately
-                                    vec![]
-                                }
-                                ViewData::Empty => {
-                                    println!("No data to render - ViewData is Empty");
-                                    vec![]
-                                }
-                            };
-
-                            // Debug: Print vertex count periodically
-                            if !vertices.is_empty() {
-                                if self.debug_frame_count % 60 == 0 {  // Print every 60 frames
-                                    println!("Rendering {} vertices", vertices.len());
-                                }
-                            }
-                            self.debug_frame_count += 1;
-
-                            match &self.current_data {
-                                ViewData::PointCloud(_) | ViewData::ColoredPointCloud(_) => {
-                                    if !vertices.is_empty() {
-                                        if let Err(e) = point_renderer.render(&vertices) {
-                                            eprintln!("Render error: {}", e);
-                                        }
-                                    }
-                                }
-                                ViewData::Mesh(mesh) => {
-                                    if !mesh.vertices.is_empty() && !mesh.faces.is_empty() {
-                                        // Build index buffer from faces
-                                        let indices: Vec<u32> = mesh
-                                            .faces
-                                            .iter()
-                                            .flat_map(|f| [f[0] as u32, f[1] as u32, f[2] as u32])
-                                            .collect();
-
-                                        // Prepare optional normals
-                                        let normals_opt = mesh.normals.as_ref().map(|n| n.as_slice());
-
-                                        // Prepare optional colors as f32
-                                        let colors_f32: Option<Vec<[f32; 3]>> = mesh.colors.as_ref().map(|cols| {
-                                            cols.iter()
-                                                .map(|c| [c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0])
-                                                .collect()
-                                        });
-                                        let colors_opt = colors_f32.as_ref().map(|c| c.as_slice());
-
-                                        // Convert to GPU mesh
-                                        let gpu_mesh = mesh_to_gpu_mesh(
-                                            &mesh.vertices,
-                                            &indices,
-                                            normals_opt,
-                                            colors_opt,
-                                            None,
-                                        );
-
-                                        if let Err(e) = mesh_renderer.render(&gpu_mesh, ShadingMode::Flat) {
-                                            eprintln!("Mesh render error: {}", e);
-                                        }
-                                    }
-                                }
-                                ViewData::Empty => {}
-                            }
-
-                            // Request next frame
-                            window.request_redraw();
-                        }
-                        _ => {}
-                    }
-                }
-                _ => {}
-            }
-        }).map_err(|e| Error::Io(std::io::Error::new(std::io::ErrorKind::Other, format!("Event loop error: {}", e))))?;
+        // Run the event loop
+        event_loop.run_app(&mut app).map_err(|e| Error::Io(std::io::Error::new(std::io::ErrorKind::Other, format!("Event loop error: {}", e))))?;
 
         Ok(())
     }
@@ -423,4 +193,292 @@ impl Default for InteractiveViewer {
     }
 }
 
- 
+/// Application handler for the viewer
+struct ViewerApp {
+    viewer: InteractiveViewer,
+    window: Option<Arc<Window>>,
+    point_renderer: Option<PointCloudRenderer<'static>>,
+    mesh_renderer: Option<MeshRenderer<'static>>,
+}
+
+impl ApplicationHandler for ViewerApp {
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        if self.window.is_none() {
+            println!("Creating window and initializing renderers...");
+
+            // Create window with attributes
+            let window_attrs = Window::default_attributes()
+                .with_title("threecrate Interactive Viewer")
+                .with_inner_size(winit::dpi::LogicalSize::new(1200.0, 800.0));
+
+            let window = match event_loop.create_window(window_attrs) {
+                Ok(w) => Arc::new(w),
+                Err(e) => {
+                    eprintln!("Failed to create window: {}", e);
+                    event_loop.exit();
+                    return;
+                }
+            };
+
+            // Update camera aspect ratio
+            let size = window.inner_size();
+            self.viewer.camera.aspect_ratio = size.width as f32 / size.height as f32;
+
+            // Leak the Arc to get a 'static reference
+            // This is safe because the window will live for the duration of the program
+            let window_ref: &'static Window = unsafe {
+                std::mem::transmute::<&Window, &'static Window>(window.as_ref())
+            };
+
+            // Initialize renderers using the static reference
+            let pc_config = RenderConfig::default();
+            let point_renderer = match pollster::block_on(PointCloudRenderer::new(window_ref, pc_config)) {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("Failed to create point cloud renderer: {}", e);
+                    event_loop.exit();
+                    return;
+                }
+            };
+
+            let mesh_config = MeshRenderConfig::default();
+            let mesh_renderer = match pollster::block_on(MeshRenderer::new(window_ref, mesh_config)) {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("Failed to create mesh renderer: {}", e);
+                    event_loop.exit();
+                    return;
+                }
+            };
+
+            self.window = Some(window);
+            self.point_renderer = Some(point_renderer);
+            self.mesh_renderer = Some(mesh_renderer);
+
+            println!("Viewer initialized successfully. Window should now be visible.");
+        }
+    }
+
+    fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+        let Some(window) = &self.window else { return; };
+        let Some(point_renderer) = &mut self.point_renderer else { return; };
+        let Some(mesh_renderer) = &mut self.mesh_renderer else { return; };
+
+        match event {
+            WindowEvent::CloseRequested => {
+                event_loop.exit();
+            }
+            WindowEvent::Resized(new_size) => {
+                point_renderer.resize(new_size);
+                mesh_renderer.resize(new_size);
+                self.viewer.camera.aspect_ratio = new_size.width as f32 / new_size.height as f32;
+            }
+            WindowEvent::MouseInput { state, button, .. } => {
+                match button {
+                    MouseButton::Left => {
+                        self.viewer.mouse_pressed = state == ElementState::Pressed;
+                    }
+                    MouseButton::Right => {
+                        self.viewer.right_mouse_pressed = state == ElementState::Pressed;
+                    }
+                    _ => {}
+                }
+            }
+            WindowEvent::CursorMoved { position, .. } => {
+                if let Some(last_pos) = self.viewer.last_mouse_pos {
+                    let delta_x = position.x - last_pos.x;
+                    let delta_y = position.y - last_pos.y;
+
+                    if self.viewer.mouse_pressed {
+                        match self.viewer.camera_mode {
+                            CameraMode::Orbit => {
+                                self.viewer.camera.orbit(delta_x as f32 * 0.01, delta_y as f32 * 0.01);
+                            }
+                            CameraMode::Pan => {
+                                self.viewer.camera.pan(delta_x as f32 * 0.01, delta_y as f32 * 0.01);
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                self.viewer.last_mouse_pos = Some(position);
+            }
+            WindowEvent::MouseWheel { delta, .. } => {
+                let scroll_delta = match delta {
+                    winit::event::MouseScrollDelta::LineDelta(_, y) => y,
+                    winit::event::MouseScrollDelta::PixelDelta(pos) => pos.y as f32 / 100.0,
+                };
+                self.viewer.camera.zoom(scroll_delta * 0.1);
+            }
+            WindowEvent::KeyboardInput { event, .. } => {
+                if event.state == ElementState::Pressed {
+                    match &event.logical_key {
+                        Key::Character(c) => {
+                            match c.as_str() {
+                                "o" | "O" => {
+                                    self.viewer.camera_mode = CameraMode::Orbit;
+                                    println!("Switched to Orbit mode");
+                                }
+                                "p" | "P" => {
+                                    self.viewer.camera_mode = CameraMode::Pan;
+                                    println!("Switched to Pan mode");
+                                }
+                                "z" | "Z" => {
+                                    self.viewer.camera_mode = CameraMode::Zoom;
+                                    println!("Switched to Zoom mode");
+                                }
+                                "r" | "R" => {
+                                    self.viewer.camera.reset();
+                                    println!("Reset camera");
+                                }
+                                _ => {}
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            WindowEvent::RedrawRequested => {
+                // Update camera matrices
+                let view_matrix = self.viewer.camera.view_matrix();
+                let proj_matrix = self.viewer.camera.projection_matrix();
+                let camera_pos = self.viewer.camera.position.coords;
+                point_renderer.update_camera(view_matrix, proj_matrix, camera_pos);
+                mesh_renderer.update_camera(view_matrix, proj_matrix, camera_pos);
+
+                // Convert current data
+                let vertices = match &self.viewer.current_data {
+                    ViewData::PointCloud(cloud) => {
+                        let mut vertices = Vec::new();
+                        for point in cloud.iter() {
+                            // Create a quad (2 triangles) for each point
+                            let size = 0.02; // Size of each point quad
+                            let pos = [point.x, point.y, point.z];
+                            let color = [1.0, 1.0, 1.0];
+                            let normal = [0.0, 0.0, 1.0];
+
+                            // Create 4 vertices for a quad
+                            let v1 = PointVertex::from_point(&Point3f::new(pos[0] - size, pos[1] - size, pos[2]), color, 16.0, normal);
+                            let v2 = PointVertex::from_point(&Point3f::new(pos[0] + size, pos[1] - size, pos[2]), color, 16.0, normal);
+                            let v3 = PointVertex::from_point(&Point3f::new(pos[0] + size, pos[1] + size, pos[2]), color, 16.0, normal);
+                            let v4 = PointVertex::from_point(&Point3f::new(pos[0] - size, pos[1] + size, pos[2]), color, 16.0, normal);
+
+                            // First triangle (v1, v2, v3)
+                            vertices.push(v1);
+                            vertices.push(v2);
+                            vertices.push(v3);
+
+                            // Second triangle (v1, v3, v4)
+                            vertices.push(v1);
+                            vertices.push(v3);
+                            vertices.push(v4);
+                        }
+                        vertices
+                    }
+                    ViewData::ColoredPointCloud(cloud) => {
+                        let mut vertices = Vec::new();
+                        for point in cloud.iter() {
+                            // Create a quad (2 triangles) for each point
+                            let size = 0.02; // Size of each point quad
+                            let pos = [point.position.x, point.position.y, point.position.z];
+                            let color = [
+                                point.color[0] as f32 / 255.0,
+                                point.color[1] as f32 / 255.0,
+                                point.color[2] as f32 / 255.0,
+                            ];
+                            let normal = [0.0, 0.0, 1.0];
+
+                            // Create 4 vertices for a quad
+                            let v1 = PointVertex::from_point(&Point3f::new(pos[0] - size, pos[1] - size, pos[2]), color, 16.0, normal);
+                            let v2 = PointVertex::from_point(&Point3f::new(pos[0] + size, pos[1] - size, pos[2]), color, 16.0, normal);
+                            let v3 = PointVertex::from_point(&Point3f::new(pos[0] + size, pos[1] + size, pos[2]), color, 16.0, normal);
+                            let v4 = PointVertex::from_point(&Point3f::new(pos[0] - size, pos[1] + size, pos[2]), color, 16.0, normal);
+
+                            // First triangle (v1, v2, v3)
+                            vertices.push(v1);
+                            vertices.push(v2);
+                            vertices.push(v3);
+
+                            // Second triangle (v1, v3, v4)
+                            vertices.push(v1);
+                            vertices.push(v3);
+                            vertices.push(v4);
+                        }
+                        vertices
+                    }
+                    ViewData::Mesh(_) => {
+                        // Mesh rendering handled separately
+                        vec![]
+                    }
+                    ViewData::Empty => {
+                        vec![]
+                    }
+                };
+
+                // Debug: Print vertex count periodically
+                if !vertices.is_empty() {
+                    if self.viewer.debug_frame_count % 60 == 0 {  // Print every 60 frames
+                        println!("Rendering {} vertices", vertices.len());
+                    }
+                }
+                self.viewer.debug_frame_count += 1;
+
+                match &self.viewer.current_data {
+                    ViewData::PointCloud(_) | ViewData::ColoredPointCloud(_) => {
+                        if !vertices.is_empty() {
+                            if let Err(e) = point_renderer.render(&vertices) {
+                                eprintln!("Render error: {}", e);
+                            }
+                        }
+                    }
+                    ViewData::Mesh(mesh) => {
+                        if !mesh.vertices.is_empty() && !mesh.faces.is_empty() {
+                            // Build index buffer from faces
+                            let indices: Vec<u32> = mesh
+                                .faces
+                                .iter()
+                                .flat_map(|f| [f[0] as u32, f[1] as u32, f[2] as u32])
+                                .collect();
+
+                            // Prepare optional normals
+                            let normals_opt = mesh.normals.as_ref().map(|n| n.as_slice());
+
+                            // Prepare optional colors as f32
+                            let colors_f32: Option<Vec<[f32; 3]>> = mesh.colors.as_ref().map(|cols| {
+                                cols.iter()
+                                    .map(|c| [c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0])
+                                    .collect()
+                            });
+                            let colors_opt = colors_f32.as_ref().map(|c| c.as_slice());
+
+                            // Convert to GPU mesh
+                            let gpu_mesh = mesh_to_gpu_mesh(
+                                &mesh.vertices,
+                                &indices,
+                                normals_opt,
+                                colors_opt,
+                                None,
+                            );
+
+                            if let Err(e) = mesh_renderer.render(&gpu_mesh, ShadingMode::Flat) {
+                                eprintln!("Mesh render error: {}", e);
+                            }
+                        }
+                    }
+                    ViewData::Empty => {}
+                }
+
+                // Request next frame
+                window.request_redraw();
+            }
+            _ => {}
+        }
+    }
+
+    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
+        if let Some(window) = &self.window {
+            window.request_redraw();
+        }
+    }
+}
+
