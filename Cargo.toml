@@ -64,7 +64,7 @@ pasture-core = "0.5"
 pasture-io = "0.5"
 
 # Visualization
-winit = "0.29"
+winit = "0.30"
 
 # Development
 criterion = { version = "0.7", features = ["html_reports"] }
