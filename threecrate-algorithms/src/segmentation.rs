@@ -4,6 +4,7 @@ use threecrate_core::{PointCloud, Result, Point3f, Vector3f, Error};
 use nalgebra::{Vector4};
 use rayon::prelude::*;
 use rand::prelude::*;
+use rand::thread_rng;
 use std::collections::HashSet;
 
 /// A 3D plane model defined by the equation ax + by + cz + d = 0
