@@ -67,7 +67,7 @@ pasture-io = "0.5"
 winit = "0.30"
 
 # Development
-criterion = { version = "0.7", features = ["html_reports"] }
+criterion = { version = "0.8", features = ["html_reports"] }
 
 clap = { version = "4.4", features = ["derive"] }
 bpa_rs = "0.1.3"
