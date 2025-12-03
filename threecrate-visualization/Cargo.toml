@@ -25,7 +25,7 @@ egui-winit = "0.33"
 egui-wgpu = "0.33"
 pollster = { workspace = true }
 tokio = { version = "1.0", features = ["rt-multi-thread"] }
-image = "0.24"
+image = "0.25"
 rfd = "0.16"  # Native file dialogs
 instant = "0.1"
 
