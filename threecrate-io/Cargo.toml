@@ -29,7 +29,7 @@ memmap2 = { version = "0.9", optional = true }
 
 [dev-dependencies]
 approx = { workspace = true }
-criterion = { version = "0.5", features = ["html_reports"] }
+criterion = { version = "0.8", features = ["html_reports"] }
 tempfile = "3.8"
 
 [[bench]]
