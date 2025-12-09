@@ -42,7 +42,7 @@ approx = "0.5"
 rayon = "1.10"
 kdtree = "0.8"
 kiddo = "5.2"
-ndarray = "0.16"
+ndarray = "0.17"
 itertools = "0.14"
 rand = "0.9"
 
