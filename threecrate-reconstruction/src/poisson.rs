@@ -66,16 +66,17 @@ pub fn poisson_reconstruction(
     }
 
     // Convert our data types to what the poisson_reconstruction crate expects using parallel processing
-    let points: Vec<nalgebra::Point3<f64>> = parallel::parallel_map(&cloud.points, |p| {
-        nalgebra::Point3::new(
+    // Note: poisson_reconstruction uses nalgebra 0.33, so we use nalgebra_compat
+    let points: Vec<nalgebra_compat::Point3<f64>> = parallel::parallel_map(&cloud.points, |p| {
+        nalgebra_compat::Point3::new(
             p.position.x as f64,
             p.position.y as f64,
             p.position.z as f64,
         )
     });
 
-    let normals: Vec<nalgebra::Vector3<f64>> = parallel::parallel_map(&cloud.points, |p| {
-        nalgebra::Vector3::new(p.normal.x as f64, p.normal.y as f64, p.normal.z as f64)
+    let normals: Vec<nalgebra_compat::Vector3<f64>> = parallel::parallel_map(&cloud.points, |p| {
+        nalgebra_compat::Vector3::new(p.normal.x as f64, p.normal.y as f64, p.normal.z as f64)
     });
 
     // Validate that normals are normalized
@@ -95,8 +96,8 @@ pub fn poisson_reconstruction(
 
     // Create Poisson reconstruction instance using correct API
     let poisson = poisson_reconstruction::PoissonReconstruction::from_points_and_normals(
-        &points,
-        &normals,
+        &points[..],
+        &normals[..],
         config.scale as f64, // screening parameter
         depth,               // depth (limited)
         cg_depth,            // max relaxation iterations (limited)

@@ -30,7 +30,7 @@ categories = ["graphics", "mathematics", "science"]
 
 [workspace.dependencies]
 # Core dependencies
-nalgebra = { version = "0.33", features = ["bytemuck"] }
+nalgebra = { version = "0.34", features = ["bytemuck"] }
 glam = "0.30"
 bytemuck = { version = "1.0", features = ["derive"] }
 serde = { version = "1.0", features = ["derive"] }
