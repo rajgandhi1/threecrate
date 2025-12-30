@@ -18,7 +18,7 @@ anyhow = { workspace = true }
 thiserror = { workspace = true }
 winit = { workspace = true }
 futures-intrusive = "0.5"
-flume = "0.11"
+flume = "0.12"
 
 [dev-dependencies]
 approx = { workspace = true }
