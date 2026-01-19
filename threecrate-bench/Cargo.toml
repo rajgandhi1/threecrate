@@ -1,0 +1,16 @@
+[package]
+name = "threecrate-bench"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+description = "Benchmarks utilities for threecrate"
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+criterion.workspace = true
+stats_alloc = "0.1.10"
