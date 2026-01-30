@@ -54,7 +54,7 @@ spade = "2.13"   # Delaunay triangulation and Voronoi diagrams
 poisson_reconstruction = "0.4"  # Poisson surface reconstruction
 
 # GPU computing
-wgpu = { version = "27.0.1", default-features = false, features = ["wgsl", "vulkan"] }
+wgpu = { version = "28.0.0", default-features = false, features = ["wgsl", "vulkan"] }
 pollster = "0.4"
 
 # I/O
