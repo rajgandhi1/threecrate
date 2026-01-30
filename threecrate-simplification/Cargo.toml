@@ -20,4 +20,9 @@ thiserror = { workspace = true }
 priority-queue = "2.1"
 
 [dev-dependencies]
-approx = { workspace = true } 
+approx = { workspace = true }
+criterion = { version = "0.8", features = ["html_reports"] }
+
+[[bench]]
+name = "simplification_benchmarks"
+harness = false
