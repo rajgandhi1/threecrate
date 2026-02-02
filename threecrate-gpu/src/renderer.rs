@@ -5,6 +5,67 @@ use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
 use winit::window::Window;
 
+/// Instance data for instanced point cloud rendering (position + color per point)
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+pub struct PointInstanceData {
+    pub position: [f32; 3],
+    pub color: [f32; 3],
+}
+
+impl PointInstanceData {
+    /// Vertex buffer layout for instance buffer
+    pub fn instance_desc<'a>() -> wgpu::VertexBufferLayout<'a> {
+        wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<PointInstanceData>() as wgpu::BufferAddress,
+            step_mode: wgpu::VertexStepMode::Instance,
+            attributes: &[
+                wgpu::VertexAttribute {
+                    offset: 0,
+                    shader_location: 1,
+                    format: wgpu::VertexFormat::Float32x3,
+                },
+                wgpu::VertexAttribute {
+                    offset: std::mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
+                    shader_location: 2,
+                    format: wgpu::VertexFormat::Float32x3,
+                },
+            ],
+        }
+    }
+}
+
+/// Unit quad vertex for instanced rendering (offset from center in XY plane)
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+struct QuadVertex {
+    offset: [f32; 3],
+}
+
+impl QuadVertex {
+    fn desc<'a>() -> wgpu::VertexBufferLayout<'a> {
+        wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<QuadVertex>() as wgpu::BufferAddress,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &[wgpu::VertexAttribute {
+                offset: 0,
+                shader_location: 0,
+                format: wgpu::VertexFormat::Float32x3,
+            }],
+        }
+    }
+}
+
+/// Unit quad vertices and indices for instanced point rendering
+const QUAD_VERTICES: [QuadVertex; 4] = [
+    QuadVertex { offset: [-0.5, -0.5, 0.0] },
+    QuadVertex { offset: [0.5, -0.5, 0.0] },
+    QuadVertex { offset: [0.5, 0.5, 0.0] },
+    QuadVertex { offset: [-0.5, 0.5, 0.0] },
+];
+
+const QUAD_INDICES: [u32; 6] = [0, 1, 2, 0, 2, 3];
+
 /// Vertex data for point cloud rendering with normals
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
@@ -141,6 +202,9 @@ pub struct PointCloudRenderer<'window> {
     pub surface: wgpu::Surface<'window>,
     pub surface_config: wgpu::SurfaceConfiguration,
     pub render_pipeline: wgpu::RenderPipeline,
+    pub render_pipeline_instanced: wgpu::RenderPipeline,
+    pub quad_vertex_buffer: wgpu::Buffer,
+    pub quad_index_buffer: wgpu::Buffer,
     pub camera_uniform: CameraUniform,
     pub camera_buffer: wgpu::Buffer,
     pub render_params: RenderParams,
@@ -330,11 +394,85 @@ impl<'window> PointCloudRenderer<'window> {
             cache: None,
         });
 
+        // Create quad vertex and index buffers for instanced rendering
+        let quad_vertex_buffer = gpu_context.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Quad Vertex Buffer"),
+            contents: bytemuck::cast_slice(&QUAD_VERTICES),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+
+        let quad_index_buffer = gpu_context.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Quad Index Buffer"),
+            contents: bytemuck::cast_slice(&QUAD_INDICES),
+            usage: wgpu::BufferUsages::INDEX,
+        });
+
+        // Create instanced render pipeline
+        let shader_instanced = gpu_context.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Point Cloud Instanced Shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/point_cloud_instanced.wgsl").into()),
+        });
+
+        let render_pipeline_instanced = gpu_context.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Point Cloud Instanced Render Pipeline"),
+            layout: Some(&render_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader_instanced,
+                entry_point: Some("vs_main"),
+                buffers: &[QuadVertex::desc(), PointInstanceData::instance_desc()],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader_instanced,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: surface_config.format,
+                    blend: if config.enable_alpha_blending {
+                        Some(wgpu::BlendState::ALPHA_BLENDING)
+                    } else {
+                        Some(wgpu::BlendState::REPLACE)
+                    },
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: None,
+                unclipped_depth: false,
+                polygon_mode: wgpu::PolygonMode::Fill,
+                conservative: false,
+            },
+            depth_stencil: if config.enable_depth_test {
+                Some(wgpu::DepthStencilState {
+                    format: wgpu::TextureFormat::Depth32Float,
+                    depth_write_enabled: true,
+                    depth_compare: wgpu::CompareFunction::Less,
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState::default(),
+                })
+            } else {
+                None
+            },
+            multisample: wgpu::MultisampleState {
+                count: sample_count,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            multiview: None,
+            cache: None,
+        });
+
         Ok(Self {
             gpu_context,
             surface,
             surface_config,
             render_pipeline,
+            render_pipeline_instanced,
+            quad_vertex_buffer,
+            quad_index_buffer,
             camera_uniform,
             camera_buffer,
             render_params,
@@ -492,6 +630,114 @@ impl<'window> PointCloudRenderer<'window> {
 
         Ok(())
     }
+
+    /// Render point cloud using instanced rendering (efficient for large point clouds)
+    pub fn render_instanced(&self, instances: &[PointInstanceData]) -> Result<()> {
+        if instances.is_empty() {
+            return Ok(());
+        }
+
+        let instance_buffer = self.gpu_context.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Point Cloud Instance Buffer"),
+            contents: bytemuck::cast_slice(instances),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+
+        let depth_texture = self.create_depth_texture();
+        let depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let output = self.surface.get_current_texture()
+            .map_err(|e| Error::Gpu(format!("Failed to get surface texture: {:?}", e)))?;
+
+        let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let mut encoder = self.gpu_context.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Point Cloud Instanced Render Encoder"),
+        });
+
+        let (color_attachment, resolve_target) = if let Some(ref msaa_view) = self.msaa_view {
+            (msaa_view, Some(&view))
+        } else {
+            (&view, None)
+        };
+
+        {
+            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Point Cloud Instanced Render Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: color_attachment,
+                    resolve_target,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: self.config.background_color[0],
+                            g: self.config.background_color[1],
+                            b: self.config.background_color[2],
+                            a: self.config.background_color[3],
+                        }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: if self.config.enable_depth_test {
+                    Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &depth_view,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(1.0),
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    })
+                } else {
+                    None
+                },
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+
+            render_pass.set_pipeline(&self.render_pipeline_instanced);
+            render_pass.set_bind_group(0, &self.bind_group, &[]);
+            render_pass.set_vertex_buffer(0, self.quad_vertex_buffer.slice(..));
+            render_pass.set_vertex_buffer(1, instance_buffer.slice(..));
+            render_pass.set_index_buffer(self.quad_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            render_pass.draw_indexed(0..6, 0, 0..instances.len() as u32);
+        }
+
+        self.gpu_context.queue.submit(std::iter::once(encoder.finish()));
+        output.present();
+
+        Ok(())
+    }
+}
+
+/// Convert point cloud to instance data for instanced rendering (no normal estimation)
+pub fn point_cloud_to_instance_data(
+    cloud: &PointCloud<Point3f>,
+    color: [f32; 3],
+) -> Vec<PointInstanceData> {
+    cloud.points
+        .iter()
+        .map(|p| PointInstanceData {
+            position: [p.x, p.y, p.z],
+            color,
+        })
+        .collect()
+}
+
+/// Convert colored point cloud to instance data for instanced rendering
+pub fn colored_point_cloud_to_instance_data(
+    cloud: &PointCloud<ColoredPoint3f>,
+) -> Vec<PointInstanceData> {
+    cloud.points
+        .iter()
+        .map(|p| PointInstanceData {
+            position: [p.position.x, p.position.y, p.position.z],
+            color: [
+                p.color[0] as f32 / 255.0,
+                p.color[1] as f32 / 255.0,
+                p.color[2] as f32 / 255.0,
+            ],
+        })
+        .collect()
 }
 
 /// Convert point cloud to vertices with estimated normals
