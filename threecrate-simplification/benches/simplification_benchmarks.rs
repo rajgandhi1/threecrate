@@ -1,8 +1,10 @@
-//! Benchmarks comparing EdgeCollapseSimplifier vs QuadricErrorSimplifier
+//! Benchmarks comparing EdgeCollapseSimplifier vs QuadricErrorSimplifier vs ClusteringSimplifier
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use threecrate_core::{Point3f, TriangleMesh};
-use threecrate_simplification::{EdgeCollapseSimplifier, MeshSimplifier, QuadricErrorSimplifier};
+use threecrate_simplification::{
+    ClusteringSimplifier, EdgeCollapseSimplifier, MeshSimplifier, QuadricErrorSimplifier,
+};
 
 fn generate_grid_mesh(size: usize) -> TriangleMesh {
     let mut vertices = Vec::with_capacity(size * size);
@@ -65,6 +67,21 @@ fn bench_simplification(c: &mut Criterion) {
                 &(&mesh, ratio),
                 |b, &(mesh, ratio)| {
                     let simplifier = QuadricErrorSimplifier::new();
+                    b.iter(|| {
+                        let result = simplifier.simplify(black_box(mesh), ratio).unwrap();
+                        black_box(result);
+                    });
+                },
+            );
+
+            group.bench_with_input(
+                BenchmarkId::new(
+                    "clustering",
+                    format!("{}f_r{}", face_count, (ratio * 100.0) as u32),
+                ),
+                &(&mesh, ratio),
+                |b, &(mesh, ratio)| {
+                    let simplifier = ClusteringSimplifier::new();
                     b.iter(|| {
                         let result = simplifier.simplify(black_box(mesh), ratio).unwrap();
                         black_box(result);
