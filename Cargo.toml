@@ -9,7 +9,8 @@ members = [
     "threecrate-reconstruction",
     "threecrate-simplification",
     "threecrate-visualization",
-    "examples"
+    "examples",
+    "threecrate-bench"
 ]
 
 exclude = [

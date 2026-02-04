@@ -20,6 +20,18 @@ thiserror = { workspace = true }
 priority-queue = "2.1"
 
 [dev-dependencies]
+approx = { workspace = true } 
+criterion.workspace = true
+threecrate-bench = { path = "../threecrate-bench" }
+threecrate-io = { path = "../threecrate-io" }
+
+[[bench]]
+name = "quadric_error"
+harness = false
+
+[[bench]]
+name = "quadric_error_mem"
+harness = false
 approx = { workspace = true }
 criterion = { version = "0.8", features = ["html_reports"] }
 
