@@ -15,8 +15,7 @@ impl Measurement for AllocationSize {
     type Value = usize;
 
     fn start(&self) -> Self::Intermediate {
-        let stats = INSTRUMENTED_SYSTEM.stats();
-        stats.bytes_allocated - stats.bytes_deallocated
+        INSTRUMENTED_SYSTEM.stats().bytes_allocated
     }
 
     fn end(&self, i: Self::Intermediate) -> Self::Value {
@@ -44,19 +43,19 @@ struct AllocationSizeFormatter;
 
 
 impl ValueFormatter for AllocationSizeFormatter {
-    fn scale_values(&self, tipycal_value: f64, values: &mut [f64]) -> &'static str {
-        let magnitude = tipycal_value.log(2.0).floor() as i32 / 10;
+    fn scale_values(&self, typical_value: f64, values: &mut [f64]) -> &'static str {
+        let magnitude = typical_value.log(2.0).floor() as i32 / 10;
         let factor = 1.0 / 1024.0_f64.powi(magnitude);
 
         for value in values {
             *value *= factor;
         }
         match magnitude {
-            ..=1 => "B",
-            2 => "KiB",
-            3 => "MiB",
-            4 => "GiB",
-            5 => "TiB",
+            ..=0 => "B",
+            1 => "KiB",
+            2 => "MiB",
+            3 => "GiB",
+            4 => "TiB",
             _ => "a lot of bytes"
         }
     }

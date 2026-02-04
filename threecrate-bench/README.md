@@ -10,7 +10,7 @@ Benchmarks utilities for ThreeCrate.
 
 1. Add this crate to dev-dependencies
 2. Create benchmark
-   1. Create direcroty `benches`
+   1. Create directory `benches`
    2. Create file `benches/<bench_name>.rs`
    3. Add bench with name `<bench_name>` to `Cargo.toml` with `harness=false`
 

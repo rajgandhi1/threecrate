@@ -38,6 +38,6 @@ criterion_group!{
 }
 
 criterion_main!(
-    allocations, 
+    allocations,
     allocation_size,
 );
