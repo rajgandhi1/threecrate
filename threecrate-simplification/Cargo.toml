@@ -32,3 +32,9 @@ harness = false
 [[bench]]
 name = "quadric_error_mem"
 harness = false
+approx = { workspace = true }
+criterion = { version = "0.8", features = ["html_reports"] }
+
+[[bench]]
+name = "simplification_benchmarks"
+harness = false

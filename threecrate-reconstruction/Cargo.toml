@@ -13,6 +13,7 @@ description = "Surface reconstruction algorithms for threecrate"
 threecrate-core = { path = "../threecrate-core", version = "0.5.0" }
 threecrate-algorithms = { path = "../threecrate-algorithms", version = "0.5.0" }
 nalgebra = { workspace = true }
+nalgebra_compat = { package = "nalgebra", version = "0.33" }
 ndarray = { workspace = true }
 rayon = { workspace = true }
 itertools = { workspace = true }
@@ -23,7 +24,7 @@ poisson_reconstruction = { workspace = true }
 rstar = { workspace = true }
 kiddo = { workspace = true }
 bpa_rs = { workspace = true }
-glam = "0.30"
+glam = "0.31"
 num_cpus = "1.16"
 
 [dev-dependencies]

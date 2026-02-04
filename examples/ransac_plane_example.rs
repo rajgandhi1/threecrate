@@ -6,6 +6,7 @@
 use threecrate_core::{PointCloud, Point3f};
 use threecrate_algorithms::{segment_plane_ransac, plane_segmentation_ransac};
 use rand::prelude::*;
+use rand::thread_rng;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== RANSAC Plane Segmentation Example ===\n");
