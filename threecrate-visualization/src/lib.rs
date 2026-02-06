@@ -8,14 +8,10 @@
 //! - Camera controls
 //! - Algorithm parameter controls
 
-pub mod viewer;
-pub mod renderer;
 pub mod camera;
 pub mod shaders;
 pub mod interactive_viewer;
 
-pub use viewer::*;
-pub use renderer::*;
 pub use camera::*;
 pub use interactive_viewer::*;
 
