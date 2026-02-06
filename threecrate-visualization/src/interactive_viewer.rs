@@ -14,7 +14,8 @@ use winit::{
 
 use threecrate_core::{PointCloud, TriangleMesh, Result, Point3f, ColoredPoint3f, Error};
 use threecrate_gpu::{
-    PointCloudRenderer, RenderConfig, PointVertex,
+    PointCloudRenderer, RenderConfig, RenderParams,
+    point_cloud_to_instance_data, colored_point_cloud_to_instance_data,
     MeshRenderer, MeshRenderConfig, ShadingMode, mesh_to_gpu_mesh,
 };
 use threecrate_algorithms::{ICPResult, PlaneSegmentationResult};
@@ -230,8 +231,9 @@ impl ApplicationHandler for ViewerApp {
                 std::mem::transmute::<&Window, &'static Window>(window.as_ref())
             };
 
-            // Initialize renderers using the static reference
-            let pc_config = RenderConfig::default();
+            // Initialize renderers: use small point size for instanced rendering
+            let mut pc_config = RenderConfig::default();
+            pc_config.render_params.point_size = 0.04;
             let point_renderer = match pollster::block_on(PointCloudRenderer::new(window_ref, pc_config)) {
                 Ok(r) => r,
                 Err(e) => {
@@ -346,87 +348,26 @@ impl ApplicationHandler for ViewerApp {
                 point_renderer.update_camera(view_matrix, proj_matrix, camera_pos);
                 mesh_renderer.update_camera(view_matrix, proj_matrix, camera_pos);
 
-                // Convert current data
-                let vertices = match &self.viewer.current_data {
+                // Convert point cloud to instance data for instanced rendering
+                let instance_data = match &self.viewer.current_data {
                     ViewData::PointCloud(cloud) => {
-                        let mut vertices = Vec::new();
-                        for point in cloud.iter() {
-                            // Create a quad (2 triangles) for each point
-                            let size = 0.02; // Size of each point quad
-                            let pos = [point.x, point.y, point.z];
-                            let color = [1.0, 1.0, 1.0];
-                            let normal = [0.0, 0.0, 1.0];
-
-                            // Create 4 vertices for a quad
-                            let v1 = PointVertex::from_point(&Point3f::new(pos[0] - size, pos[1] - size, pos[2]), color, 16.0, normal);
-                            let v2 = PointVertex::from_point(&Point3f::new(pos[0] + size, pos[1] - size, pos[2]), color, 16.0, normal);
-                            let v3 = PointVertex::from_point(&Point3f::new(pos[0] + size, pos[1] + size, pos[2]), color, 16.0, normal);
-                            let v4 = PointVertex::from_point(&Point3f::new(pos[0] - size, pos[1] + size, pos[2]), color, 16.0, normal);
-
-                            // First triangle (v1, v2, v3)
-                            vertices.push(v1);
-                            vertices.push(v2);
-                            vertices.push(v3);
-
-                            // Second triangle (v1, v3, v4)
-                            vertices.push(v1);
-                            vertices.push(v3);
-                            vertices.push(v4);
-                        }
-                        vertices
+                        point_cloud_to_instance_data(cloud, [1.0, 1.0, 1.0])
                     }
                     ViewData::ColoredPointCloud(cloud) => {
-                        let mut vertices = Vec::new();
-                        for point in cloud.iter() {
-                            // Create a quad (2 triangles) for each point
-                            let size = 0.02; // Size of each point quad
-                            let pos = [point.position.x, point.position.y, point.position.z];
-                            let color = [
-                                point.color[0] as f32 / 255.0,
-                                point.color[1] as f32 / 255.0,
-                                point.color[2] as f32 / 255.0,
-                            ];
-                            let normal = [0.0, 0.0, 1.0];
-
-                            // Create 4 vertices for a quad
-                            let v1 = PointVertex::from_point(&Point3f::new(pos[0] - size, pos[1] - size, pos[2]), color, 16.0, normal);
-                            let v2 = PointVertex::from_point(&Point3f::new(pos[0] + size, pos[1] - size, pos[2]), color, 16.0, normal);
-                            let v3 = PointVertex::from_point(&Point3f::new(pos[0] + size, pos[1] + size, pos[2]), color, 16.0, normal);
-                            let v4 = PointVertex::from_point(&Point3f::new(pos[0] - size, pos[1] + size, pos[2]), color, 16.0, normal);
-
-                            // First triangle (v1, v2, v3)
-                            vertices.push(v1);
-                            vertices.push(v2);
-                            vertices.push(v3);
-
-                            // Second triangle (v1, v3, v4)
-                            vertices.push(v1);
-                            vertices.push(v3);
-                            vertices.push(v4);
-                        }
-                        vertices
+                        colored_point_cloud_to_instance_data(cloud)
                     }
-                    ViewData::Mesh(_) => {
-                        // Mesh rendering handled separately
-                        vec![]
-                    }
-                    ViewData::Empty => {
-                        vec![]
-                    }
+                    ViewData::Mesh(_) | ViewData::Empty => Vec::new(),
                 };
 
-                // Debug: Print vertex count periodically
-                if !vertices.is_empty() {
-                    if self.viewer.debug_frame_count % 60 == 0 {  // Print every 60 frames
-                        println!("Rendering {} vertices", vertices.len());
-                    }
+                if self.viewer.debug_frame_count % 60 == 0 && !instance_data.is_empty() {
+                    println!("Rendering {} points (instanced)", instance_data.len());
                 }
                 self.viewer.debug_frame_count += 1;
 
                 match &self.viewer.current_data {
                     ViewData::PointCloud(_) | ViewData::ColoredPointCloud(_) => {
-                        if !vertices.is_empty() {
-                            if let Err(e) = point_renderer.render(&vertices) {
+                        if !instance_data.is_empty() {
+                            if let Err(e) = point_renderer.render_instanced(&instance_data) {
                                 eprintln!("Render error: {}", e);
                             }
                         }
