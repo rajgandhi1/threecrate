@@ -505,7 +505,7 @@ impl<'window> MeshRenderer<'window> {
         let render_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some(&format!("{} Mesh Render Pipeline Layout", label)),
             bind_group_layouts: &[bind_group_layout],
-            push_constant_ranges: &[],
+            immediate_size: 0,
         });
 
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -560,7 +560,7 @@ impl<'window> MeshRenderer<'window> {
                 mask: !0,
                 alpha_to_coverage_enabled: false,
             },
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         })
     }
@@ -750,6 +750,7 @@ impl<'window> MeshRenderer<'window> {
                 },
                 timestamp_writes: None,
                 occlusion_query_set: None,
+                multiview_mask: None,
             });
 
             let pipeline = match shading_mode {

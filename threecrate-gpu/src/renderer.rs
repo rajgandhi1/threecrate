@@ -275,7 +275,7 @@ impl<'window> PointCloudRenderer<'window> {
         let render_pipeline_layout = gpu_context.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Point Cloud Render Pipeline Layout"),
             bind_group_layouts: &[&bind_group_layout],
-            push_constant_ranges: &[],
+            immediate_size: 0,
         });
 
         let render_pipeline = gpu_context.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -326,7 +326,7 @@ impl<'window> PointCloudRenderer<'window> {
                 mask: !0,
                 alpha_to_coverage_enabled: false,
             },
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         });
 
@@ -479,6 +479,7 @@ impl<'window> PointCloudRenderer<'window> {
                 },
                 timestamp_writes: None,
                 occlusion_query_set: None,
+                multiview_mask: None,
             });
 
             render_pass.set_pipeline(&self.render_pipeline);

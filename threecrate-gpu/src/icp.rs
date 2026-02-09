@@ -341,7 +341,7 @@ impl GpuContext {
             layout: Some(&self.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Centroid Layout"),
                 bind_group_layouts: &[&bind_group_layout],
-                push_constant_ranges: &[],
+                immediate_size: 0,
             })),
             module: &shader,
             entry_point: Some("main"),
@@ -583,7 +583,7 @@ impl GpuContext {
             layout: Some(&self.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("ICP Pipeline Layout"),
                 bind_group_layouts: &[&bind_group_layout],
-                push_constant_ranges: &[],
+                immediate_size: 0,
             })),
             module: &shader,
             entry_point: Some("main"),
