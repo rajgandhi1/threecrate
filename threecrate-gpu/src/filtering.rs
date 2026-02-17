@@ -285,7 +285,7 @@ impl GpuContext {
             layout: Some(&self.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Outlier Filter Layout"),
                 bind_group_layouts: &[&bind_group_layout],
-                push_constant_ranges: &[],
+                immediate_size: 0,
             })),
             module: &shader,
             entry_point: Some("main"),
@@ -516,7 +516,7 @@ impl GpuContext {
             layout: Some(&self.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Radius Outlier Filter Layout"),
                 bind_group_layouts: &[&bind_group_layout],
-                push_constant_ranges: &[],
+                immediate_size: 0,
             })),
             module: &shader,
             entry_point: Some("main"),
@@ -739,7 +739,7 @@ impl GpuContext {
             layout: Some(&self.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Voxel Grid Filter Layout"),
                 bind_group_layouts: &[&bind_group_layout],
-                push_constant_ranges: &[],
+                immediate_size: 0,
             })),
             module: &shader,
             entry_point: Some("main"),
