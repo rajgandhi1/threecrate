@@ -1,6 +1,7 @@
 //! GPU-accelerated mesh rendering with PBR and flat shading
 
 use threecrate_core::{Result, Error};
+use threecrate_simplification::ProgressiveMesh;
 use crate::GpuContext;
 use nalgebra::{Matrix4, Vector3, Point3};
 use bytemuck::{Pod, Zeroable};
@@ -803,4 +804,87 @@ pub fn mesh_to_gpu_mesh(
         indices.to_vec(),
         material.unwrap_or_default(),
     )
-} 
+}
+
+/// Pre-computed LOD levels for a mesh, generated from a progressive mesh.
+///
+/// Levels are ordered from coarsest (index 0) to finest (last index).
+/// Use `select_level` to pick the appropriate LOD for a given camera distance.
+pub struct LodMesh {
+    /// GPU meshes at each LOD level, index 0 = coarsest
+    pub levels: Vec<GpuMesh>,
+    /// Distance thresholds for switching between levels.
+    /// `thresholds[i]` is the maximum distance at which `levels[i+1]` should be used.
+    pub thresholds: Vec<f32>,
+}
+
+impl LodMesh {
+    /// Create LOD levels by sampling the progressive mesh at evenly-spaced detail ratios.
+    ///
+    /// `num_levels` is the total number of LOD levels to generate (minimum 2).
+    pub fn from_progressive_mesh(pm: &ProgressiveMesh, num_levels: usize) -> Self {
+        let num_levels = num_levels.max(2);
+
+        let levels: Vec<GpuMesh> = (0..num_levels)
+            .map(|i| {
+                let ratio = i as f32 / (num_levels - 1) as f32;
+                let mesh = pm.reconstruct_at_ratio(ratio);
+                triangle_mesh_to_gpu_mesh(&mesh)
+            })
+            .collect();
+
+        // Generate default distance thresholds (evenly spaced)
+        let thresholds: Vec<f32> = (0..num_levels.saturating_sub(1))
+            .map(|i| {
+                let t = (num_levels - 1 - i) as f32 / (num_levels - 1) as f32;
+                t * 100.0
+            })
+            .collect();
+
+        LodMesh { levels, thresholds }
+    }
+
+    /// Select the appropriate LOD level for a given camera distance.
+    ///
+    /// Returns the coarsest mesh that still looks acceptable at the given distance.
+    /// Closer distances get finer detail; farther distances get coarser meshes.
+    pub fn select_level(&self, distance: f32) -> &GpuMesh {
+        for (i, &threshold) in self.thresholds.iter().enumerate() {
+            if distance > threshold {
+                return &self.levels[i];
+            }
+        }
+        // Closest distance: return finest level
+        self.levels.last().unwrap_or(&self.levels[0])
+    }
+
+    /// Number of LOD levels.
+    pub fn num_levels(&self) -> usize {
+        self.levels.len()
+    }
+}
+
+/// Convert a `TriangleMesh` to a `GpuMesh` with default material.
+fn triangle_mesh_to_gpu_mesh(mesh: &threecrate_core::TriangleMesh) -> GpuMesh {
+    let normals_slice = mesh.normals.as_deref();
+    let colors_f32: Option<Vec<[f32; 3]>> = mesh.colors.as_ref().map(|colors| {
+        colors
+            .iter()
+            .map(|c| [c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0])
+            .collect()
+    });
+
+    let indices: Vec<u32> = mesh
+        .faces
+        .iter()
+        .flat_map(|f| [f[0] as u32, f[1] as u32, f[2] as u32])
+        .collect();
+
+    mesh_to_gpu_mesh(
+        &mesh.vertices,
+        &indices,
+        normals_slice,
+        colors_f32.as_deref(),
+        None,
+    )
+}

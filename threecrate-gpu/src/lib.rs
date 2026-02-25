@@ -55,7 +55,8 @@ pub use renderer::{
     point_cloud_to_vertices, point_cloud_to_vertices_colored, colored_point_cloud_to_vertices
 };
 pub use mesh::{
-    MeshRenderer, MeshVertex, MeshCameraUniform, PbrMaterial, FlatMaterial, 
-    MeshLightingParams, MeshRenderConfig, GpuMesh, ShadingMode, mesh_to_gpu_mesh
+    MeshRenderer, MeshVertex, MeshCameraUniform, PbrMaterial, FlatMaterial,
+    MeshLightingParams, MeshRenderConfig, GpuMesh, ShadingMode, mesh_to_gpu_mesh,
+    LodMesh
 };
 pub use utils::*; 

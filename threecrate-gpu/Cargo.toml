@@ -14,6 +14,7 @@ threecrate-core = { path = "../threecrate-core", version = "0.5.0", features = [
 wgpu = { workspace = true }
 bytemuck = { workspace = true }
 nalgebra = { workspace = true }
+threecrate-simplification = { path = "../threecrate-simplification", version = "0.5.0" }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 winit = { workspace = true }

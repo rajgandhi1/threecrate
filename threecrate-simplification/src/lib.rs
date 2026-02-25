@@ -9,10 +9,12 @@
 pub mod quadric_error;
 pub mod edge_collapse;
 pub mod clustering;
+pub mod progressive;
 
 pub use quadric_error::*;
 pub use edge_collapse::*;
 pub use clustering::*;
+pub use progressive::*;
 
 use threecrate_core::{TriangleMesh, Result};
 
