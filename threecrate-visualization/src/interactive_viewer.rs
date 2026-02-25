@@ -121,6 +121,7 @@ pub struct InteractiveViewer {
     mouse_pressed: bool,
     right_mouse_pressed: bool,
     debug_frame_count: usize,
+    vertices_dirty: bool,
 }
 
 impl InteractiveViewer {
@@ -144,24 +145,28 @@ impl InteractiveViewer {
             mouse_pressed: false,
             right_mouse_pressed: false,
             debug_frame_count: 0,
+            vertices_dirty: true,
         })
     }
 
     /// Set point cloud data
     pub fn set_point_cloud(&mut self, cloud: &PointCloud<Point3f>) {
         self.current_data = ViewData::PointCloud(cloud.clone());
+        self.vertices_dirty = true;
         println!("Set point cloud with {} points", cloud.len());
     }
 
     /// Set colored point cloud data
     pub fn set_colored_point_cloud(&mut self, cloud: &PointCloud<ColoredPoint3f>) {
         self.current_data = ViewData::ColoredPointCloud(cloud.clone());
+        self.vertices_dirty = true;
         println!("Set colored point cloud with {} points", cloud.len());
     }
 
     /// Set mesh data
     pub fn set_mesh(&mut self, mesh: &TriangleMesh) {
         self.current_data = ViewData::Mesh(mesh.clone());
+        self.vertices_dirty = true;
         println!("Set mesh with {} vertices and {} faces", mesh.vertices.len(), mesh.faces.len());
     }
 
@@ -178,6 +183,7 @@ impl InteractiveViewer {
             window: None,
             point_renderer: None,
             mesh_renderer: None,
+            cached_vertices: Vec::new(),
         };
 
         // Run the event loop
@@ -199,6 +205,7 @@ struct ViewerApp {
     window: Option<Arc<Window>>,
     point_renderer: Option<PointCloudRenderer<'static>>,
     mesh_renderer: Option<MeshRenderer<'static>>,
+    cached_vertices: Vec<PointVertex>,
 }
 
 impl ApplicationHandler for ViewerApp {
@@ -346,87 +353,74 @@ impl ApplicationHandler for ViewerApp {
                 point_renderer.update_camera(view_matrix, proj_matrix, camera_pos);
                 mesh_renderer.update_camera(view_matrix, proj_matrix, camera_pos);
 
-                // Convert current data
-                let vertices = match &self.viewer.current_data {
-                    ViewData::PointCloud(cloud) => {
-                        let mut vertices = Vec::new();
-                        for point in cloud.iter() {
-                            // Create a quad (2 triangles) for each point
-                            let size = 0.02; // Size of each point quad
-                            let pos = [point.x, point.y, point.z];
-                            let color = [1.0, 1.0, 1.0];
-                            let normal = [0.0, 0.0, 1.0];
+                // Rebuild quad vertices only when data has changed
+                if self.viewer.vertices_dirty {
+                    self.cached_vertices = match &self.viewer.current_data {
+                        ViewData::PointCloud(cloud) => {
+                            let mut vertices = Vec::with_capacity(cloud.len() * 6);
+                            for point in cloud.iter() {
+                                let size = 0.02;
+                                let pos = [point.x, point.y, point.z];
+                                let color = [1.0, 1.0, 1.0];
+                                let normal = [0.0, 0.0, 1.0];
 
-                            // Create 4 vertices for a quad
-                            let v1 = PointVertex::from_point(&Point3f::new(pos[0] - size, pos[1] - size, pos[2]), color, 16.0, normal);
-                            let v2 = PointVertex::from_point(&Point3f::new(pos[0] + size, pos[1] - size, pos[2]), color, 16.0, normal);
-                            let v3 = PointVertex::from_point(&Point3f::new(pos[0] + size, pos[1] + size, pos[2]), color, 16.0, normal);
-                            let v4 = PointVertex::from_point(&Point3f::new(pos[0] - size, pos[1] + size, pos[2]), color, 16.0, normal);
+                                let v1 = PointVertex::from_point(&Point3f::new(pos[0] - size, pos[1] - size, pos[2]), color, 16.0, normal);
+                                let v2 = PointVertex::from_point(&Point3f::new(pos[0] + size, pos[1] - size, pos[2]), color, 16.0, normal);
+                                let v3 = PointVertex::from_point(&Point3f::new(pos[0] + size, pos[1] + size, pos[2]), color, 16.0, normal);
+                                let v4 = PointVertex::from_point(&Point3f::new(pos[0] - size, pos[1] + size, pos[2]), color, 16.0, normal);
 
-                            // First triangle (v1, v2, v3)
-                            vertices.push(v1);
-                            vertices.push(v2);
-                            vertices.push(v3);
-
-                            // Second triangle (v1, v3, v4)
-                            vertices.push(v1);
-                            vertices.push(v3);
-                            vertices.push(v4);
+                                vertices.push(v1);
+                                vertices.push(v2);
+                                vertices.push(v3);
+                                vertices.push(v1);
+                                vertices.push(v3);
+                                vertices.push(v4);
+                            }
+                            vertices
                         }
-                        vertices
-                    }
-                    ViewData::ColoredPointCloud(cloud) => {
-                        let mut vertices = Vec::new();
-                        for point in cloud.iter() {
-                            // Create a quad (2 triangles) for each point
-                            let size = 0.02; // Size of each point quad
-                            let pos = [point.position.x, point.position.y, point.position.z];
-                            let color = [
-                                point.color[0] as f32 / 255.0,
-                                point.color[1] as f32 / 255.0,
-                                point.color[2] as f32 / 255.0,
-                            ];
-                            let normal = [0.0, 0.0, 1.0];
+                        ViewData::ColoredPointCloud(cloud) => {
+                            let mut vertices = Vec::with_capacity(cloud.len() * 6);
+                            for point in cloud.iter() {
+                                let size = 0.02;
+                                let pos = [point.position.x, point.position.y, point.position.z];
+                                let color = [
+                                    point.color[0] as f32 / 255.0,
+                                    point.color[1] as f32 / 255.0,
+                                    point.color[2] as f32 / 255.0,
+                                ];
+                                let normal = [0.0, 0.0, 1.0];
 
-                            // Create 4 vertices for a quad
-                            let v1 = PointVertex::from_point(&Point3f::new(pos[0] - size, pos[1] - size, pos[2]), color, 16.0, normal);
-                            let v2 = PointVertex::from_point(&Point3f::new(pos[0] + size, pos[1] - size, pos[2]), color, 16.0, normal);
-                            let v3 = PointVertex::from_point(&Point3f::new(pos[0] + size, pos[1] + size, pos[2]), color, 16.0, normal);
-                            let v4 = PointVertex::from_point(&Point3f::new(pos[0] - size, pos[1] + size, pos[2]), color, 16.0, normal);
+                                let v1 = PointVertex::from_point(&Point3f::new(pos[0] - size, pos[1] - size, pos[2]), color, 16.0, normal);
+                                let v2 = PointVertex::from_point(&Point3f::new(pos[0] + size, pos[1] - size, pos[2]), color, 16.0, normal);
+                                let v3 = PointVertex::from_point(&Point3f::new(pos[0] + size, pos[1] + size, pos[2]), color, 16.0, normal);
+                                let v4 = PointVertex::from_point(&Point3f::new(pos[0] - size, pos[1] + size, pos[2]), color, 16.0, normal);
 
-                            // First triangle (v1, v2, v3)
-                            vertices.push(v1);
-                            vertices.push(v2);
-                            vertices.push(v3);
-
-                            // Second triangle (v1, v3, v4)
-                            vertices.push(v1);
-                            vertices.push(v3);
-                            vertices.push(v4);
+                                vertices.push(v1);
+                                vertices.push(v2);
+                                vertices.push(v3);
+                                vertices.push(v1);
+                                vertices.push(v3);
+                                vertices.push(v4);
+                            }
+                            vertices
                         }
-                        vertices
-                    }
-                    ViewData::Mesh(_) => {
-                        // Mesh rendering handled separately
-                        vec![]
-                    }
-                    ViewData::Empty => {
-                        vec![]
-                    }
-                };
+                        ViewData::Mesh(_) | ViewData::Empty => vec![],
+                    };
+                    self.viewer.vertices_dirty = false;
+                }
 
                 // Debug: Print vertex count periodically
-                if !vertices.is_empty() {
-                    if self.viewer.debug_frame_count % 60 == 0 {  // Print every 60 frames
-                        println!("Rendering {} vertices", vertices.len());
+                if !self.cached_vertices.is_empty() {
+                    if self.viewer.debug_frame_count % 60 == 0 {
+                        println!("Rendering {} vertices", self.cached_vertices.len());
                     }
                 }
                 self.viewer.debug_frame_count += 1;
 
                 match &self.viewer.current_data {
                     ViewData::PointCloud(_) | ViewData::ColoredPointCloud(_) => {
-                        if !vertices.is_empty() {
-                            if let Err(e) = point_renderer.render(&vertices) {
+                        if !self.cached_vertices.is_empty() {
+                            if let Err(e) = point_renderer.render(&self.cached_vertices) {
                                 eprintln!("Render error: {}", e);
                             }
                         }
