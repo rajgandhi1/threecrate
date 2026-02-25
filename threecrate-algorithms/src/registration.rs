@@ -1,7 +1,7 @@
 //! Registration algorithms
 
 use threecrate_core::{PointCloud, Result, Point3f, Vector3f, Error, Isometry3};
-use nalgebra::{Matrix3, UnitQuaternion, Translation3};
+use nalgebra::{Matrix3, Matrix6, Vector6, UnitQuaternion, Translation3};
 use rayon::prelude::*;
 
 
@@ -285,17 +285,217 @@ pub fn icp_legacy(
     Ok((transform, result.mse))
 }
 
-/// Point-to-plane ICP variant (requires normals)
+/// Compute the optimal incremental transformation using linearized point-to-plane optimization.
+///
+/// Based on Chen & Medioni (1992) - Object Modelling by Registration of Multiple Range Images.
+///
+/// Minimizes sum_i [n_i · (R*s_i + t - d_i)]^2 via small-angle linearization, building
+/// a 6x6 linear system A^T*A*x = A^T*b where x = [α, β, γ, tx, ty, tz].
+fn compute_transformation_point_to_plane(
+    source_points: &[Point3f],
+    target_points: &[Point3f],
+    target_normals: &[Vector3f],
+) -> Result<Isometry3<f32>> {
+    if source_points.len() != target_points.len()
+        || source_points.len() != target_normals.len()
+        || source_points.is_empty()
+    {
+        return Err(Error::InvalidData(
+            "Point/normal count mismatch in point-to-plane optimization".to_string(),
+        ));
+    }
+
+    let mut ata = Matrix6::<f32>::zeros();
+    let mut atb = Vector6::<f32>::zeros();
+
+    for ((src, tgt), normal) in source_points
+        .iter()
+        .zip(target_points.iter())
+        .zip(target_normals.iter())
+    {
+        // Cross product c = s × n  (rotational part of the Jacobian row)
+        let c = src.coords.cross(normal);
+
+        // Row of A: [c.x, c.y, c.z, n.x, n.y, n.z]
+        let a_row = Vector6::new(c.x, c.y, c.z, normal.x, normal.y, normal.z);
+
+        // RHS: n · (d - s)
+        let b_i = normal.dot(&(tgt.coords - src.coords));
+
+        ata += a_row * a_row.transpose();
+        atb += a_row * b_i;
+    }
+
+    // Solve with Cholesky (fast, stable when A^T*A is positive definite);
+    // fall back to LU if the system is rank-deficient.
+    let x = if let Some(chol) = ata.cholesky() {
+        chol.solve(&atb)
+    } else {
+        ata.lu()
+            .solve(&atb)
+            .ok_or_else(|| Error::Algorithm("Point-to-plane system is ill-conditioned".to_string()))?
+    };
+
+    // Compose small-angle rotations Rz(γ) * Ry(β) * Rx(α)
+    let rot_x = UnitQuaternion::from_axis_angle(&Vector3f::x_axis(), x[0]);
+    let rot_y = UnitQuaternion::from_axis_angle(&Vector3f::y_axis(), x[1]);
+    let rot_z = UnitQuaternion::from_axis_angle(&Vector3f::z_axis(), x[2]);
+    let rotation = rot_z * rot_y * rot_x;
+
+    Ok(Isometry3::from_parts(
+        Translation3::new(x[3], x[4], x[5]),
+        rotation,
+    ))
+}
+
+/// Compute mean squared point-to-plane distance for a set of correspondences.
+fn compute_point_to_plane_mse(
+    source_points: &[Point3f],
+    target_points: &[Point3f],
+    normals: &[Vector3f],
+) -> f32 {
+    if source_points.is_empty() {
+        return 0.0;
+    }
+    let sum: f32 = source_points
+        .iter()
+        .zip(target_points.iter())
+        .zip(normals.iter())
+        .map(|((src, tgt), n)| {
+            let d = n.dot(&(tgt.coords - src.coords));
+            d * d
+        })
+        .sum();
+    sum / source_points.len() as f32
+}
+
+/// Point-to-plane ICP variant (requires target normals).
+///
+/// Uses the linearized Chen & Medioni (1992) formulation: each iteration solves a 6×6
+/// linear system instead of the full SVD used by point-to-point ICP.  This typically
+/// converges faster and more accurately on smooth surfaces.
+///
+/// # Arguments
+/// * `source`          - Source point cloud to be aligned
+/// * `target`          - Target point cloud to align to
+/// * `target_normals`  - Surface normals at each target point (must equal `target.len()`)
+/// * `init`            - Initial transformation estimate
+/// * `max_iters`       - Maximum number of iterations
+///
+/// # Returns
+/// * `Result<ICPResult>` – transformation, per-iteration error, convergence flag
 pub fn icp_point_to_plane(
     source: &PointCloud<Point3f>,
     target: &PointCloud<Point3f>,
-    _target_normals: &[Vector3f],
+    target_normals: &[Vector3f],
     init: Isometry3<f32>,
     max_iters: usize,
 ) -> Result<ICPResult> {
-    // For now, fall back to point-to-point ICP
-    // TODO: Implement proper point-to-plane optimization
-    icp_detailed(source, target, init, max_iters, None, 1e-6)
+    icp_point_to_plane_detailed(source, target, target_normals, init, max_iters, None, 1e-6)
+}
+
+/// Detailed point-to-plane ICP with full parameter control.
+///
+/// # Arguments
+/// * `source`                       - Source point cloud
+/// * `target`                       - Target point cloud
+/// * `target_normals`               - Surface normals at each target point
+/// * `init`                         - Initial transformation estimate
+/// * `max_iters`                    - Maximum number of iterations
+/// * `max_correspondence_distance`  - Optional distance cutoff for correspondence rejection
+/// * `convergence_threshold`        - MSE change threshold to declare convergence
+pub fn icp_point_to_plane_detailed(
+    source: &PointCloud<Point3f>,
+    target: &PointCloud<Point3f>,
+    target_normals: &[Vector3f],
+    init: Isometry3<f32>,
+    max_iters: usize,
+    max_correspondence_distance: Option<f32>,
+    convergence_threshold: f32,
+) -> Result<ICPResult> {
+    if source.is_empty() || target.is_empty() {
+        return Err(Error::InvalidData(
+            "Source or target point cloud is empty".to_string(),
+        ));
+    }
+    if target_normals.len() != target.points.len() {
+        return Err(Error::InvalidData(
+            "target_normals length must equal the number of target points".to_string(),
+        ));
+    }
+    if max_iters == 0 {
+        return Err(Error::InvalidData(
+            "Max iterations must be positive".to_string(),
+        ));
+    }
+
+    let mut current_transform = init;
+    let mut previous_mse = f32::INFINITY;
+    let mut final_correspondences: Vec<(usize, usize)> = Vec::new();
+
+    for iteration in 0..max_iters {
+        // Apply current estimate to source
+        let transformed_source: Vec<Point3f> = source
+            .points
+            .iter()
+            .map(|p| current_transform * p)
+            .collect();
+
+        // Find nearest-neighbor correspondences
+        let correspondences = find_correspondences(
+            &transformed_source,
+            &target.points,
+            max_correspondence_distance,
+        );
+
+        let mut valid_source: Vec<Point3f> = Vec::new();
+        let mut valid_target: Vec<Point3f> = Vec::new();
+        let mut valid_normals: Vec<Vector3f> = Vec::new();
+        let mut corr_pairs: Vec<(usize, usize)> = Vec::new();
+
+        for (src_idx, corr) in correspondences.iter().enumerate() {
+            if let Some((tgt_idx, _)) = corr {
+                valid_source.push(transformed_source[src_idx]);
+                valid_target.push(target.points[*tgt_idx]);
+                valid_normals.push(target_normals[*tgt_idx]);
+                corr_pairs.push((src_idx, *tgt_idx));
+            }
+        }
+
+        // Need at least 6 points to solve the 6-DOF system
+        if valid_source.len() < 6 {
+            return Err(Error::Algorithm(
+                "Insufficient correspondences for point-to-plane ICP (need ≥ 6)".to_string(),
+            ));
+        }
+
+        let delta = compute_transformation_point_to_plane(&valid_source, &valid_target, &valid_normals)?;
+        current_transform = delta * current_transform;
+
+        let current_mse = compute_point_to_plane_mse(&valid_source, &valid_target, &valid_normals);
+        let mse_change = (previous_mse - current_mse).abs();
+
+        if mse_change < convergence_threshold {
+            return Ok(ICPResult {
+                transformation: current_transform,
+                mse: current_mse,
+                iterations: iteration + 1,
+                converged: true,
+                correspondences: corr_pairs,
+            });
+        }
+
+        previous_mse = current_mse;
+        final_correspondences = corr_pairs;
+    }
+
+    Ok(ICPResult {
+        transformation: current_transform,
+        mse: previous_mse,
+        iterations: max_iters,
+        converged: false,
+        correspondences: final_correspondences,
+    })
 }
 
 /// Point-to-point ICP registration
@@ -723,5 +923,132 @@ mod tests {
         // Test negative convergence threshold
         let result = icp_point_to_point(&target, &target, init, 10, -1e-6, None);
         assert!(result.is_err());
+    }
+
+    // ── Point-to-plane ICP tests ──────────────────────────────────────────────
+
+    /// Build a Fibonacci-sphere cloud with outward-pointing unit normals.
+    ///
+    /// A sphere is the canonical test surface for point-to-plane ICP because the
+    /// normals span all of 3-D space, ensuring the 6×6 linear system is full rank.
+    fn make_sphere_cloud(n: usize) -> (PointCloud<Point3f>, Vec<Vector3f>) {
+        let mut cloud = PointCloud::new();
+        let mut normals = Vec::new();
+        let radius = 3.0_f32;
+        let golden_angle = std::f32::consts::PI * (3.0 - 5.0_f32.sqrt());
+        for i in 0..n {
+            let y = 1.0 - (i as f32 / (n as f32 - 1.0).max(1.0)) * 2.0;
+            let r = (1.0 - y * y).max(0.0_f32).sqrt();
+            let theta = golden_angle * i as f32;
+            let x = theta.cos() * r;
+            let z = theta.sin() * r;
+            // (x, y, z) is already a unit vector (on the unit sphere)
+            let normal = Vector3f::new(x, y, z);
+            cloud.push(Point3f::new(x * radius, y * radius, z * radius));
+            normals.push(normal);
+        }
+        (cloud, normals)
+    }
+
+    #[test]
+    fn test_icp_point_to_plane_identity() {
+        let (source, normals) = make_sphere_cloud(50);
+        let target = source.clone();
+        let init = Isometry3::identity();
+
+        let result = icp_point_to_plane(&source, &target, &normals, init, 20).unwrap();
+
+        assert!(result.converged);
+        assert!(result.mse < 1e-6, "mse={}", result.mse);
+    }
+
+    #[test]
+    fn test_icp_point_to_plane_translation() {
+        // Small in-plane shift so nearest-neighbor correspondences remain correct.
+        let (source, normals) = make_sphere_cloud(100);
+        let shift = Vector3f::new(0.15, 0.0, 0.0);
+
+        let mut target = PointCloud::new();
+        for p in &source.points {
+            target.push(p + shift);
+        }
+        // Reuse the source normals as approximate target normals (valid for small shift).
+        let result = icp_point_to_plane(&source, &target, &normals, Isometry3::identity(), 50)
+            .unwrap();
+
+        let t_err = (result.transformation.translation.vector - shift).magnitude();
+        assert!(t_err < 0.3, "translation error={}", t_err);
+        assert!(result.mse < 0.1, "mse={}", result.mse);
+    }
+
+    #[test]
+    fn test_icp_point_to_plane_validation() {
+        let (source, normals) = make_sphere_cloud(20);
+        let init = Isometry3::identity();
+
+        // Normals length mismatch
+        let bad_normals = vec![Vector3f::new(0.0, 0.0, 1.0)];
+        let result = icp_point_to_plane(&source, &source, &bad_normals, init, 10);
+        assert!(result.is_err());
+
+        // Empty source
+        let empty: PointCloud<Point3f> = PointCloud::new();
+        let result = icp_point_to_plane(&empty, &source, &normals, init, 10);
+        assert!(result.is_err());
+
+        // Zero iterations
+        let result = icp_point_to_plane_detailed(&source, &source, &normals, init, 0, None, 1e-6);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_icp_point_to_plane_vs_point_to_point_convergence() {
+        // Both variants must converge to a reasonable solution for the same sphere+shift input.
+        let (source, normals) = make_sphere_cloud(80);
+        let shift = Vector3f::new(0.1, 0.05, 0.0);
+        let mut target = PointCloud::new();
+        for p in &source.points {
+            target.push(p + shift);
+        }
+
+        let init = Isometry3::identity();
+
+        let p2pl_result = icp_point_to_plane(&source, &target, &normals, init, 50).unwrap();
+        let p2pt_result = icp_point_to_point(&source, &target, init, 50, 1e-6, None).unwrap();
+
+        // Both should find a non-trivial transformation
+        assert!(
+            p2pl_result.transformation.translation.vector.magnitude() > 0.05,
+            "p2pl did not translate: t={}",
+            p2pl_result.transformation.translation.vector.magnitude()
+        );
+        assert!(
+            p2pt_result.transformation.translation.vector.magnitude() > 0.05,
+            "p2pt did not translate: t={}",
+            p2pt_result.transformation.translation.vector.magnitude()
+        );
+        // Point-to-plane should converge (or at least not diverge)
+        assert!(
+            p2pl_result.converged || p2pl_result.mse < 0.1,
+            "p2pl failed to converge: mse={}, iters={}",
+            p2pl_result.mse,
+            p2pl_result.iterations
+        );
+    }
+
+    #[test]
+    fn test_icp_point_to_plane_detailed_max_distance() {
+        let (source, normals) = make_sphere_cloud(50);
+        let mut target = PointCloud::new();
+        for p in &source.points {
+            target.push(p + Vector3f::new(0.1, 0.0, 0.0));
+        }
+
+        let init = Isometry3::identity();
+        let result =
+            icp_point_to_plane_detailed(&source, &target, &normals, init, 30, Some(5.0), 1e-6);
+        assert!(result.is_ok(), "unexpected error: {:?}", result.err());
+        let result = result.unwrap();
+        assert!(result.mse < 0.5, "mse={}", result.mse);
     }
 } 

@@ -1,8 +1,8 @@
 //! GPU-accelerated ICP
 
-use threecrate_core::{PointCloud, Result, Point3f};
+use threecrate_core::{PointCloud, Result, Point3f, Vector3f};
 use crate::GpuContext;
-use nalgebra::Isometry3;
+use nalgebra::{Isometry3, Matrix6, Vector6, UnitQuaternion, Translation3};
 
 const ICP_NEAREST_NEIGHBOR_SHADER: &str = r#"
 @group(0) @binding(0) var<storage, read> source_points: array<vec4<f32>>;
@@ -707,6 +707,151 @@ impl GpuContext {
     }
 }
 
+/// Result of GPU point-to-plane ICP
+#[derive(Debug, Clone)]
+pub struct GpuPointToPlaneICPResult {
+    pub transformation: Isometry3<f32>,
+    pub final_error: f32,
+    pub iterations: usize,
+    pub converged: bool,
+}
+
+impl GpuContext {
+    /// GPU-accelerated point-to-plane ICP.
+    ///
+    /// Uses GPU for nearest-neighbor correspondence finding and CPU for the
+    /// 6×6 linearized optimization step (Chen & Medioni 1992).
+    pub async fn icp_point_to_plane_align(
+        &self,
+        source: &PointCloud<Point3f>,
+        target: &PointCloud<Point3f>,
+        target_normals: &[Vector3f],
+        max_iterations: usize,
+        convergence_threshold: f32,
+        max_correspondence_distance: f32,
+    ) -> Result<GpuPointToPlaneICPResult> {
+        if source.is_empty() || target.is_empty() {
+            return Err(threecrate_core::Error::InvalidData("Empty point clouds".to_string()));
+        }
+        if target_normals.len() != target.points.len() {
+            return Err(threecrate_core::Error::InvalidData(
+                "target_normals length must equal target point count".to_string(),
+            ));
+        }
+
+        let mut current_transform = Isometry3::identity();
+        let mut final_error = f32::INFINITY;
+        let mut iterations_used = 0;
+        let mut converged = false;
+
+        for iteration in 0..max_iterations {
+            iterations_used = iteration + 1;
+
+            // Transform source using current estimate
+            let mut transformed_source = source.clone();
+            for p in &mut transformed_source.points {
+                *p = current_transform.transform_point(p);
+            }
+
+            // GPU nearest-neighbor correspondences
+            let correspondences = self
+                .find_correspondences(
+                    &transformed_source.points,
+                    &target.points,
+                    max_correspondence_distance,
+                )
+                .await?;
+
+            if correspondences.len() < 6 {
+                break;
+            }
+
+            // Gather matched points and normals
+            let valid_source: Vec<Point3f> =
+                correspondences.iter().map(|(si, _, _)| transformed_source.points[*si]).collect();
+            let valid_target: Vec<Point3f> =
+                correspondences.iter().map(|(_, ti, _)| target.points[*ti]).collect();
+            let valid_normals: Vec<Vector3f> =
+                correspondences.iter().map(|(_, ti, _)| target_normals[*ti]).collect();
+
+            // Linearized point-to-plane optimization (6×6 system on CPU)
+            let delta = Self::solve_point_to_plane_cpu(&valid_source, &valid_target, &valid_normals)?;
+
+            current_transform = delta * current_transform;
+
+            // Point-to-plane MSE
+            let mse: f32 = valid_source
+                .iter()
+                .zip(valid_target.iter())
+                .zip(valid_normals.iter())
+                .map(|((s, d), n)| {
+                    let v = n.dot(&(d.coords - s.coords));
+                    v * v
+                })
+                .sum::<f32>()
+                / valid_source.len() as f32;
+
+            let translation_change = delta.translation.vector.norm();
+            let rotation_change = delta.rotation.angle();
+
+            final_error = mse;
+
+            if translation_change < convergence_threshold && rotation_change < convergence_threshold {
+                converged = true;
+                break;
+            }
+        }
+
+        Ok(GpuPointToPlaneICPResult {
+            transformation: current_transform,
+            final_error,
+            iterations: iterations_used,
+            converged,
+        })
+    }
+
+    /// CPU-side 6×6 linear solve for one point-to-plane ICP iteration.
+    fn solve_point_to_plane_cpu(
+        source_points: &[Point3f],
+        target_points: &[Point3f],
+        normals: &[Vector3f],
+    ) -> Result<Isometry3<f32>> {
+        let mut ata = Matrix6::<f32>::zeros();
+        let mut atb = Vector6::<f32>::zeros();
+
+        for ((src, tgt), n) in source_points
+            .iter()
+            .zip(target_points.iter())
+            .zip(normals.iter())
+        {
+            let c = src.coords.cross(n);
+            let a_row = Vector6::new(c.x, c.y, c.z, n.x, n.y, n.z);
+            let b_i = n.dot(&(tgt.coords - src.coords));
+            ata += a_row * a_row.transpose();
+            atb += a_row * b_i;
+        }
+
+        let x = if let Some(chol) = ata.cholesky() {
+            chol.solve(&atb)
+        } else {
+            ata.lu()
+                .solve(&atb)
+                .ok_or_else(|| threecrate_core::Error::Algorithm(
+                    "Point-to-plane GPU system is ill-conditioned".to_string(),
+                ))?
+        };
+
+        let rot_x = UnitQuaternion::from_axis_angle(&nalgebra::Vector3::x_axis(), x[0]);
+        let rot_y = UnitQuaternion::from_axis_angle(&nalgebra::Vector3::y_axis(), x[1]);
+        let rot_z = UnitQuaternion::from_axis_angle(&nalgebra::Vector3::z_axis(), x[2]);
+
+        Ok(Isometry3::from_parts(
+            Translation3::new(x[3], x[4], x[5]),
+            rot_z * rot_y * rot_x,
+        ))
+    }
+}
+
 /// GPU-accelerated ICP registration
 pub async fn gpu_icp(
     gpu_context: &GpuContext,
@@ -725,4 +870,38 @@ pub async fn gpu_batch_icp(
     jobs: &[BatchICPJob],
 ) -> Result<Vec<BatchICPResult>> {
     gpu_context.batch_icp_align(jobs).await
-} 
+}
+
+/// GPU-accelerated point-to-plane ICP registration.
+///
+/// Uses the GPU for nearest-neighbor correspondence finding and the CPU for
+/// the 6×6 linearized optimization step (Chen & Medioni 1992).
+///
+/// # Arguments
+/// * `gpu_context`                  - Initialized GPU context
+/// * `source`                       - Source point cloud
+/// * `target`                       - Target point cloud
+/// * `target_normals`               - Surface normals at each target point
+/// * `max_iterations`               - Maximum number of iterations
+/// * `convergence_threshold`        - Delta-transform norm threshold for convergence
+/// * `max_correspondence_distance`  - Maximum distance for valid correspondences
+pub async fn gpu_icp_point_to_plane(
+    gpu_context: &GpuContext,
+    source: &PointCloud<Point3f>,
+    target: &PointCloud<Point3f>,
+    target_normals: &[Vector3f],
+    max_iterations: usize,
+    convergence_threshold: f32,
+    max_correspondence_distance: f32,
+) -> Result<GpuPointToPlaneICPResult> {
+    gpu_context
+        .icp_point_to_plane_align(
+            source,
+            target,
+            target_normals,
+            max_iterations,
+            convergence_threshold,
+            max_correspondence_distance,
+        )
+        .await
+}
