@@ -11,38 +11,38 @@ use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use threecrate_core::{Error, Point3f, Result, TriangleMesh, Vector3f};
 
-const INVALID: usize = usize::MAX;
+pub(crate) const INVALID: usize = usize::MAX;
 
 // ============================================================
 // Half-Edge Data Structure
 // ============================================================
 
 #[derive(Debug, Clone)]
-struct HalfEdge {
-    target: usize,
-    twin: usize,
-    next: usize,
-    prev: usize,
-    face: usize,
+pub(crate) struct HalfEdge {
+    pub(crate) target: usize,
+    pub(crate) twin: usize,
+    pub(crate) next: usize,
+    pub(crate) prev: usize,
+    pub(crate) face: usize,
 }
 
 /// Half-edge mesh for topology-aware edge collapse operations.
-struct HalfEdgeMesh {
-    half_edges: Vec<HalfEdge>,
+pub(crate) struct HalfEdgeMesh {
+    pub(crate) half_edges: Vec<HalfEdge>,
     /// One outgoing half-edge per vertex (INVALID if removed)
-    vertex_edge: Vec<usize>,
+    pub(crate) vertex_edge: Vec<usize>,
     /// One half-edge per face (INVALID if removed)
-    face_edge: Vec<usize>,
-    active_face_count: usize,
-    positions: Vec<Point3f>,
-    normals: Option<Vec<Vector3f>>,
-    colors: Option<Vec<[u8; 3]>>,
-    quadrics: Vec<Matrix4<f64>>,
-    vertex_removed: Vec<bool>,
+    pub(crate) face_edge: Vec<usize>,
+    pub(crate) active_face_count: usize,
+    pub(crate) positions: Vec<Point3f>,
+    pub(crate) normals: Option<Vec<Vector3f>>,
+    pub(crate) colors: Option<Vec<[u8; 3]>>,
+    pub(crate) quadrics: Vec<Matrix4<f64>>,
+    pub(crate) vertex_removed: Vec<bool>,
 }
 
 impl HalfEdgeMesh {
-    fn from_triangle_mesh(mesh: &TriangleMesh) -> Self {
+    pub(crate) fn from_triangle_mesh(mesh: &TriangleMesh) -> Self {
         let nv = mesh.vertices.len();
         let nf = mesh.faces.len();
 
@@ -101,11 +101,11 @@ impl HalfEdgeMesh {
     }
 
     #[inline]
-    fn source(&self, he: usize) -> usize {
+    pub(crate) fn source(&self, he: usize) -> usize {
         self.half_edges[self.half_edges[he].prev].target
     }
 
-    fn compute_plane(v0: &Point3f, v1: &Point3f, v2: &Point3f) -> Vector4<f64> {
+    pub(crate) fn compute_plane(v0: &Point3f, v1: &Point3f, v2: &Point3f) -> Vector4<f64> {
         let e1 = v1 - v0;
         let e2 = v2 - v0;
         let n = e1.cross(&e2).normalize();
@@ -116,7 +116,7 @@ impl HalfEdgeMesh {
         Vector4::new(n.x as f64, n.y as f64, n.z as f64, d as f64)
     }
 
-    fn plane_to_quadric(p: &Vector4<f64>) -> Matrix4<f64> {
+    pub(crate) fn plane_to_quadric(p: &Vector4<f64>) -> Matrix4<f64> {
         let (a, b, c, d) = (p[0], p[1], p[2], p[3]);
         Matrix4::new(
             a * a, a * b, a * c, a * d,
@@ -126,7 +126,7 @@ impl HalfEdgeMesh {
         )
     }
 
-    fn initialize_quadrics(&mut self) {
+    pub(crate) fn initialize_quadrics(&mut self) {
         for fi in 0..self.face_edge.len() {
             let he0 = self.face_edge[fi];
             if he0 == INVALID {
@@ -146,7 +146,7 @@ impl HalfEdgeMesh {
     }
 
     /// Get all outgoing half-edges from a vertex (handles boundary vertices).
-    fn outgoing_half_edges(&self, v: usize) -> Vec<usize> {
+    pub(crate) fn outgoing_half_edges(&self, v: usize) -> Vec<usize> {
         let start = self.vertex_edge[v];
         if start == INVALID {
             return vec![];
@@ -189,14 +189,14 @@ impl HalfEdgeMesh {
         result
     }
 
-    fn neighbors(&self, v: usize) -> HashSet<usize> {
+    pub(crate) fn neighbors(&self, v: usize) -> HashSet<usize> {
         self.outgoing_half_edges(v)
             .iter()
             .map(|&he| self.half_edges[he].target)
             .collect()
     }
 
-    fn is_boundary_vertex(&self, v: usize) -> bool {
+    pub(crate) fn is_boundary_vertex(&self, v: usize) -> bool {
         for &he in &self.outgoing_half_edges(v) {
             if self.half_edges[he].twin == INVALID {
                 return true;
@@ -207,7 +207,7 @@ impl HalfEdgeMesh {
 
     /// Check the link condition: common neighbors must equal exactly the
     /// face apices opposite the edge (2 for interior, 1 for boundary).
-    fn check_link_condition(&self, v1: usize, v2: usize) -> bool {
+    pub(crate) fn check_link_condition(&self, v1: usize, v2: usize) -> bool {
         let n1 = self.neighbors(v1);
         let n2 = self.neighbors(v2);
         let common_count = n1.intersection(&n2).count();
@@ -221,7 +221,7 @@ impl HalfEdgeMesh {
         common_count == expected
     }
 
-    fn find_half_edge(&self, from: usize, to: usize) -> Option<usize> {
+    pub(crate) fn find_half_edge(&self, from: usize, to: usize) -> Option<usize> {
         for &he in &self.outgoing_half_edges(from) {
             if self.half_edges[he].target == to {
                 return Some(he);
@@ -230,7 +230,7 @@ impl HalfEdgeMesh {
         None
     }
 
-    fn compute_collapse_cost(&self, v1: usize, v2: usize) -> (Point3f, f64) {
+    pub(crate) fn compute_collapse_cost(&self, v1: usize, v2: usize) -> (Point3f, f64) {
         let q = self.quadrics[v1] + self.quadrics[v2];
         let q3 = q.fixed_view::<3, 3>(0, 0);
         let q1 = q.fixed_view::<3, 1>(0, 3);
@@ -253,7 +253,7 @@ impl HalfEdgeMesh {
     }
 
     /// Find any valid outgoing half-edge from a vertex (linear scan fallback).
-    fn find_valid_outgoing(&self, v: usize) -> usize {
+    pub(crate) fn find_valid_outgoing(&self, v: usize) -> usize {
         for (i, he) in self.half_edges.iter().enumerate() {
             if he.face != INVALID && self.source(i) == v {
                 return i;
@@ -264,7 +264,7 @@ impl HalfEdgeMesh {
 
     /// Collapse edge (v1, v2), merging v2 into v1 at new_pos.
     /// Returns true on success.
-    fn collapse_edge(&mut self, v1: usize, v2: usize, new_pos: Point3f) -> bool {
+    pub(crate) fn collapse_edge(&mut self, v1: usize, v2: usize, new_pos: Point3f) -> bool {
         let h = match self.find_half_edge(v1, v2) {
             Some(h) => h,
             None => return false,
@@ -404,7 +404,7 @@ impl HalfEdgeMesh {
         true
     }
 
-    fn to_triangle_mesh(&self) -> TriangleMesh {
+    pub(crate) fn to_triangle_mesh(&self) -> TriangleMesh {
         let mut old_to_new: HashMap<usize, usize> = HashMap::new();
         let mut new_positions = Vec::new();
         let mut new_normals = self.normals.as_ref().map(|_| Vec::new());
@@ -459,12 +459,12 @@ impl HalfEdgeMesh {
 // ============================================================
 
 #[derive(Debug, Clone)]
-struct EdgeCost {
-    v1: usize,
-    v2: usize,
+pub(crate) struct EdgeCost {
+    pub(crate) v1: usize,
+    pub(crate) v2: usize,
     #[allow(dead_code)]
-    position: Point3f,
-    cost: f64,
+    pub(crate) position: Point3f,
+    pub(crate) cost: f64,
 }
 
 impl PartialEq for EdgeCost {
