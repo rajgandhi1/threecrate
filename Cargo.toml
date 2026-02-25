@@ -45,7 +45,7 @@ kdtree = "0.8"
 kiddo = "5.2"
 ndarray = "0.17"
 itertools = "0.14"
-rand = "0.9"
+rand = "0.10"
 
 # Additional spatial data structures
 rstar = "0.12"  # R*-tree for spatial indexing
