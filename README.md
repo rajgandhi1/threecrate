@@ -1,6 +1,7 @@
 # threecrate
 
 A comprehensive 3D point cloud processing library for Rust.
+<img width="1408" height="768" alt="logo_3crate" src="https://github.com/user-attachments/assets/5948b5d6-e3b8-42c8-8bc2-8558b63eff3b" />
 
 [![Crates.io](https://img.shields.io/crates/v/threecrate.svg)](https://crates.io/crates/threecrate)
 [![Documentation](https://docs.rs/threecrate/badge.svg)](https://docs.rs/threecrate)
