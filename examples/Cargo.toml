@@ -11,6 +11,7 @@ publish = false
 las_laz = []
 io-mmap = ["threecrate-io/io-mmap"]
 bevy_interop = ["dep:bevy", "threecrate-core/bevy_interop"]
+e57 = ["threecrate-io/e57"]
 
 [dependencies]
 threecrate-core = { path = "../threecrate-core", version = "0.6.0" }
@@ -125,3 +126,8 @@ required-features = ["bevy_interop"]
 name = "bevy_conversion_demo"
 path = "bevy_conversion_demo.rs"
 required-features = ["bevy_interop"]
+
+[[bin]]
+name = "e57_io"
+path = "e57_io.rs"
+required-features = ["e57"]

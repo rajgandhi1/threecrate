@@ -215,6 +215,8 @@ impl IoRegistry {
                 return Some("las".to_string());
             } else if header.starts_with(b"# .PCD") {
                 return Some("pcd".to_string());
+            } else if header.starts_with(b"ASTM-E57") {
+                return Some("e57".to_string());
             }
         }
         
