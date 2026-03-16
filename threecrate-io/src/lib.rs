@@ -9,6 +9,8 @@ pub mod obj;
 pub mod pasture;
 pub mod pcd;
 pub mod xyz_csv;
+#[cfg(feature = "e57")]
+pub mod e57;
 pub mod error;
 pub mod registry;
 pub mod mesh_attributes;
@@ -24,6 +26,8 @@ pub use ply::{RobustPlyReader, RobustPlyWriter, PlyWriteOptions, PlyFormat, PlyV
 pub use obj::{RobustObjReader, RobustObjWriter, ObjData, ObjWriteOptions, Material, FaceVertex, Face, Group};
 pub use pcd::{RobustPcdReader, RobustPcdWriter, PcdWriteOptions, PcdDataFormat, PcdFieldType, PcdHeader, PcdValue};
 pub use xyz_csv::{XyzCsvReader, XyzCsvWriter, XyzCsvStreamingReader, XyzCsvWriteOptions, XyzCsvSchema, XyzCsvPoint, Delimiter, ColumnType};
+#[cfg(feature = "e57")]
+pub use e57::{RobustE57Reader, RobustE57Writer, E57WriteOptions};
 pub use registry::{IoRegistry, FormatHandler};
 pub use mesh_attributes::{ExtendedTriangleMesh, MeshAttributeOptions, MeshMetadata, Tangent, UV};
 pub use serialization::{SerializationOptions, AttributePreservingReader, AttributePreservingWriter};
@@ -85,7 +89,16 @@ lazy_static::lazy_static! {
         registry.register_point_cloud_writer("xyz", Box::new(xyz_csv::XyzCsvWriter));
         registry.register_point_cloud_writer("csv", Box::new(xyz_csv::XyzCsvWriter));
         registry.register_point_cloud_writer("txt", Box::new(xyz_csv::XyzCsvWriter));
-        
+
+        // Register E57 format handlers (when feature is enabled)
+        #[cfg(feature = "e57")]
+        {
+            registry.register_point_cloud_handler("e57", Box::new(e57::E57Reader));
+            registry.register_mesh_handler("e57", Box::new(e57::E57Reader));
+            registry.register_point_cloud_writer("e57", Box::new(e57::E57Writer));
+            registry.register_mesh_writer("e57", Box::new(e57::E57Writer));
+        }
+
         registry
     };
 }
