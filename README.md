@@ -8,6 +8,10 @@ A comprehensive 3D point cloud processing library for Rust.
 [![Documentation](https://docs.rs/threecrate/badge.svg)](https://docs.rs/threecrate)
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](https://github.com/rajgandhi1/threecrate)
 
+## Viewer
+
+![ThreeCrate Mesh Viewer](assets/mesh_viewer.png)
+
 ## Overview
 
 threecrate is a modular, high-performance library for 3D point cloud and mesh processing. This umbrella crate provides convenient access to all threecrate functionality in one place.
