@@ -14,10 +14,10 @@ pub struct GpuContext {
 impl GpuContext {
     /// Create a new GPU context
     pub async fn new() -> Result<Self> {
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::all(),
             flags: wgpu::InstanceFlags::default(),
-            ..Default::default()
+            ..wgpu::InstanceDescriptor::new_without_display_handle_from_env()
         });
 
         let adapter = instance

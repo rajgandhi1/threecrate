@@ -4,8 +4,8 @@
 
 use crate::mesh::TriangleMesh;
 use crate::Result;
-use bevy::render::mesh::{Mesh, PrimitiveTopology};
-use bevy::render::render_asset::RenderAssetUsages;
+use bevy::mesh::{Mesh, PrimitiveTopology, Indices, VertexAttributeValues};
+use bevy::asset::RenderAssetUsages;
 
 impl TriangleMesh {
     /// Convert a TriangleMesh to a Bevy Mesh
@@ -82,7 +82,7 @@ impl TriangleMesh {
             .flat_map(|face| vec![face[0] as u32, face[1] as u32, face[2] as u32])
             .collect();
 
-        mesh.insert_indices(bevy::render::mesh::Indices::U32(indices));
+        mesh.insert_indices(Indices::U32(indices));
 
         Ok(mesh)
     }
@@ -96,11 +96,11 @@ impl TriangleMesh {
     ///
     /// ```no_run
     /// use threecrate_core::TriangleMesh;
-    /// use bevy::render::mesh::Mesh;
+    /// use bevy::mesh::Mesh;
     ///
     /// let bevy_mesh = Mesh::new(
-    ///     bevy::render::mesh::PrimitiveTopology::TriangleList,
-    ///     bevy::render::render_asset::RenderAssetUsages::default()
+    ///     bevy::mesh::PrimitiveTopology::TriangleList,
+    ///     bevy::asset::RenderAssetUsages::default()
     /// );
     /// // ... populate bevy_mesh ...
     ///
@@ -115,7 +115,7 @@ impl TriangleMesh {
             })?;
 
         let vertices: Vec<crate::Point3f> = match positions {
-            bevy::render::mesh::VertexAttributeValues::Float32x3(positions) => positions
+            VertexAttributeValues::Float32x3(positions) => positions
                 .iter()
                 .map(|p| crate::Point3f::new(p[0], p[1], p[2]))
                 .collect(),
@@ -132,7 +132,7 @@ impl TriangleMesh {
         })?;
 
         let faces: Vec<[usize; 3]> = match indices {
-            bevy::render::mesh::Indices::U16(idx) => idx
+            Indices::U16(idx) => idx
                 .chunks(3)
                 .map(|chunk| {
                     if chunk.len() == 3 {
@@ -144,7 +144,7 @@ impl TriangleMesh {
                     }
                 })
                 .collect::<Result<Vec<_>>>()?,
-            bevy::render::mesh::Indices::U32(idx) => idx
+            Indices::U32(idx) => idx
                 .chunks(3)
                 .map(|chunk| {
                     if chunk.len() == 3 {
@@ -162,7 +162,7 @@ impl TriangleMesh {
 
         // Extract normals if available
         if let Some(normals_attr) = bevy_mesh.attribute(Mesh::ATTRIBUTE_NORMAL) {
-            if let bevy::render::mesh::VertexAttributeValues::Float32x3(normals) = normals_attr {
+            if let VertexAttributeValues::Float32x3(normals) = normals_attr {
                 let normal_vecs: Vec<crate::Vector3f> = normals
                     .iter()
                     .map(|n| crate::Vector3f::new(n[0], n[1], n[2]))
@@ -173,7 +173,7 @@ impl TriangleMesh {
 
         // Extract colors if available (convert from [f32; 4] to [u8; 3])
         if let Some(colors_attr) = bevy_mesh.attribute(Mesh::ATTRIBUTE_COLOR) {
-            if let bevy::render::mesh::VertexAttributeValues::Float32x4(colors) = colors_attr {
+            if let VertexAttributeValues::Float32x4(colors) = colors_attr {
                 let color_bytes: Vec<[u8; 3]> = colors
                     .iter()
                     .map(|c| {

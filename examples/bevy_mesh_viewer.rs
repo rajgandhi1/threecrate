@@ -46,7 +46,7 @@ fn main() {
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
                 title: "ThreeCrate + Bevy Mesh Viewer".to_string(),
-                resolution: (1024., 768.).into(),
+                resolution: (1024u32, 768u32).into(),
                 ..default()
             }),
             ..default()
@@ -63,7 +63,7 @@ mod bevy_viewer {
     use bevy::input::mouse::{MouseMotion, MouseWheel};
 
     #[derive(Resource)]
-    pub struct GeneratedMesh(pub bevy::render::mesh::Mesh);
+    pub struct GeneratedMesh(pub bevy::mesh::Mesh);
 
     #[derive(Component)]
     pub struct CameraController {
@@ -88,7 +88,7 @@ mod bevy_viewer {
 
     pub fn setup_scene(
         mut commands: Commands,
-        mut meshes: ResMut<Assets<bevy::render::mesh::Mesh>>,
+        mut meshes: ResMut<Assets<bevy::mesh::Mesh>>,
         mut materials: ResMut<Assets<StandardMaterial>>,
         generated_mesh: Res<GeneratedMesh>,
     ) {
@@ -143,9 +143,10 @@ mod bevy_viewer {
         ));
 
         // Ambient light
-        commands.insert_resource(AmbientLight {
+        commands.insert_resource(GlobalAmbientLight {
             color: Color::srgb(0.5, 0.5, 0.6),
             brightness: 150.0,
+            ..default()
         });
 
         // Camera with controller
@@ -166,12 +167,12 @@ mod bevy_viewer {
     }
 
     pub fn rotate_camera(
-        mut mouse_motion: EventReader<MouseMotion>,
-        mut mouse_wheel: EventReader<MouseWheel>,
+        mut mouse_motion: MessageReader<MouseMotion>,
+        mut mouse_wheel: MessageReader<MouseWheel>,
         mouse_button: Res<ButtonInput<MouseButton>>,
         mut query: Query<(&mut Transform, &mut CameraController)>,
     ) {
-        let (mut transform, mut controller) = query.single_mut();
+        let Ok((mut transform, mut controller)) = query.single_mut() else { return; };
 
         // Handle mouse rotation
         if mouse_button.pressed(MouseButton::Left) {
@@ -203,10 +204,10 @@ mod bevy_viewer {
 
     pub fn handle_input(
         keyboard: Res<ButtonInput<KeyCode>>,
-        mut exit: EventWriter<bevy::app::AppExit>,
+        mut exit: MessageWriter<bevy::app::AppExit>,
     ) {
         if keyboard.just_pressed(KeyCode::Escape) {
-            exit.send(bevy::app::AppExit::Success);
+            exit.write(bevy::app::AppExit::Success);
         }
     }
 }

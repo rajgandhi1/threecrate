@@ -505,7 +505,7 @@ impl<'window> MeshRenderer<'window> {
     ) -> wgpu::RenderPipeline {
         let render_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some(&format!("{} Mesh Render Pipeline Layout", label)),
-            bind_group_layouts: &[bind_group_layout],
+            bind_group_layouts: &[Some(bind_group_layout)],
             immediate_size: 0,
         });
 
@@ -548,8 +548,8 @@ impl<'window> MeshRenderer<'window> {
             depth_stencil: if config.enable_depth_test {
                 Some(wgpu::DepthStencilState {
                     format: wgpu::TextureFormat::Depth32Float,
-                    depth_write_enabled: true,
-                    depth_compare: wgpu::CompareFunction::Less,
+                    depth_write_enabled: Some(true),
+                    depth_compare: Some(wgpu::CompareFunction::Less),
                     stencil: wgpu::StencilState::default(),
                     bias: wgpu::DepthBiasState::default(),
                 })
@@ -663,8 +663,12 @@ impl<'window> MeshRenderer<'window> {
         let depth_texture = self.create_depth_texture();
         let depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-        let output = self.surface.get_current_texture()
-            .map_err(|e| Error::Gpu(format!("Failed to get surface texture: {:?}", e)))?;
+        let output = match self.surface.get_current_texture() {
+            wgpu::CurrentSurfaceTexture::Success(frame) => frame,
+            wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
+            wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => return Ok(()),
+            _ => return Err(Error::Gpu("Failed to get surface texture".to_string())),
+        };
         
         let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
 
