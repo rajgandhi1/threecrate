@@ -239,27 +239,3 @@ threecrate is designed for high performance:
 ## Contributing
 
 Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
-
-## Changelog
-
-### v0.5.0
-
-- Major reconstruction module overhaul with 5 advanced algorithms
-- Fixed Poisson reconstruction with proper API integration
-- Enhanced Ball Pivoting with multi-scale capabilities and adaptive features
-- Complete Delaunay triangulation implementation with 5 projection methods
-- New Marching Cubes algorithm for volumetric surface reconstruction
-- New Moving Least Squares (MLS) surface fitting with 4 weight functions
-- Unified reconstruction pipeline with intelligent algorithm auto-selection
-- Comprehensive parallel processing integration using rayon
-- Advanced data analysis engine for point cloud characteristics
-- Quality metrics and validation for all reconstruction algorithms
-- 65 comprehensive tests ensuring reliability and correctness
-
-### v0.1.0
-
-- Initial release with core functionality
-- Point cloud and mesh processing algorithms
-- GPU acceleration support
-- File I/O for common formats
-- Interactive visualization tools
