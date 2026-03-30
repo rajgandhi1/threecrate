@@ -5,6 +5,7 @@ pub mod point_cloud_ops;
 pub mod filtering;
 pub mod normals;
 pub mod registration;
+pub mod ndt_registration;
 pub mod segmentation;
 pub mod features;
 
@@ -13,5 +14,6 @@ pub use filtering::*;
 pub use normals::*;
 pub use nearest_neighbor::*;
 pub use registration::*;
+pub use ndt_registration::*;
 pub use segmentation::*;
 pub use features::*; 
