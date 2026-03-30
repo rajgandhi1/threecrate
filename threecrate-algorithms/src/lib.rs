@@ -6,6 +6,7 @@ pub mod filtering;
 pub mod normals;
 pub mod registration;
 pub mod ndt_registration;
+pub mod global_registration;
 pub mod segmentation;
 pub mod features;
 
@@ -15,5 +16,6 @@ pub use normals::*;
 pub use nearest_neighbor::*;
 pub use registration::*;
 pub use ndt_registration::*;
+pub use global_registration::*;
 pub use segmentation::*;
 pub use features::*; 
