@@ -139,3 +139,7 @@ path = "euclidean_cluster_example.rs"
 [[bin]]
 name = "mesh_boolean_example"
 path = "mesh_boolean_example.rs"
+
+[[bin]]
+name = "mesh_smoothing_example"
+path = "mesh_smoothing_example.rs"
