@@ -5,7 +5,9 @@ use nalgebra::{Vector4};
 use rayon::prelude::*;
 use rand::prelude::*;
 use rand::thread_rng;
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
+use crate::KdTree;
+use threecrate_core::NearestNeighborSearch;
 
 /// A 3D plane model defined by the equation ax + by + cz + d = 0
 #[derive(Debug, Clone, PartialEq)]
@@ -306,6 +308,209 @@ pub fn plane_segmentation_ransac(
     segment_plane_ransac(cloud, max_iters, threshold)
 }
 
+/// Configuration for Euclidean cluster extraction
+#[derive(Debug, Clone)]
+pub struct EuclideanClusterConfig {
+    /// Maximum distance between points to be considered part of the same cluster
+    pub tolerance: f32,
+    /// Minimum number of points for a valid cluster
+    pub min_cluster_size: usize,
+    /// Maximum number of points allowed in a cluster
+    pub max_cluster_size: usize,
+}
+
+impl Default for EuclideanClusterConfig {
+    fn default() -> Self {
+        Self {
+            tolerance: 0.02,
+            min_cluster_size: 100,
+            max_cluster_size: 25000,
+        }
+    }
+}
+
+impl EuclideanClusterConfig {
+    /// Create a new config with given parameters
+    pub fn new(tolerance: f32, min_cluster_size: usize, max_cluster_size: usize) -> Self {
+        Self { tolerance, min_cluster_size, max_cluster_size }
+    }
+}
+
+/// Result of Euclidean cluster extraction
+#[derive(Debug, Clone)]
+pub struct ClusterExtractionResult {
+    /// Each inner Vec contains the point indices belonging to one cluster,
+    /// ordered from largest to smallest cluster.
+    pub clusters: Vec<Vec<usize>>,
+}
+
+impl ClusterExtractionResult {
+    /// Number of clusters found
+    pub fn num_clusters(&self) -> usize {
+        self.clusters.len()
+    }
+
+    /// Extract a sub-cloud for the cluster at `index`
+    pub fn get_cluster_cloud(&self, cloud: &PointCloud<Point3f>, index: usize) -> Option<PointCloud<Point3f>> {
+        self.clusters.get(index).map(|indices| {
+            PointCloud::from_points(indices.iter().map(|&i| cloud.points[i]).collect())
+        })
+    }
+}
+
+/// Euclidean cluster extraction using a region-growing BFS approach.
+///
+/// Builds a KD-tree over the cloud, then grows clusters by expanding into
+/// all unvisited points within `config.tolerance` of any seed point.
+/// Clusters outside the `[min_cluster_size, max_cluster_size]` range are discarded.
+///
+/// # Arguments
+/// * `cloud` - Input point cloud
+/// * `config` - Cluster extraction parameters
+///
+/// # Returns
+/// * `Result<ClusterExtractionResult>` - The extracted clusters (largest first)
+pub fn extract_euclidean_clusters(
+    cloud: &PointCloud<Point3f>,
+    config: &EuclideanClusterConfig,
+) -> Result<ClusterExtractionResult> {
+    if cloud.is_empty() {
+        return Err(Error::InvalidData("Point cloud is empty".to_string()));
+    }
+    if config.tolerance <= 0.0 {
+        return Err(Error::InvalidData("Tolerance must be positive".to_string()));
+    }
+    if config.min_cluster_size == 0 {
+        return Err(Error::InvalidData("min_cluster_size must be at least 1".to_string()));
+    }
+    if config.min_cluster_size > config.max_cluster_size {
+        return Err(Error::InvalidData(
+            "min_cluster_size must not exceed max_cluster_size".to_string(),
+        ));
+    }
+
+    let points = &cloud.points;
+    let kdtree = KdTree::new(points)?;
+
+    let mut visited = vec![false; points.len()];
+    let mut clusters: Vec<Vec<usize>> = Vec::new();
+
+    for seed_idx in 0..points.len() {
+        if visited[seed_idx] {
+            continue;
+        }
+
+        // BFS from seed_idx
+        let mut cluster = Vec::new();
+        let mut queue = VecDeque::new();
+
+        visited[seed_idx] = true;
+        queue.push_back(seed_idx);
+
+        while let Some(current) = queue.pop_front() {
+            cluster.push(current);
+
+            let neighbors = kdtree.find_radius_neighbors(&points[current], config.tolerance);
+            for (neighbor_idx, _dist) in neighbors {
+                if !visited[neighbor_idx] {
+                    visited[neighbor_idx] = true;
+                    queue.push_back(neighbor_idx);
+                }
+            }
+        }
+
+        if cluster.len() >= config.min_cluster_size && cluster.len() <= config.max_cluster_size {
+            clusters.push(cluster);
+        }
+    }
+
+    // Sort largest cluster first
+    clusters.sort_by(|a, b| b.len().cmp(&a.len()));
+
+    Ok(ClusterExtractionResult { clusters })
+}
+
+/// Parallel Euclidean cluster extraction.
+///
+/// Uses parallel processing to speed up the radius neighbor search phase.
+/// The BFS is still sequential per cluster but neighbor lookups are parallelised
+/// by pre-computing all neighbor lists up front.
+///
+/// # Arguments
+/// * `cloud` - Input point cloud
+/// * `config` - Cluster extraction parameters
+///
+/// # Returns
+/// * `Result<ClusterExtractionResult>` - The extracted clusters (largest first)
+pub fn extract_euclidean_clusters_parallel(
+    cloud: &PointCloud<Point3f>,
+    config: &EuclideanClusterConfig,
+) -> Result<ClusterExtractionResult> {
+    if cloud.is_empty() {
+        return Err(Error::InvalidData("Point cloud is empty".to_string()));
+    }
+    if config.tolerance <= 0.0 {
+        return Err(Error::InvalidData("Tolerance must be positive".to_string()));
+    }
+    if config.min_cluster_size == 0 {
+        return Err(Error::InvalidData("min_cluster_size must be at least 1".to_string()));
+    }
+    if config.min_cluster_size > config.max_cluster_size {
+        return Err(Error::InvalidData(
+            "min_cluster_size must not exceed max_cluster_size".to_string(),
+        ));
+    }
+
+    let points = &cloud.points;
+    let kdtree = KdTree::new(points)?;
+    let tolerance = config.tolerance;
+
+    // Pre-compute neighbor lists in parallel
+    let neighbor_lists: Vec<Vec<usize>> = (0..points.len())
+        .into_par_iter()
+        .map(|i| {
+            kdtree
+                .find_radius_neighbors(&points[i], tolerance)
+                .into_iter()
+                .map(|(idx, _)| idx)
+                .collect()
+        })
+        .collect();
+
+    let mut visited = vec![false; points.len()];
+    let mut clusters: Vec<Vec<usize>> = Vec::new();
+
+    for seed_idx in 0..points.len() {
+        if visited[seed_idx] {
+            continue;
+        }
+
+        let mut cluster = Vec::new();
+        let mut queue = VecDeque::new();
+
+        visited[seed_idx] = true;
+        queue.push_back(seed_idx);
+
+        while let Some(current) = queue.pop_front() {
+            cluster.push(current);
+            for &neighbor_idx in &neighbor_lists[current] {
+                if !visited[neighbor_idx] {
+                    visited[neighbor_idx] = true;
+                    queue.push_back(neighbor_idx);
+                }
+            }
+        }
+
+        if cluster.len() >= config.min_cluster_size && cluster.len() <= config.max_cluster_size {
+            clusters.push(cluster);
+        }
+    }
+
+    clusters.sort_by(|a, b| b.len().cmp(&a.len()));
+
+    Ok(ClusterExtractionResult { clusters })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -584,5 +789,127 @@ mod tests {
         
         let result = segment_plane_ransac(&cloud, 0, 0.1);
         assert!(result.is_err(), "Should fail with zero iterations");
+    }
+
+    // ---- Euclidean cluster extraction tests ----
+
+    fn make_sphere_cloud(center: Point3f, radius: f32, count: usize) -> Vec<Point3f> {
+        let mut rng = thread_rng();
+        let mut pts = Vec::with_capacity(count);
+        while pts.len() < count {
+            let x: f32 = rng.gen_range(-radius..radius);
+            let y: f32 = rng.gen_range(-radius..radius);
+            let z: f32 = rng.gen_range(-radius..radius);
+            if x * x + y * y + z * z <= radius * radius {
+                pts.push(Point3f::new(center.x + x, center.y + y, center.z + z));
+            }
+        }
+        pts
+    }
+
+    #[test]
+    fn test_euclidean_cluster_two_blobs() {
+        let mut cloud = PointCloud::new();
+        // Blob 1 near origin
+        for p in make_sphere_cloud(Point3f::new(0.0, 0.0, 0.0), 0.3, 200) {
+            cloud.push(p);
+        }
+        // Blob 2 far away
+        for p in make_sphere_cloud(Point3f::new(10.0, 0.0, 0.0), 0.3, 150) {
+            cloud.push(p);
+        }
+
+        let config = EuclideanClusterConfig::new(0.5, 50, 10000);
+        let result = extract_euclidean_clusters(&cloud, &config).unwrap();
+
+        assert_eq!(result.num_clusters(), 2, "Should detect exactly 2 clusters");
+        // Largest cluster first
+        assert!(result.clusters[0].len() >= result.clusters[1].len());
+    }
+
+    #[test]
+    fn test_euclidean_cluster_three_blobs() {
+        let mut cloud = PointCloud::new();
+        for p in make_sphere_cloud(Point3f::new(0.0, 0.0, 0.0), 0.4, 300) { cloud.push(p); }
+        for p in make_sphere_cloud(Point3f::new(5.0, 0.0, 0.0), 0.4, 200) { cloud.push(p); }
+        for p in make_sphere_cloud(Point3f::new(0.0, 5.0, 0.0), 0.4, 100) { cloud.push(p); }
+
+        let config = EuclideanClusterConfig::new(0.6, 50, 10000);
+        let result = extract_euclidean_clusters(&cloud, &config).unwrap();
+
+        assert_eq!(result.num_clusters(), 3);
+    }
+
+    #[test]
+    fn test_euclidean_cluster_min_size_filter() {
+        let mut cloud = PointCloud::new();
+        // Large cluster
+        for p in make_sphere_cloud(Point3f::new(0.0, 0.0, 0.0), 0.4, 300) { cloud.push(p); }
+        // Small cluster (should be filtered out)
+        for p in make_sphere_cloud(Point3f::new(10.0, 0.0, 0.0), 0.2, 5) { cloud.push(p); }
+
+        let config = EuclideanClusterConfig::new(0.5, 50, 10000);
+        let result = extract_euclidean_clusters(&cloud, &config).unwrap();
+
+        assert_eq!(result.num_clusters(), 1, "Small cluster should be filtered");
+    }
+
+    #[test]
+    fn test_euclidean_cluster_max_size_filter() {
+        let mut cloud = PointCloud::new();
+        for p in make_sphere_cloud(Point3f::new(0.0, 0.0, 0.0), 0.5, 500) { cloud.push(p); }
+
+        // max_cluster_size smaller than the blob
+        let config = EuclideanClusterConfig::new(0.6, 1, 100);
+        let result = extract_euclidean_clusters(&cloud, &config).unwrap();
+
+        // The single large blob exceeds max_cluster_size, so no clusters returned
+        assert_eq!(result.num_clusters(), 0, "Oversized cluster should be filtered");
+    }
+
+    #[test]
+    fn test_euclidean_cluster_get_cloud() {
+        let mut cloud = PointCloud::new();
+        for p in make_sphere_cloud(Point3f::new(0.0, 0.0, 0.0), 0.3, 200) { cloud.push(p); }
+        for p in make_sphere_cloud(Point3f::new(10.0, 0.0, 0.0), 0.3, 100) { cloud.push(p); }
+
+        let config = EuclideanClusterConfig::new(0.5, 50, 10000);
+        let result = extract_euclidean_clusters(&cloud, &config).unwrap();
+
+        let sub = result.get_cluster_cloud(&cloud, 0).unwrap();
+        assert_eq!(sub.len(), result.clusters[0].len());
+    }
+
+    #[test]
+    fn test_euclidean_cluster_parallel_matches_sequential() {
+        let mut cloud = PointCloud::new();
+        for p in make_sphere_cloud(Point3f::new(0.0, 0.0, 0.0), 0.3, 200) { cloud.push(p); }
+        for p in make_sphere_cloud(Point3f::new(5.0, 0.0, 0.0), 0.3, 150) { cloud.push(p); }
+
+        let config = EuclideanClusterConfig::new(0.5, 50, 10000);
+        let seq = extract_euclidean_clusters(&cloud, &config).unwrap();
+        let par = extract_euclidean_clusters_parallel(&cloud, &config).unwrap();
+
+        assert_eq!(seq.num_clusters(), par.num_clusters());
+        for (s, p) in seq.clusters.iter().zip(par.clusters.iter()) {
+            assert_eq!(s.len(), p.len());
+        }
+    }
+
+    #[test]
+    fn test_euclidean_cluster_invalid_config() {
+        let mut cloud = PointCloud::new();
+        cloud.push(Point3f::new(0.0, 0.0, 0.0));
+
+        assert!(extract_euclidean_clusters(&cloud, &EuclideanClusterConfig::new(-1.0, 1, 100)).is_err());
+        assert!(extract_euclidean_clusters(&cloud, &EuclideanClusterConfig::new(0.1, 0, 100)).is_err());
+        assert!(extract_euclidean_clusters(&cloud, &EuclideanClusterConfig::new(0.1, 10, 5)).is_err());
+    }
+
+    #[test]
+    fn test_euclidean_cluster_empty_cloud() {
+        let cloud: PointCloud<Point3f> = PointCloud::new();
+        let config = EuclideanClusterConfig::default();
+        assert!(extract_euclidean_clusters(&cloud, &config).is_err());
     }
 }

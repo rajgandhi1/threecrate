@@ -131,3 +131,7 @@ required-features = ["bevy_interop"]
 name = "e57_io"
 path = "e57_io.rs"
 required-features = ["e57"]
+
+[[bin]]
+name = "euclidean_cluster_example"
+path = "euclidean_cluster_example.rs"
