@@ -10,6 +10,7 @@ pub mod global_registration;
 pub mod segmentation;
 pub mod features;
 pub mod mesh_boolean;
+pub mod mesh_smoothing;
 
 // Re-export commonly used items
 pub use filtering::*;
@@ -20,4 +21,5 @@ pub use ndt_registration::*;
 pub use global_registration::*;
 pub use segmentation::*;
 pub use features::*;
-pub use mesh_boolean::*; 
+pub use mesh_boolean::*;
+pub use mesh_smoothing::*; 
