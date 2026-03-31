@@ -135,3 +135,7 @@ required-features = ["e57"]
 [[bin]]
 name = "euclidean_cluster_example"
 path = "euclidean_cluster_example.rs"
+
+[[bin]]
+name = "mesh_boolean_example"
+path = "mesh_boolean_example.rs"
