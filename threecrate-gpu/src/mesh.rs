@@ -325,6 +325,10 @@ pub struct MeshRenderer<'window> {
     pub surface_config: wgpu::SurfaceConfiguration,
     pub pbr_pipeline: wgpu::RenderPipeline,
     pub flat_pipeline: wgpu::RenderPipeline,
+    /// Single-sample PBR pipeline used for screenshot capture (no MSAA)
+    pub screenshot_pbr_pipeline: wgpu::RenderPipeline,
+    /// Single-sample flat pipeline used for screenshot capture (no MSAA)
+    pub screenshot_flat_pipeline: wgpu::RenderPipeline,
     pub camera_uniform: MeshCameraUniform,
     pub camera_buffer: wgpu::Buffer,
     pub lighting_params: MeshLightingParams,
@@ -476,12 +480,35 @@ impl<'window> MeshRenderer<'window> {
             "Flat",
         );
 
+        // Screenshot pipelines always use sample_count=1 (no MSAA)
+        let screenshot_pbr_pipeline = Self::create_render_pipeline(
+            &gpu_context.device,
+            &bind_group_layout,
+            &pbr_shader,
+            surface_format,
+            1,
+            &config,
+            "Screenshot PBR",
+        );
+
+        let screenshot_flat_pipeline = Self::create_render_pipeline(
+            &gpu_context.device,
+            &bind_group_layout,
+            &flat_shader,
+            surface_format,
+            1,
+            &config,
+            "Screenshot Flat",
+        );
+
         Ok(Self {
             gpu_context,
             surface,
             surface_config,
             pbr_pipeline,
             flat_pipeline,
+            screenshot_pbr_pipeline,
+            screenshot_flat_pipeline,
             camera_uniform,
             camera_buffer,
             lighting_params,
@@ -774,6 +801,181 @@ impl<'window> MeshRenderer<'window> {
         output.present();
 
         Ok(())
+    }
+
+    /// Render mesh to an offscreen texture and return raw RGBA pixel bytes.
+    ///
+    /// Returns `(pixels, format, width, height)`.  The caller is responsible
+    /// for interpreting the format (BGRA vs RGBA) when encoding the image.
+    pub fn render_to_texture(
+        &self,
+        mesh: &GpuMesh,
+        shading_mode: ShadingMode,
+    ) -> Result<(Vec<u8>, wgpu::TextureFormat, u32, u32)> {
+        let width = self.surface_config.width;
+        let height = self.surface_config.height;
+        let format = self.surface_config.format;
+
+        // Offscreen render target (no MSAA, COPY_SRC so we can read it back)
+        let render_texture = self.gpu_context.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Screenshot Render Texture"),
+            size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let render_view = render_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let depth_texture = self.gpu_context.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Screenshot Depth Texture"),
+            size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Depth32Float,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        let depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let vertex_buffer = self.create_vertex_buffer(&mesh.vertices);
+        let index_buffer = self.create_index_buffer(&mesh.indices);
+
+        let material_buffer = match shading_mode {
+            ShadingMode::Pbr => self.gpu_context.device.create_buffer_init(
+                &wgpu::util::BufferInitDescriptor {
+                    label: Some("Screenshot PBR Material Buffer"),
+                    contents: bytemuck::bytes_of(&mesh.material),
+                    usage: wgpu::BufferUsages::UNIFORM,
+                },
+            ),
+            ShadingMode::Flat => {
+                let flat_material = FlatMaterial { color: mesh.material.albedo, _padding: 0.0 };
+                self.gpu_context.device.create_buffer_init(
+                    &wgpu::util::BufferInitDescriptor {
+                        label: Some("Screenshot Flat Material Buffer"),
+                        contents: bytemuck::bytes_of(&flat_material),
+                        usage: wgpu::BufferUsages::UNIFORM,
+                    },
+                )
+            }
+        };
+
+        let bind_group = self.gpu_context.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &self.bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: self.camera_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: material_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 2, resource: self.lighting_buffer.as_entire_binding() },
+            ],
+            label: Some("screenshot_bind_group"),
+        });
+
+        // wgpu requires bytes_per_row to be aligned to COPY_BYTES_PER_ROW_ALIGNMENT (256)
+        let bytes_per_pixel = 4u32;
+        let unpadded_bytes_per_row = width * bytes_per_pixel;
+        let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+        let padded_bytes_per_row = (unpadded_bytes_per_row + align - 1) / align * align;
+
+        let staging_buffer = self.gpu_context.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Screenshot Staging Buffer"),
+            size: (padded_bytes_per_row * height) as wgpu::BufferAddress,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let mut encoder = self.gpu_context.device.create_command_encoder(
+            &wgpu::CommandEncoderDescriptor { label: Some("Screenshot Encoder") },
+        );
+
+        {
+            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Screenshot Render Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &render_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: self.config.background_color[0],
+                            g: self.config.background_color[1],
+                            b: self.config.background_color[2],
+                            a: self.config.background_color[3],
+                        }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+
+            let pipeline = match shading_mode {
+                ShadingMode::Pbr => &self.screenshot_pbr_pipeline,
+                ShadingMode::Flat => &self.screenshot_flat_pipeline,
+            };
+
+            render_pass.set_pipeline(pipeline);
+            render_pass.set_bind_group(0, &bind_group, &[]);
+            render_pass.set_vertex_buffer(0, vertex_buffer.slice(..));
+            render_pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            render_pass.draw_indexed(0..mesh.indices.len() as u32, 0, 0..1);
+        }
+
+        // Copy rendered texture into staging buffer for CPU readback
+        encoder.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture: &render_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &staging_buffer,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(padded_bytes_per_row),
+                    rows_per_image: None,
+                },
+            },
+            wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+        );
+
+        self.gpu_context.queue.submit(std::iter::once(encoder.finish()));
+
+        // Map the buffer and wait for the GPU to finish
+        let buffer_slice = staging_buffer.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel::<std::result::Result<(), wgpu::BufferAsyncError>>();
+        buffer_slice.map_async(wgpu::MapMode::Read, move |v| { let _ = tx.send(v); });
+        self.gpu_context.device.poll(wgpu::PollType::Wait { submission_index: None, timeout: None });
+        rx.recv()
+            .map_err(|_| Error::Gpu("Screenshot buffer map channel error".to_string()))?
+            .map_err(|e| Error::Gpu(format!("Screenshot buffer map error: {:?}", e)))?;
+
+        let data = buffer_slice.get_mapped_range();
+
+        // Strip row padding before returning
+        let mut pixels: Vec<u8> = Vec::with_capacity((unpadded_bytes_per_row * height) as usize);
+        for row in 0..height as usize {
+            let start = row * padded_bytes_per_row as usize;
+            let end = start + unpadded_bytes_per_row as usize;
+            pixels.extend_from_slice(&data[start..end]);
+        }
+        drop(data);
+        staging_buffer.unmap();
+
+        Ok((pixels, format, width, height))
     }
 }
 
