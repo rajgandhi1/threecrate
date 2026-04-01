@@ -143,3 +143,7 @@ path = "mesh_boolean_example.rs"
 [[bin]]
 name = "mesh_smoothing_example"
 path = "mesh_smoothing_example.rs"
+
+[[bin]]
+name = "pbr_visualization"
+path = "pbr_visualization.rs"
