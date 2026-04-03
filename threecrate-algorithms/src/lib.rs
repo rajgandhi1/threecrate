@@ -13,6 +13,7 @@ pub mod mesh_boolean;
 pub mod mesh_smoothing;
 pub mod colorization;
 pub mod simd_distance;
+pub mod streaming;
 
 // Re-export commonly used items
 pub use filtering::*;
