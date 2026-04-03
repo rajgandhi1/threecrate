@@ -1,0 +1,62 @@
+name: Publish to crates.io
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  publish:
+    name: Publish crates
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Publish threecrate-core
+        run: cargo publish -p threecrate-core
+
+      - name: Wait for indexing
+        run: sleep 30
+
+      - name: Publish threecrate-algorithms
+        run: cargo publish -p threecrate-algorithms
+
+      - name: Wait for indexing
+        run: sleep 30
+
+      - name: Publish threecrate-io
+        run: cargo publish -p threecrate-io
+
+      - name: Wait for indexing
+        run: sleep 30
+
+      - name: Publish threecrate-gpu
+        run: cargo publish -p threecrate-gpu
+
+      - name: Wait for indexing
+        run: sleep 30
+
+      - name: Publish threecrate-reconstruction
+        run: cargo publish -p threecrate-reconstruction
+
+      - name: Wait for indexing
+        run: sleep 30
+
+      - name: Publish threecrate-simplification
+        run: cargo publish -p threecrate-simplification
+
+      - name: Wait for indexing
+        run: sleep 30
+
+      - name: Publish threecrate-visualization
+        run: cargo publish -p threecrate-visualization
+
+      - name: Wait for indexing
+        run: sleep 30
+
+      - name: Publish threecrate (umbrella)
+        run: cargo publish --manifest-path threecrate-umbrella/Cargo.toml

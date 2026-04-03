@@ -16,7 +16,7 @@ io-mmap = ["memmap2"]
 e57 = ["dep:e57"]
 
 [dependencies]
-threecrate-core = { path = "../threecrate-core", version = "0.6.0" }
+threecrate-core = { path = "../threecrate-core", version = "0.7.0" }
 ply-rs = { workspace = true }
 obj = { workspace = true }
 pasture-core = { workspace = true, optional = true }
