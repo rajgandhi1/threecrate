@@ -153,5 +153,9 @@ name = "simd_distance_example"
 path = "simd_distance_example.rs"
 
 [[bin]]
+name = "streaming_pipeline"
+path = "streaming_pipeline.rs"
+
+[[bin]]
 name = "pbr_visualization"
 path = "pbr_visualization.rs"
