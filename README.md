@@ -1,6 +1,6 @@
 # threecrate
 
-A comprehensive 3D point cloud processing library for Rust.
+A comprehensive 3D point cloud and mesh processing library for Rust.
 
 ![logo_3crate Small](https://github.com/user-attachments/assets/8bd23278-0638-4fb6-a187-5a8d20beebd1)
 
@@ -10,18 +10,19 @@ A comprehensive 3D point cloud processing library for Rust.
 
 ## Overview
 
-threecrate is a modular, high-performance library for 3D point cloud and mesh processing. This umbrella crate provides convenient access to all threecrate functionality in one place.
+threecrate is a modular, high-performance library for 3D point cloud and mesh processing in Rust. It is organized as a workspace of specialized crates, allowing you to include only the functionality you need.
 
 ## Features
 
-- **Core**: Basic 3D data structures (Point, PointCloud, Mesh, Transform)
-- **Algorithms**: Point cloud processing (filtering, registration, segmentation, normals)
-- **GPU**: GPU-accelerated processing using wgpu
-- **I/O**: File format support (PLY, OBJ, LAS, Pasture formats)
-- **Simplification**: Mesh and point cloud simplification algorithms
-- **Reconstruction**: Surface reconstruction from point clouds
-- **Visualization**: Interactive 3D visualization tools
-    -## Viewer
+- **Core**: 3D data structures (Point, PointCloud, TriangleMesh, Transform)
+- **Algorithms**: Filtering, registration (ICP, NDT, global), segmentation, normal estimation, feature descriptors (FPFH, SHOT), mesh boolean operations, mesh smoothing, point cloud colorization, SIMD-accelerated distance computations, and streaming processing
+- **GPU**: GPU-accelerated filtering, normal estimation, ICP, nearest neighbor search, TSDF volume integration, and real-time rendering via wgpu
+- **I/O**: PLY, OBJ, PCD, LAS/LAZ, XYZ/CSV, E57 with streaming and memory-mapped I/O support
+- **Reconstruction**: Poisson, Ball Pivoting, Alpha Shapes, Delaunay, Marching Cubes, Moving Least Squares, and automatic algorithm selection
+- **Simplification**: Quadric error metrics, edge collapse, clustering-based, and progressive mesh simplification
+- **Visualization**: Interactive 3D viewer with orbit, pan, and zoom controls
+
+## Viewer
 
 ![ThreeCrate Mesh Viewer](assets/mesh_viewer.png)
 
@@ -31,7 +32,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-threecrate = "0.5.0"
+threecrate = "0.6.0"
 ```
 
 Basic usage:
@@ -46,40 +47,36 @@ let points = vec![
     Point3f::new(0.0, 1.0, 0.0),
 ];
 let cloud = PointCloud::from_points(points);
-
-// Apply algorithms (many still in development)
 println!("Point cloud with {} points", cloud.len());
 ```
 
 ## Installation Options
 
-### Option 1: Umbrella Crate (Recommended for most users)
+### Option 1: Umbrella Crate (Recommended)
 
 ```toml
 [dependencies]
-threecrate = "0.5.0"
+threecrate = "0.6.0"
 ```
 
-### Option 2: Individual Crates (For minimal dependencies)
+### Option 2: Individual Crates (Minimal dependencies)
 
 ```toml
 [dependencies]
-threecrate-core = "0.5.0"         # Core data structures
-threecrate-algorithms = "0.5.0"   # Processing algorithms
-threecrate-gpu = "0.5.0"          # GPU acceleration
-threecrate-io = "0.5.0"           # File I/O
-threecrate-simplification = "0.5.0"  # Simplification
-threecrate-reconstruction = "0.5.0"  # Surface reconstruction
-threecrate-visualization = "0.5.0"  # Visualization
+threecrate-core = "0.6.0"
+threecrate-algorithms = "0.6.0"
+threecrate-gpu = "0.6.0"
+threecrate-io = "0.6.0"
+threecrate-simplification = "0.6.0"
+threecrate-reconstruction = "0.6.0"
+threecrate-visualization = "0.6.0"
 ```
 
 ## Feature Flags
 
-The umbrella crate supports granular feature control:
-
 ```toml
 [dependencies]
-threecrate = { version = "0.5.0", features = ["all"] }
+threecrate = { version = "0.6.0", features = ["all"] }
 ```
 
 Available features:
@@ -96,73 +93,86 @@ Available features:
 ## Individual Crates
 
 ### [`threecrate-core`](https://crates.io/crates/threecrate-core)
-Core data structures and traits for 3D processing.
 
-**Key types:**
-- `Point3f`: 3D point with floating-point coordinates
-- `PointCloud`: Collection of 3D points with spatial operations
-- `TriangleMesh`: 3D mesh with vertices, faces, and normals
-- `Transform3D`: 3D transformations (rotation, translation, scaling)
+Core data structures and traits.
+
+- `Point3f`, `ColoredPoint3f`, `NormalPoint3f` — point types
+- `PointCloud<T>` — generic point cloud with spatial operations
+- `TriangleMesh` — mesh with vertices, faces, normals, and optional UVs
+- `Transform3D` — rotation, translation, and scaling
+- Optional Bevy game engine integration
 
 ### [`threecrate-algorithms`](https://crates.io/crates/threecrate-algorithms)
+
 Algorithms for point cloud and mesh processing.
 
-**Features:**
-- **Filtering**: Statistical, radius, voxel grid filters
-- **Registration**: ICP (Iterative Closest Point) algorithm
-- **Segmentation**: RANSAC plane detection
-- **Normals**: Normal estimation and orientation
-- **Nearest Neighbor**: Efficient spatial queries
+- **Filtering**: Voxel grid, radius outlier removal, statistical outlier removal
+- **Registration**: ICP (point-to-point and point-to-plane), NDT, global registration (FPFH + RANSAC)
+- **Segmentation**: RANSAC plane detection, Euclidean cluster extraction (CPU and parallel)
+- **Normal Estimation**: K-nearest and radius-based, with configurable orientation
+- **Feature Descriptors**: FPFH and SHOT
+- **Nearest Neighbor Search**: KD-tree and brute-force, with SIMD-accelerated distance computations
+- **Mesh Boolean Operations**: Union, intersection, and difference
+- **Mesh Smoothing**: Laplacian, Taubin, and HC smoothing
+- **Colorization**: Project colors from registered RGB camera images onto point clouds
+- **Streaming Processing**: Memory-efficient pipeline for large point clouds
 
 ### [`threecrate-gpu`](https://crates.io/crates/threecrate-gpu)
-GPU-accelerated processing using wgpu.
 
-**Features:**
-- GPU-accelerated filtering and processing
-- Parallel normal computation
-- GPU-based ICP registration
-- Efficient mesh rendering
+GPU-accelerated computing via wgpu (Vulkan, Metal, DirectX 12).
+
+- GPU filtering: statistical outlier removal, radius filtering, voxel grid
+- GPU normal estimation
+- GPU nearest neighbor search (K-nearest and radius)
+- GPU ICP registration
+- TSDF volume integration and surface extraction
+- Real-time point cloud and mesh rendering with PBR material support
 
 ### [`threecrate-io`](https://crates.io/crates/threecrate-io)
-File format support for point clouds and meshes.
+
+File I/O for point clouds and meshes.
 
 **Supported formats:**
-- PLY (Stanford Polygon format)
-- OBJ (Wavefront OBJ)
-- LAS/LAZ (LiDAR formats)
-- Pasture formats
+- Point clouds: PLY (ASCII/binary), PCD (ASCII/binary), LAS/LAZ (LiDAR), XYZ/CSV, E57
+- Meshes: OBJ, PLY
 
-### [`threecrate-simplification`](https://crates.io/crates/threecrate-simplification)
-Mesh and point cloud simplification algorithms.
-
-**Features:**
-- Quadric error metrics
-- Edge collapse simplification
-- Clustering-based simplification
+**Advanced features:**
+- Auto-detect format from file extension
+- Streaming readers for memory-efficient processing of large files
+- Memory-mapped I/O for large binary files
+- Attribute-preserving read/write with metadata support
 
 ### [`threecrate-reconstruction`](https://crates.io/crates/threecrate-reconstruction)
-Advanced surface reconstruction from point clouds with intelligent algorithm selection.
 
-**Features:**
-- Poisson surface reconstruction with automatic parameter tuning
-- Enhanced Ball Pivoting with multi-scale and adaptive radius selection
-- Complete Delaunay triangulation with multiple projection methods
-- Marching Cubes for volumetric reconstruction from implicit surfaces
-- Moving Least Squares (MLS) surface fitting with multiple weight functions
-- Alpha shapes for non-convex surface extraction
-- Unified reconstruction pipeline with automatic algorithm selection
-- Parallel processing using rayon for optimal performance
-- Comprehensive quality metrics and validation
-- Data analysis engine for point cloud characteristics
+Surface reconstruction from point clouds.
+
+- Poisson surface reconstruction (watertight meshes)
+- Ball Pivoting Algorithm (BPA) with multi-scale and adaptive radius
+- Alpha shapes for non-convex surfaces
+- Delaunay triangulation
+- Marching Cubes for volumetric/implicit surfaces
+- Moving Least Squares (MLS) surface fitting
+- `auto_reconstruct()` — unified pipeline with automatic algorithm selection and quality metrics
+- Parallel processing via rayon
+
+### [`threecrate-simplification`](https://crates.io/crates/threecrate-simplification)
+
+Mesh simplification and decimation.
+
+- Quadric error metrics (topology-preserving edge collapse)
+- Edge collapse simplification with boundary preservation
+- Clustering-based simplification
+- Progressive mesh representation
+- Quality metrics: Hausdorff distance, volume preservation, normal deviation
 
 ### [`threecrate-visualization`](https://crates.io/crates/threecrate-visualization)
-Interactive 3D visualization tools.
 
-**Features:**
-- Real-time point cloud visualization
-- Interactive mesh rendering
-- Camera controls (orbit, pan, zoom)
-- Cross-platform support
+Interactive real-time 3D visualization.
+
+- `show_point_cloud()` and `show_mesh()` for quick display
+- Orbit, pan, and zoom camera controls (mouse drag, scroll, keyboard shortcuts)
+- GPU-accelerated rendering via wgpu
+- Cross-platform (Windows, macOS, Linux)
 
 ## Examples
 
@@ -171,44 +181,23 @@ Interactive 3D visualization tools.
 ```rust
 use threecrate::prelude::*;
 
-// Create a point cloud
-let points = vec![
-    Point3f::new(0.0, 0.0, 0.0),
-    Point3f::new(1.0, 0.0, 0.0),
-    Point3f::new(0.0, 1.0, 0.0),
-];
-let cloud = PointCloud::from_points(points);
+// Load a point cloud
+let cloud = read_point_cloud("scan.ply")?;
 
-// Estimate normals
+// Filter and estimate normals
+let cloud = voxel_grid_filter(&cloud, 0.05)?;
+let cloud = statistical_outlier_removal(&cloud, 10, 2.0)?;
 let normals_cloud = estimate_normals(&cloud, 10)?;
 
-// Perform surface reconstruction
-let mesh = auto_reconstruct(&cloud)?;
-println!("Reconstructed mesh with {} triangles", mesh.face_count());
+// Register two scans with ICP
+let result = icp(&source, &target, Default::default())?;
 
-// Or use specific algorithm
-let poisson_mesh = poisson_reconstruction_default(&normals_cloud)?;
+// Surface reconstruction
+let mesh = auto_reconstruct(&normals_cloud)?;
+println!("Reconstructed mesh: {} triangles", mesh.face_count());
 
-// Save processed cloud
-// cloud.save("output.ply")?; // I/O functionality
-```
-
-### Mesh Processing
-
-```rust
-use threecrate::prelude::*;
-
-// Create a mesh
-let vertices = vec![
-    Point3f::new(0.0, 0.0, 0.0),
-    Point3f::new(1.0, 0.0, 0.0),
-    Point3f::new(0.0, 1.0, 0.0),
-];
-let faces = vec![[0, 1, 2]];
-let mesh = TriangleMesh::from_vertices_and_faces(vertices, faces);
-
-// Simplify mesh (algorithms in development)
-println!("Mesh with {} vertices", mesh.vertices.len());
+// Save result
+write_mesh("output.obj", &mesh)?;
 ```
 
 ### GPU Acceleration
@@ -216,26 +205,36 @@ println!("Mesh with {} vertices", mesh.vertices.len());
 ```rust
 use threecrate::prelude::*;
 
-// Initialize GPU context
-let gpu_context = GpuContext::new().await?;
+let gpu = GpuContext::new().await?;
 
-// GPU-accelerated processing (in development)
-println!("GPU context initialized");
+// GPU-accelerated filtering
+let filtered = gpu_voxel_grid_filter(&gpu, &cloud, 0.05).await?;
+
+// GPU ICP registration
+let result = gpu_icp(&gpu, &source, &target).await?;
+```
+
+### Interactive Visualization
+
+```rust
+use threecrate::prelude::*;
+
+show_point_cloud(&cloud)?;
+show_mesh(&mesh)?;
 ```
 
 ## Performance
 
-threecrate is designed for high performance:
-
-- **Parallel processing**: Uses `rayon` for CPU parallelism
-- **GPU acceleration**: Optional wgpu-based GPU processing
-- **Efficient data structures**: Optimized for cache locality
-- **Spatial indexing**: KD-tree and other spatial data structures
+- **Parallel CPU processing**: rayon-based parallelism across algorithms
+- **GPU acceleration**: optional wgpu-based GPU compute for filtering, registration, and rendering
+- **SIMD distance computations**: optimized nearest neighbor search
+- **Streaming I/O**: process large point clouds without loading everything into memory
+- **Spatial indexing**: KD-tree and R*-tree for efficient neighbor queries
 
 ## License
 
-- MIT license ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
+Dual-licensed under MIT or Apache-2.0. See [LICENSE-MIT](LICENSE-MIT) for details.
 
 ## Contributing
 
-Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+Contributions are welcome. Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
