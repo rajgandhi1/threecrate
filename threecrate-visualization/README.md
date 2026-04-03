@@ -8,21 +8,21 @@ Real-time 3D visualization and interactive viewing for point clouds and meshes.
 
 ## Features
 
-- **Interactive Viewer**: Real-time 3D visualization with camera controls
-- **Point Cloud Rendering**: GPU-accelerated point cloud display
-- **Mesh Rendering**: Triangle mesh visualization with lighting
-- **Camera Controls**: Orbit, pan, zoom, and reset functionality
-- **Cross-platform**: Works on Windows, macOS, and Linux via winit and wgpu
+- `show_point_cloud()` and `show_mesh()` convenience functions for quick display
+- `InteractiveViewer` for full control over the viewing session
+- GPU-accelerated rendering via wgpu
+- Triangle mesh rendering with lighting
+- Spherical coordinate camera with orbit, pan, and zoom modes
+- Cross-platform (Windows, macOS, Linux) via winit and wgpu
 
 ## Camera Controls
 
 - **Mouse Drag**: Orbit around the scene
 - **Mouse Scroll**: Zoom in/out
-- **Keyboard Shortcuts**:
-  - `O`: Switch to orbit mode
-  - `P`: Switch to pan mode
-  - `Z`: Switch to zoom mode
-  - `R`: Reset camera position
+- **O**: Switch to orbit mode
+- **P**: Switch to pan mode
+- **Z**: Switch to zoom mode
+- **R**: Reset camera position
 
 ## Usage
 
@@ -30,42 +30,30 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-threecrate-visualization = "0.1.0"
-threecrate-core = "0.1.0"
+threecrate-visualization = "0.6.0"
+threecrate-core = "0.6.0"
 ```
 
 ## Example
 
 ```rust
-use threecrate_visualization::InteractiveViewer;
+use threecrate_visualization::{show_point_cloud, show_mesh, InteractiveViewer};
 use threecrate_core::{PointCloud, Point3f};
 
-// Create point cloud
-let points = vec![
-    Point3f::new(0.0, 0.0, 0.0),
-    Point3f::new(1.0, 0.0, 0.0),
-    Point3f::new(0.0, 1.0, 0.0),
-];
-let cloud = PointCloud::from_points(points);
+// Quick display
+show_point_cloud(&cloud)?;
+show_mesh(&mesh)?;
 
-// Create and run viewer
+// Full control with InteractiveViewer
 let mut viewer = InteractiveViewer::new()?;
 viewer.set_point_cloud(&cloud);
 viewer.run()?;
 ```
 
-## Architecture
-
-- **Camera System**: Flexible camera with spherical coordinates
-- **GPU Rendering**: Hardware-accelerated rendering via wgpu
-- **Event Handling**: Responsive input handling with winit
-- **Cross-platform**: Native windowing and input across platforms
-
 ## Requirements
 
-- **GPU**: Modern graphics card with Vulkan, Metal, or DirectX 12 support
-- **RAM**: Minimum 2GB for large point clouds
-- **OS**: Windows 10+, macOS 10.15+, or Linux with graphics drivers
+- A GPU with Vulkan, Metal, or DirectX 12 support
+- Windows 10+, macOS 10.15+, or Linux with appropriate graphics drivers
 
 ## License
 
@@ -74,4 +62,4 @@ This project is licensed under either of
 - Apache License, Version 2.0, ([LICENSE-APACHE](LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)
 - MIT license ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
 
-at your option. 
+at your option.

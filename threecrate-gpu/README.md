@@ -4,23 +4,17 @@
 [![Documentation](https://docs.rs/threecrate-gpu/badge.svg)](https://docs.rs/threecrate-gpu)
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](https://github.com/rajgandhi1/threecrate#license)
 
-GPU-accelerated algorithms for 3D point cloud processing using WGPU.
+GPU-accelerated algorithms for 3D point cloud processing using wgpu.
 
 ## Features
 
-- **GPU Computing**: Hardware-accelerated point cloud processing
-- **Real-time Rendering**: Point cloud and mesh visualization
-- **Parallel Algorithms**: Massively parallel GPU implementations
-- **Cross-platform**: Works on Windows, macOS, and Linux
-- **Modern Graphics**: Uses WGPU for cross-platform GPU access
-
-## Algorithms
-
-- **Point Cloud Rendering**: Real-time visualization with splatting
-- **Normal Estimation**: GPU-accelerated surface normal computation
-- **Filtering**: Parallel outlier removal and downsampling
-- **ICP Registration**: GPU-accelerated point cloud alignment
-- **TSDF Integration**: Truncated Signed Distance Function processing
+- **Filtering**: GPU statistical outlier removal, radius filtering, voxel grid downsampling
+- **Normal Estimation**: Parallel GPU-based surface normal computation
+- **Nearest Neighbor Search**: GPU K-nearest and radius neighbor search
+- **ICP Registration**: GPU-accelerated Iterative Closest Point
+- **TSDF**: Truncated Signed Distance Function volume integration and surface extraction
+- **Rendering**: Real-time point cloud and mesh rendering with PBR material support
+- **Cross-platform**: Vulkan, Metal, and DirectX 12 via wgpu
 
 ## Usage
 
@@ -28,25 +22,33 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-threecrate-gpu = "0.1.0"
-threecrate-core = { version = "0.1.0", features = ["gpu"] }
+threecrate-gpu = "0.6.0"
+threecrate-core = { version = "0.6.0", features = ["gpu"] }
 ```
 
 ## Example
 
 ```rust
-use threecrate_gpu::{GpuContext, PointCloudRenderer, RenderConfig};
+use threecrate_gpu::{GpuContext, PointCloudRenderer, RenderConfig, point_cloud_to_vertices};
 use threecrate_core::{PointCloud, Point3f};
 
 // Initialize GPU context
 let gpu_context = GpuContext::new().await?;
 
-// Create point cloud renderer
+// GPU-accelerated filtering
+let filtered = gpu_voxel_grid_filter(&gpu_context, &cloud, 0.05).await?;
+
+// GPU ICP registration
+let result = gpu_icp(&gpu_context, &source, &target).await?;
+
+// TSDF volume integration
+let mut volume = create_tsdf_volume(resolution, voxel_size);
+gpu_tsdf_integrate(&gpu_context, &mut volume, &depth_image, &intrinsics, &pose).await?;
+let mesh = gpu_tsdf_extract_surface(&gpu_context, &volume).await?;
+
+// Real-time rendering
 let config = RenderConfig::default();
 let renderer = PointCloudRenderer::new(&window, config).await?;
-
-// Render point cloud
-let cloud = PointCloud::from_points(vec![/* points */]);
 let vertices = point_cloud_to_vertices(&cloud, [1.0, 1.0, 1.0], 4.0);
 renderer.render(&vertices)?;
 ```
@@ -65,4 +67,4 @@ This project is licensed under either of
 - Apache License, Version 2.0, ([LICENSE-APACHE](LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)
 - MIT license ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
 
-at your option. 
+at your option.
