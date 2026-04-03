@@ -8,12 +8,17 @@ High-performance algorithms for 3D point cloud and mesh processing.
 
 ## Features
 
-- **Point Cloud Processing**: Filtering, downsampling, and outlier removal
-- **Registration**: ICP (Iterative Closest Point) algorithm for point cloud alignment
-- **Segmentation**: RANSAC plane segmentation and clustering algorithms
-- **Spatial Queries**: K-nearest neighbor search and spatial indexing
-- **Normal Estimation**: Surface normal computation for point clouds
-- **Parallel Processing**: Multi-threaded algorithms using Rayon
+- **Filtering**: Voxel grid, radius outlier removal, statistical outlier removal
+- **Registration**: ICP (point-to-point and point-to-plane), NDT, global registration (FPFH + RANSAC)
+- **Segmentation**: RANSAC plane detection, Euclidean cluster extraction (sequential and parallel)
+- **Normal Estimation**: K-nearest and radius-based normal computation with configurable orientation
+- **Feature Descriptors**: FPFH (Fast Point Feature Histograms) and SHOT (Signature of Histograms of Orientations)
+- **Nearest Neighbor Search**: KD-tree and brute-force, with SIMD-accelerated distance computations
+- **Mesh Boolean Operations**: Union, intersection, and difference
+- **Mesh Smoothing**: Laplacian, Taubin, and HC smoothing
+- **Colorization**: Project colors from registered RGB images onto point clouds
+- **Streaming Processing**: Memory-efficient pipeline for large point clouds
+- **Parallel Processing**: Multi-threaded algorithms via rayon
 
 ## Usage
 
@@ -21,39 +26,54 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-threecrate-algorithms = "0.1.0"
-threecrate-core = "0.1.0"
+threecrate-algorithms = "0.6.0"
+threecrate-core = "0.6.0"
 ```
 
 ## Example
 
 ```rust
 use threecrate_core::{PointCloud, Point3f};
-use threecrate_algorithms::{icp_registration, estimate_normals, plane_segmentation_ransac};
+use threecrate_algorithms::{
+    icp, estimate_normals, segment_plane_ransac,
+    voxel_grid_filter, statistical_outlier_removal,
+    extract_euclidean_clusters, global_registration,
+};
 
-// Load or create point clouds
-let source = PointCloud::from_points(vec![/* points */]);
-let target = PointCloud::from_points(vec![/* points */]);
-
-// ICP registration
-let result = icp_registration(&source, &target, 50, 0.001, 1.0)?;
-println!("Registration converged: {}", result.converged);
+// Filter the point cloud
+let cloud = voxel_grid_filter(&cloud, 0.05)?;
+let cloud = statistical_outlier_removal(&cloud, 10, 2.0)?;
 
 // Estimate normals
-let normals = estimate_normals(&source, 10)?;
+let normals = estimate_normals(&cloud, 10)?;
+
+// ICP registration
+let result = icp(&source, &target, Default::default())?;
+println!("Registration converged: {}", result.converged);
 
 // RANSAC plane segmentation
-let plane_result = plane_segmentation_ransac(&source, 1000, 0.01)?;
+let plane_result = segment_plane_ransac(&cloud, 1000, 0.01)?;
 println!("Found {} inliers", plane_result.inliers.len());
+
+// Euclidean cluster extraction
+let clusters = extract_euclidean_clusters(&cloud, 0.1, 10, 10000)?;
+println!("Found {} clusters", clusters.len());
+
+// Global registration using FPFH features
+let result = global_registration(&source, &target, Default::default())?;
 ```
 
 ## Algorithms
 
-- **ICP Registration**: Point cloud alignment using iterative closest point
-- **RANSAC Segmentation**: Robust plane fitting and outlier detection
-- **Normal Estimation**: Surface normal computation using local neighborhoods
-- **Filtering**: Statistical outlier removal and radius filtering
-- **Spatial Indexing**: KD-tree and R-tree based spatial queries
+- **Filtering**: `voxel_grid_filter`, `radius_outlier_removal`, `statistical_outlier_removal`
+- **Registration**: `icp`, `icp_point_to_point`, `icp_point_to_plane`, `ndt_registration`, `global_registration`
+- **Segmentation**: `segment_plane_ransac`, `extract_euclidean_clusters`, `extract_euclidean_clusters_parallel`
+- **Normal Estimation**: `estimate_normals`, `estimate_normals_radius`, `estimate_normals_with_config`
+- **Feature Descriptors**: `extract_fpfh_features`, `extract_shot_features`
+- **Nearest Neighbor**: `KdTree`, `BruteForceSearch`
+- **Mesh Boolean**: `mesh_union`, `mesh_intersection`, `mesh_difference`
+- **Mesh Smoothing**: `smooth_laplacian`, `smooth_taubin`, `smooth_hc`
+- **Colorization**: `colorize_point_cloud`, `colorize_from_images`
 
 ## License
 
@@ -62,4 +82,4 @@ This project is licensed under either of
 - Apache License, Version 2.0, ([LICENSE-APACHE](LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)
 - MIT license ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
 
-at your option. 
+at your option.

@@ -6,33 +6,15 @@
 
 Surface reconstruction algorithms for generating meshes from point clouds.
 
-## Features
-
-- **Poisson Reconstruction**: High-quality surface reconstruction using Poisson solving
-- **Ball Pivoting**: Fast surface reconstruction for uniformly sampled point clouds
-- **Alpha Shapes**: Geometric reconstruction using alpha complex
-- **Delaunay Triangulation**: 2D/3D triangulation for mesh generation
-- **Parallel Processing**: Multi-threaded algorithms for large datasets
-
 ## Algorithms
 
-### Poisson Surface Reconstruction
-- High-quality mesh generation from oriented point clouds
-- Handles noise and irregular sampling well
-- Produces watertight meshes
-- Configurable octree depth and sample density
-
-### Ball Pivoting Algorithm (BPA)
-- Fast reconstruction for uniformly sampled point clouds
-- Good for dense, noise-free data
-- Preserves sharp features and boundaries
-- Configurable ball radius and clustering
-
-### Alpha Shapes
-- Geometric approach using alpha complex
-- Good for shape analysis and boundary detection
-- Multiple levels of detail with different alpha values
-- Handles complex topologies
+- **Poisson Surface Reconstruction**: Watertight meshes from oriented point clouds; configurable octree depth
+- **Ball Pivoting Algorithm (BPA)**: Fast reconstruction for uniformly sampled clouds; multi-scale and adaptive radius
+- **Alpha Shapes**: Non-convex surface extraction via alpha complex; multiple levels of detail
+- **Delaunay Triangulation**: Complete 3D triangulation with multiple projection methods
+- **Marching Cubes**: Volumetric/implicit surface to mesh conversion
+- **Moving Least Squares (MLS)**: Smooth surface fitting with multiple weight functions
+- **Unified Pipeline**: `auto_reconstruct()` — automatic algorithm selection based on point cloud characteristics, with quality metrics and validation
 
 ## Usage
 
@@ -40,27 +22,30 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-threecrate-reconstruction = "0.1.0"
-threecrate-core = "0.1.0"
+threecrate-reconstruction = "0.6.0"
+threecrate-core = "0.6.0"
 ```
 
 ## Example
 
 ```rust
-use threecrate_reconstruction::{poisson_reconstruction, ball_pivoting_reconstruction};
-use threecrate_core::{PointCloud, Point3f};
+use threecrate_reconstruction::{
+    auto_reconstruct,
+    poisson_reconstruction, poisson_reconstruction_default,
+    ball_pivoting_reconstruction, BallPivotingConfig,
+};
+use threecrate_core::PointCloud;
 
-// Load point cloud with normals
-let cloud = PointCloud::from_points(vec![/* points */]);
+// Automatic algorithm selection
+let mesh = auto_reconstruct(&cloud)?;
+println!("Generated mesh: {} faces", mesh.faces.len());
 
 // Poisson reconstruction
-let mesh = poisson_reconstruction(&cloud, 6, 1.0, 0.1)?;
-println!("Generated mesh with {} faces", mesh.faces.len());
+let mesh = poisson_reconstruction_default(&normals_cloud)?;
 
-// Ball pivoting reconstruction
-let radius = 0.1;
-let mesh = ball_pivoting_reconstruction(&cloud, radius)?;
-println!("Generated mesh with {} faces", mesh.faces.len());
+// Ball pivoting with custom config
+let config = BallPivotingConfig { radius: 0.1, ..Default::default() };
+let mesh = ball_pivoting_reconstruction(&cloud, config)?;
 ```
 
 ## Algorithm Details
@@ -72,14 +57,12 @@ println!("Generated mesh with {} faces", mesh.faces.len());
 
 ### Ball Pivoting Parameters
 - **Ball Radius**: Reconstruction radius (depends on point density)
-- **Clustering**: Remove duplicate vertices and faces
-- **Normal Consistency**: Ensure consistent face orientations
+- **Multi-scale**: Adaptive radius selection for varying densities
 
 ## Requirements
 
-- Point clouds with estimated normals for best results
-- Sufficient point density for reconstruction
-- Reasonable memory for large point clouds
+- Point clouds with estimated normals produce the best results with Poisson and MLS
+- Sufficient point density relative to the ball radius for BPA
 
 ## License
 
@@ -88,4 +71,4 @@ This project is licensed under either of
 - Apache License, Version 2.0, ([LICENSE-APACHE](LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)
 - MIT license ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
 
-at your option. 
+at your option.

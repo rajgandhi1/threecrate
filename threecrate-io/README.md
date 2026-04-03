@@ -6,27 +6,26 @@
 
 File I/O operations for point clouds and meshes in the threecrate ecosystem.
 
-## Features
-
-- **Point Cloud Formats**: PLY, PCD, LAS, LAZ, XYZ/CSV file support
-- **Mesh Formats**: OBJ, PLY file support with normals and textures
-- **Memory-Mapped I/O**: High-performance reading of large binary files (optional)
-- **Streaming I/O**: Memory-efficient reading and writing
-- **Error Handling**: Comprehensive error reporting for invalid files
-- **Cross-platform**: Works on Windows, macOS, and Linux
-- **OS-Gated Features**: Platform-specific optimizations with automatic fallback
-
 ## Supported Formats
 
 ### Point Clouds
 - **PLY**: Polygon File Format (ASCII and binary)
 - **PCD**: Point Cloud Data format (ASCII and binary)
-- **LAS/LAZ**: LiDAR data formats via Pasture
+- **LAS/LAZ**: LiDAR data formats via Pasture (feature-gated)
 - **XYZ/CSV**: Comma-separated values with configurable columns
+- **E57**: 3D imaging format (feature-gated)
 
 ### Meshes
-- **OBJ**: Wavefront OBJ format with materials
+- **OBJ**: Wavefront OBJ with materials and groups
 - **PLY**: Triangle meshes in PLY format
+
+## Features
+
+- Auto-detect format from file extension
+- Streaming readers for memory-efficient processing of large files
+- Memory-mapped I/O for large binary files (`io-mmap` feature)
+- Attribute-preserving read/write with metadata support
+- Robust readers with error recovery
 
 ## Usage
 
@@ -34,18 +33,19 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-threecrate-io = "0.1.0"
-threecrate-core = "0.1.0"
+threecrate-io = "0.6.0"
+threecrate-core = "0.6.0"
 ```
 
 ### Optional Features
 
 - `las_laz`: Enable LAS/LAZ format support via Pasture
+- `e57`: Enable E57 format support
 - `io-mmap`: Enable memory-mapped I/O for improved performance on large binary files
 
 ```toml
 [dependencies]
-threecrate-io = { version = "0.1.0", features = ["io-mmap"] }
+threecrate-io = { version = "0.6.0", features = ["io-mmap", "e57"] }
 ```
 
 ## Examples
@@ -53,8 +53,7 @@ threecrate-io = { version = "0.1.0", features = ["io-mmap"] }
 ### Basic Usage
 
 ```rust
-use threecrate_io::{read_point_cloud, write_point_cloud, read_mesh};
-use threecrate_core::{PointCloud, Point3f};
+use threecrate_io::{read_point_cloud, write_point_cloud, read_mesh, write_mesh};
 
 // Auto-detect format and load point cloud
 let cloud = read_point_cloud("input.ply")?;
@@ -63,41 +62,30 @@ println!("Loaded {} points", cloud.len());
 // Save point cloud (format determined by extension)
 write_point_cloud(&cloud, "output.pcd")?;
 
-// Load mesh from OBJ file
+// Load and save mesh
 let mesh = read_mesh("model.obj")?;
-println!("Loaded mesh with {} vertices", mesh.vertices.len());
+write_mesh("output.ply", &mesh)?;
 ```
 
-### Memory-Mapped I/O (io-mmap feature)
-
-For large binary files, enable memory-mapped I/O for better performance:
+### Streaming I/O
 
 ```rust
-use threecrate_io::{RobustPlyReader, RobustPcdReader};
+use threecrate_io::read_point_cloud_iter;
 
-// Memory mapping is automatically used for large binary files
-// when the io-mmap feature is enabled
-let ply_data = RobustPlyReader::read_ply_file("large_cloud.ply")?;
-let (header, points) = RobustPcdReader::read_pcd_file("large_cloud.pcd")?;
-
-// Check if memory mapping would be used
-#[cfg(feature = "io-mmap")]
-{
-    let would_use_mmap = threecrate_io::mmap::should_use_mmap("large_cloud.ply");
-    println!("Would use memory mapping: {}", would_use_mmap);
+// Process large files without loading everything into memory
+for chunk in read_point_cloud_iter("large_scan.ply")? {
+    let points = chunk?;
+    // process chunk
 }
 ```
 
-### Benchmarking
+### Memory-Mapped I/O
 
-Compare performance between memory-mapped and standard I/O:
+For large binary files, enable the `io-mmap` feature for better performance:
 
 ```bash
-# Run benchmarks (requires io-mmap feature)
-cargo bench --features io-mmap mmap_benchmarks
-
-# Run the memory mapping example
 cargo run --example mmap_example --features io-mmap
+cargo bench --features io-mmap mmap_benchmarks
 ```
 
 ## License
@@ -107,4 +95,4 @@ This project is licensed under either of
 - Apache License, Version 2.0, ([LICENSE-APACHE](LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)
 - MIT license ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
 
-at your option. 
+at your option.

@@ -8,11 +8,13 @@ Core data structures and traits for the threecrate library ecosystem.
 
 ## Features
 
-- **Point Cloud Support**: Generic point cloud data structures with support for colored points
-- **Mesh Representation**: Triangle mesh data structures with normals and texture coordinates
-- **Spatial Transformations**: Comprehensive 3D transformation utilities
-- **Error Handling**: Robust error types for 3D processing operations
-- **GPU Integration**: Optional GPU support via the `gpu` feature flag
+- **Point Types**: `Point3f`, `ColoredPoint3f`, `NormalPoint3f`, `ColoredNormalPoint3f`
+- **Point Cloud**: Generic `PointCloud<T>` with spatial operations
+- **Mesh**: `TriangleMesh` with vertices, faces, normals, and optional UV coordinates
+- **Transformations**: `Transform3D` for rotation, translation, and scaling
+- **Traits**: `Drawable`, `Transformable`, `NearestNeighborSearch`
+- **Error Handling**: Comprehensive error types for 3D processing operations
+- **Bevy Integration**: Optional Bevy game engine interop via the `bevy` feature flag
 
 ## Usage
 
@@ -20,14 +22,14 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-threecrate-core = "0.1.0"
+threecrate-core = "0.6.0"
 ```
 
-For GPU support:
+For Bevy integration:
 
 ```toml
 [dependencies]
-threecrate-core = { version = "0.1.0", features = ["gpu"] }
+threecrate-core = { version = "0.6.0", features = ["bevy"] }
 ```
 
 ## Example
@@ -60,4 +62,4 @@ This project is licensed under either of
 - Apache License, Version 2.0, ([LICENSE-APACHE](LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)
 - MIT license ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
 
-at your option. 
+at your option.
