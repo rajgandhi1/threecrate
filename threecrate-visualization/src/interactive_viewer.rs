@@ -15,7 +15,7 @@ use winit::{
 use threecrate_core::{PointCloud, TriangleMesh, Result, Point3f, ColoredPoint3f, Error};
 use threecrate_gpu::{
     PointCloudRenderer, RenderConfig, PointVertex,
-    MeshRenderer, MeshRenderConfig, ShadingMode, mesh_to_gpu_mesh,
+    MeshRenderer, MeshRenderConfig, ShadingMode, PbrMaterial, MeshLightingParams, mesh_to_gpu_mesh,
 };
 use threecrate_algorithms::{ICPResult, PlaneSegmentationResult};
 use crate::camera::Camera;
@@ -122,6 +122,14 @@ pub struct InteractiveViewer {
     right_mouse_pressed: bool,
     debug_frame_count: usize,
     vertices_dirty: bool,
+    /// Active shading mode for mesh rendering
+    pub shading_mode: ShadingMode,
+    /// Per-mesh PBR material properties
+    pub material: PbrMaterial,
+    /// Lighting parameters (ambient, light position/intensity/color, tone-mapping)
+    pub lighting_params: MeshLightingParams,
+    /// Set to true when lighting_params has changed and must be uploaded to the GPU
+    lighting_dirty: bool,
 }
 
 impl InteractiveViewer {
@@ -146,6 +154,10 @@ impl InteractiveViewer {
             right_mouse_pressed: false,
             debug_frame_count: 0,
             vertices_dirty: true,
+            shading_mode: ShadingMode::Flat,
+            material: PbrMaterial::default(),
+            lighting_params: MeshLightingParams::default(),
+            lighting_dirty: false,
         })
     }
 
@@ -170,6 +182,23 @@ impl InteractiveViewer {
         println!("Set mesh with {} vertices and {} faces", mesh.vertices.len(), mesh.faces.len());
     }
 
+    /// Set the shading mode used when rendering meshes.
+    pub fn set_shading_mode(&mut self, mode: ShadingMode) {
+        self.shading_mode = mode;
+        println!("Shading mode: {:?}", mode);
+    }
+
+    /// Set the PBR material applied to the rendered mesh.
+    pub fn set_material(&mut self, material: PbrMaterial) {
+        self.material = material;
+    }
+
+    /// Set full lighting parameters (ambient, light position/intensity/colour, gamma, exposure).
+    pub fn set_lighting_params(&mut self, params: MeshLightingParams) {
+        self.lighting_params = params;
+        self.lighting_dirty = true;
+    }
+
     /// Run the interactive viewer
     pub fn run(self) -> Result<()> {
         println!("Starting threecrate Interactive Viewer...");
@@ -184,6 +213,7 @@ impl InteractiveViewer {
             point_renderer: None,
             mesh_renderer: None,
             cached_vertices: Vec::new(),
+            screenshot_pending: false,
         };
 
         // Run the event loop
@@ -206,6 +236,7 @@ struct ViewerApp {
     point_renderer: Option<PointCloudRenderer<'static>>,
     mesh_renderer: Option<MeshRenderer<'static>>,
     cached_vertices: Vec<PointVertex>,
+    screenshot_pending: bool,
 }
 
 impl ApplicationHandler for ViewerApp {
@@ -263,6 +294,15 @@ impl ApplicationHandler for ViewerApp {
             self.mesh_renderer = Some(mesh_renderer);
 
             println!("Viewer initialized successfully. Window should now be visible.");
+            println!();
+            println!("Controls:");
+            println!("  O / P / Z  — Orbit / Pan / Zoom camera mode");
+            println!("  R          — Reset camera");
+            println!("  M          — Toggle Flat / PBR shading");
+            println!("  S          — Save screenshot (screenshot_<timestamp>.png)");
+            println!("  [ / ]      — Decrease / Increase ambient light strength");
+            println!("  - / =      — Decrease / Increase light intensity");
+            println!();
         }
     }
 
@@ -338,6 +378,45 @@ impl ApplicationHandler for ViewerApp {
                                     self.viewer.camera.reset();
                                     println!("Reset camera");
                                 }
+                                // Toggle between Flat and PBR shading (M key)
+                                "m" | "M" => {
+                                    self.viewer.shading_mode = match self.viewer.shading_mode {
+                                        ShadingMode::Flat => ShadingMode::Pbr,
+                                        ShadingMode::Pbr => ShadingMode::Flat,
+                                    };
+                                    println!("Shading mode: {:?}", self.viewer.shading_mode);
+                                }
+                                // Screenshot (S key)
+                                "s" | "S" => {
+                                    self.screenshot_pending = true;
+                                    println!("Screenshot requested…");
+                                }
+                                // Ambient strength  [ decrease  ] increase
+                                "[" => {
+                                    self.viewer.lighting_params.ambient_strength =
+                                        (self.viewer.lighting_params.ambient_strength - 0.01).max(0.0);
+                                    self.viewer.lighting_dirty = true;
+                                    println!("Ambient strength: {:.3}", self.viewer.lighting_params.ambient_strength);
+                                }
+                                "]" => {
+                                    self.viewer.lighting_params.ambient_strength =
+                                        (self.viewer.lighting_params.ambient_strength + 0.01).min(1.0);
+                                    self.viewer.lighting_dirty = true;
+                                    println!("Ambient strength: {:.3}", self.viewer.lighting_params.ambient_strength);
+                                }
+                                // Light intensity  - decrease  = increase
+                                "-" => {
+                                    self.viewer.lighting_params.light_intensity =
+                                        (self.viewer.lighting_params.light_intensity - 0.1).max(0.0);
+                                    self.viewer.lighting_dirty = true;
+                                    println!("Light intensity: {:.2}", self.viewer.lighting_params.light_intensity);
+                                }
+                                "=" => {
+                                    self.viewer.lighting_params.light_intensity =
+                                        (self.viewer.lighting_params.light_intensity + 0.1).min(10.0);
+                                    self.viewer.lighting_dirty = true;
+                                    println!("Light intensity: {:.2}", self.viewer.lighting_params.light_intensity);
+                                }
                                 _ => {}
                             }
                         }
@@ -346,6 +425,12 @@ impl ApplicationHandler for ViewerApp {
                 }
             }
             WindowEvent::RedrawRequested => {
+                // Sync lighting params to GPU when changed
+                if self.viewer.lighting_dirty {
+                    mesh_renderer.update_lighting(self.viewer.lighting_params);
+                    self.viewer.lighting_dirty = false;
+                }
+
                 // Update camera matrices
                 let view_matrix = self.viewer.camera.view_matrix();
                 let proj_matrix = self.viewer.camera.projection_matrix();
@@ -419,6 +504,10 @@ impl ApplicationHandler for ViewerApp {
 
                 match &self.viewer.current_data {
                     ViewData::PointCloud(_) | ViewData::ColoredPointCloud(_) => {
+                        if self.screenshot_pending {
+                            self.screenshot_pending = false;
+                            println!("Screenshot not yet supported for point clouds.");
+                        }
                         if !self.cached_vertices.is_empty() {
                             if let Err(e) = point_renderer.render(&self.cached_vertices) {
                                 eprintln!("Render error: {}", e);
@@ -427,17 +516,14 @@ impl ApplicationHandler for ViewerApp {
                     }
                     ViewData::Mesh(mesh) => {
                         if !mesh.vertices.is_empty() && !mesh.faces.is_empty() {
-                            // Build index buffer from faces
                             let indices: Vec<u32> = mesh
                                 .faces
                                 .iter()
                                 .flat_map(|f| [f[0] as u32, f[1] as u32, f[2] as u32])
                                 .collect();
 
-                            // Prepare optional normals
                             let normals_opt = mesh.normals.as_ref().map(|n| n.as_slice());
 
-                            // Prepare optional colors as f32
                             let colors_f32: Option<Vec<[f32; 3]>> = mesh.colors.as_ref().map(|cols| {
                                 cols.iter()
                                     .map(|c| [c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0])
@@ -445,17 +531,28 @@ impl ApplicationHandler for ViewerApp {
                             });
                             let colors_opt = colors_f32.as_ref().map(|c| c.as_slice());
 
-                            // Convert to GPU mesh
+                            // Use the viewer's material and shading mode
                             let gpu_mesh = mesh_to_gpu_mesh(
                                 &mesh.vertices,
                                 &indices,
                                 normals_opt,
                                 colors_opt,
-                                None,
+                                Some(self.viewer.material),
                             );
 
-                            if let Err(e) = mesh_renderer.render(&gpu_mesh, ShadingMode::Flat) {
+                            if let Err(e) = mesh_renderer.render(&gpu_mesh, self.viewer.shading_mode) {
                                 eprintln!("Mesh render error: {}", e);
+                            }
+
+                            // Handle screenshot request
+                            if self.screenshot_pending {
+                                self.screenshot_pending = false;
+                                match mesh_renderer.render_to_texture(&gpu_mesh, self.viewer.shading_mode) {
+                                    Ok((pixels, format, w, h)) => {
+                                        save_screenshot(&pixels, format, w, h);
+                                    }
+                                    Err(e) => eprintln!("Screenshot render error: {}", e),
+                                }
                             }
                         }
                     }
@@ -473,6 +570,42 @@ impl ApplicationHandler for ViewerApp {
         if let Some(window) = &self.window {
             window.request_redraw();
         }
+    }
+}
+
+/// Encode raw GPU pixel bytes as a PNG file.
+///
+/// Handles both RGBA and BGRA surface formats transparently.
+fn save_screenshot(pixels: &[u8], format: wgpu::TextureFormat, width: u32, height: u32) {
+    use wgpu::TextureFormat;
+
+    // Convert BGRA → RGBA if the surface uses a BGRA format (common on macOS/Metal)
+    let rgba: Vec<u8> = match format {
+        TextureFormat::Bgra8Unorm | TextureFormat::Bgra8UnormSrgb => {
+            let mut buf = Vec::with_capacity(pixels.len());
+            for chunk in pixels.chunks_exact(4) {
+                buf.push(chunk[2]); // R ← B
+                buf.push(chunk[1]); // G
+                buf.push(chunk[0]); // B ← R
+                buf.push(chunk[3]); // A
+            }
+            buf
+        }
+        _ => pixels.to_vec(),
+    };
+
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let path = format!("screenshot_{}.png", timestamp);
+
+    match image::RgbaImage::from_raw(width, height, rgba) {
+        Some(img) => match img.save(&path) {
+            Ok(()) => println!("Screenshot saved: {}", path),
+            Err(e) => eprintln!("Failed to save screenshot: {}", e),
+        },
+        None => eprintln!("Failed to build image buffer for screenshot"),
     }
 }
 

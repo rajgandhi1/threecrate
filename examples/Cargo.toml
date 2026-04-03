@@ -147,3 +147,5 @@ path = "mesh_smoothing_example.rs"
 [[bin]]
 name = "point_cloud_colorization_example"
 path = "point_cloud_colorization_example.rs"
+name = "pbr_visualization"
+path = "pbr_visualization.rs"
