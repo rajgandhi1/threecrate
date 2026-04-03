@@ -1,5 +1,5 @@
 use nalgebra::Isometry3;
-use numpy::{ndarray::Array2, PyArray2, PyReadonlyArray2, ToPyArray};
+use numpy::{ndarray::Array2, IntoPyArray, PyArray2, PyReadonlyArray2};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use threecrate_algorithms::{
