@@ -3,12 +3,13 @@ resolver = "2"
 
 members = [
     "threecrate-core",
-    "threecrate-algorithms", 
+    "threecrate-algorithms",
     "threecrate-gpu",
     "threecrate-io",
     "threecrate-reconstruction",
     "threecrate-simplification",
     "threecrate-visualization",
+    "threecrate-python",
     "examples",
     "threecrate-bench"
 ]

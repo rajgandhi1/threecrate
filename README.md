@@ -223,6 +223,37 @@ let gpu_context = GpuContext::new().await?;
 println!("GPU context initialized");
 ```
 
+## Python Bindings
+
+threecrate is available as a pip-installable Python package built with PyO3 and maturin:
+
+```bash
+pip install threecrate
+```
+
+```python
+import numpy as np
+import threecrate as tc
+
+# Load and filter
+cloud = tc.read_point_cloud("scan.ply")
+cloud = tc.voxel_downsample(cloud, voxel_size=0.02)
+cloud = tc.remove_statistical_outliers(cloud)
+
+# Register two scans
+result = tc.icp(source, target, max_iterations=100)
+print(result.converged, result.transformation())
+
+# Reconstruct surface
+normal_cloud = tc.estimate_normals(cloud)
+mesh = tc.poisson_reconstruct(normal_cloud)
+tc.write_mesh(mesh, "output.ply")
+```
+
+NumPy interop is first-class — `PointCloud.from_numpy()` and `.to_numpy()` convert to/from `(N, 3)` float32 arrays with zero unnecessary copies.
+
+See [`threecrate-python/README.md`](threecrate-python/README.md) for the full Python API reference and build instructions.
+
 ## Performance
 
 threecrate is designed for high performance:

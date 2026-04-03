@@ -1,0 +1,22 @@
+[package]
+name = "threecrate-python"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Python bindings for threecrate"
+
+[lib]
+name = "threecrate"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.22", features = ["extension-module"] }
+numpy = "0.22"
+nalgebra = { workspace = true }
+threecrate-core = { path = "../threecrate-core" }
+threecrate-algorithms = { path = "../threecrate-algorithms" }
+threecrate-io = { path = "../threecrate-io" }
+threecrate-reconstruction = { path = "../threecrate-reconstruction" }

@@ -1,0 +1,48 @@
+name: Python
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  build:
+    name: Build wheel (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          working-directory: threecrate-python
+          args: --release --out dist
+
+      - name: Install and smoke-test
+        shell: bash
+        run: |
+          pip install threecrate --no-index --find-links threecrate-python/dist/
+          python -c "
+          import threecrate as tc
+          import numpy as np
+          pts = np.random.rand(100, 3).astype(np.float32)
+          cloud = tc.PointCloud.from_numpy(pts)
+          assert len(cloud) == 100
+          cloud2 = tc.voxel_downsample(cloud, 0.1)
+          assert len(cloud2) <= len(cloud)
+          print('smoke test passed')
+          "
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.os }}
+          path: threecrate-python/dist/
