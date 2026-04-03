@@ -12,6 +12,7 @@ pub mod features;
 pub mod mesh_boolean;
 pub mod mesh_smoothing;
 pub mod colorization;
+pub mod simd_distance;
 
 // Re-export commonly used items
 pub use filtering::*;
@@ -25,3 +26,4 @@ pub use features::*;
 pub use mesh_boolean::*;
 pub use mesh_smoothing::*;
 pub use colorization::*;
+pub use simd_distance::*;
