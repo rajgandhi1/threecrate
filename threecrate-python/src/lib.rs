@@ -57,7 +57,7 @@ impl PyPointCloud {
     }
 
     /// Return the point positions as a numpy array of shape (N, 3) and dtype float32.
-    fn to_numpy<'py>(&self, py: Python<'py>) -> &'py PyArray2<f32> {
+    fn to_numpy<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f32>> {
         let n = self.inner.len();
         let mut data = Array2::<f32>::zeros((n, 3));
         for (i, p) in self.inner.points.iter().enumerate() {
@@ -92,7 +92,7 @@ pub struct PyNormalPointCloud {
 #[pymethods]
 impl PyNormalPointCloud {
     /// Return point positions as a numpy array of shape (N, 3) float32.
-    fn positions<'py>(&self, py: Python<'py>) -> &'py PyArray2<f32> {
+    fn positions<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f32>> {
         let n = self.inner.len();
         let mut data = Array2::<f32>::zeros((n, 3));
         for (i, p) in self.inner.points.iter().enumerate() {
@@ -104,7 +104,7 @@ impl PyNormalPointCloud {
     }
 
     /// Return surface normals as a numpy array of shape (N, 3) float32.
-    fn normals<'py>(&self, py: Python<'py>) -> &'py PyArray2<f32> {
+    fn normals<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f32>> {
         let n = self.inner.len();
         let mut data = Array2::<f32>::zeros((n, 3));
         for (i, p) in self.inner.points.iter().enumerate() {
@@ -156,7 +156,7 @@ impl PyTriangleMesh {
     }
 
     /// Return vertices as a numpy array of shape (N, 3) float32.
-    fn vertices<'py>(&self, py: Python<'py>) -> &'py PyArray2<f32> {
+    fn vertices<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f32>> {
         let n = self.inner.vertices.len();
         let mut data = Array2::<f32>::zeros((n, 3));
         for (i, v) in self.inner.vertices.iter().enumerate() {
@@ -168,7 +168,7 @@ impl PyTriangleMesh {
     }
 
     /// Return face indices as a numpy array of shape (M, 3) uint32.
-    fn faces<'py>(&self, py: Python<'py>) -> &'py PyArray2<u32> {
+    fn faces<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<u32>> {
         let m = self.inner.faces.len();
         let mut data = Array2::<u32>::zeros((m, 3));
         for (i, f) in self.inner.faces.iter().enumerate() {
@@ -210,9 +210,8 @@ pub struct PyIcpResult {
 #[pymethods]
 impl PyIcpResult {
     /// Return the 4x4 rigid transformation matrix as a numpy array (float32).
-    fn transformation<'py>(&self, py: Python<'py>) -> &'py PyArray2<f32> {
-        let data =
-            Array2::from_shape_fn((4, 4), |(i, j)| self._transformation[i][j]);
+    fn transformation<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f32>> {
+        let data = Array2::from_shape_fn((4, 4), |(i, j)| self._transformation[i][j]);
         data.into_pyarray(py)
     }
 
