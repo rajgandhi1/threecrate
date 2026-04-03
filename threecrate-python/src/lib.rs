@@ -1,5 +1,5 @@
 use nalgebra::Isometry3;
-use numpy::{ndarray::Array2, IntoPyArray, PyArray2, PyReadonlyArray2};
+use numpy::{ndarray::Array2, PyArray2, PyReadonlyArray2, ToPyArray};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use threecrate_algorithms::{
@@ -65,7 +65,7 @@ impl PyPointCloud {
             data[[i, 1]] = p.y;
             data[[i, 2]] = p.z;
         }
-        data.into_pyarray(py)
+        data.into_pyarray_bound(py)
     }
 
     fn __len__(&self) -> usize {
@@ -100,7 +100,7 @@ impl PyNormalPointCloud {
             data[[i, 1]] = p.position.y;
             data[[i, 2]] = p.position.z;
         }
-        data.into_pyarray(py)
+        data.into_pyarray_bound(py)
     }
 
     /// Return surface normals as a numpy array of shape (N, 3) float32.
@@ -112,7 +112,7 @@ impl PyNormalPointCloud {
             data[[i, 1]] = p.normal.y;
             data[[i, 2]] = p.normal.z;
         }
-        data.into_pyarray(py)
+        data.into_pyarray_bound(py)
     }
 
     fn __len__(&self) -> usize {
@@ -164,7 +164,7 @@ impl PyTriangleMesh {
             data[[i, 1]] = v.y;
             data[[i, 2]] = v.z;
         }
-        data.into_pyarray(py)
+        data.into_pyarray_bound(py)
     }
 
     /// Return face indices as a numpy array of shape (M, 3) uint32.
@@ -176,7 +176,7 @@ impl PyTriangleMesh {
             data[[i, 1]] = f[1] as u32;
             data[[i, 2]] = f[2] as u32;
         }
-        data.into_pyarray(py)
+        data.into_pyarray_bound(py)
     }
 
     fn __repr__(&self) -> String {
@@ -212,7 +212,7 @@ impl PyIcpResult {
     /// Return the 4x4 rigid transformation matrix as a numpy array (float32).
     fn transformation<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f32>> {
         let data = Array2::from_shape_fn((4, 4), |(i, j)| self._transformation[i][j]);
-        data.into_pyarray(py)
+        data.into_pyarray_bound(py)
     }
 
     fn __repr__(&self) -> String {
