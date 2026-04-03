@@ -11,6 +11,7 @@ pub mod segmentation;
 pub mod features;
 pub mod mesh_boolean;
 pub mod mesh_smoothing;
+pub mod colorization;
 
 // Re-export commonly used items
 pub use filtering::*;
@@ -22,4 +23,5 @@ pub use global_registration::*;
 pub use segmentation::*;
 pub use features::*;
 pub use mesh_boolean::*;
-pub use mesh_smoothing::*; 
+pub use mesh_smoothing::*;
+pub use colorization::*;
