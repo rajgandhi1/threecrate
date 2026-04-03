@@ -32,6 +32,7 @@ jobs:
       - name: Install and smoke-test
         shell: bash
         run: |
+          pip install numpy
           pip install threecrate --no-index --find-links threecrate-python/dist/
           python -c "
           import threecrate as tc
