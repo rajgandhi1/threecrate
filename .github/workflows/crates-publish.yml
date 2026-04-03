@@ -9,22 +9,12 @@ jobs:
   publish:
     name: Publish crates
     runs-on: ubuntu-latest
-    permissions:
-      id-token: write
+    env:
+      CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
     steps:
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
-
-      - name: Authenticate to crates.io (OIDC)
-        run: |
-          OIDC_TOKEN=$(curl --silent "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=crates.io" \
-            -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" | jq -r '.value')
-          CRATES_TOKEN=$(curl --silent -X POST https://crates.io/api/v1/trusted-publishing/tokens \
-            -H "Content-Type: application/json" \
-            -d "{\"jwt\": \"${OIDC_TOKEN}\"}" | jq -r '.token')
-          echo "::add-mask::${CRATES_TOKEN}"
-          echo "CARGO_REGISTRY_TOKEN=${CRATES_TOKEN}" >> "$GITHUB_ENV"
 
       - name: Publish threecrate-core
         run: cargo publish -p threecrate-core
