@@ -5,8 +5,11 @@ A comprehensive 3D point cloud and mesh processing library for Rust.
 ![logo_3crate Small](https://github.com/user-attachments/assets/8bd23278-0638-4fb6-a187-5a8d20beebd1)
 
 [![Crates.io](https://img.shields.io/crates/v/threecrate.svg)](https://crates.io/crates/threecrate)
+[![PyPI](https://img.shields.io/pypi/v/threecrate.svg)](https://pypi.org/project/threecrate/)
 [![Documentation](https://docs.rs/threecrate/badge.svg)](https://docs.rs/threecrate)
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](https://github.com/rajgandhi1/threecrate)
+[![CI](https://github.com/rajgandhi1/threecrate/actions/workflows/rust.yml/badge.svg)](https://github.com/rajgandhi1/threecrate/actions)
+[![Contributing](https://img.shields.io/badge/contributions-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
 ## Overview
 
@@ -262,10 +265,35 @@ See [`threecrate-python/README.md`](threecrate-python/README.md) for the full Py
 - **Streaming I/O**: process large point clouds without loading everything into memory
 - **Spatial indexing**: KD-tree and R*-tree for efficient neighbor queries
 
-## License
+## Comparison
 
-Dual-licensed under MIT or Apache-2.0. See [LICENSE-MIT](LICENSE-MIT) for details.
+| Feature | threecrate | Open3D (Python) | PCL (C++) |
+|---|---|---|---|
+| Language | Rust + Python | Python (C++ core) | C++ |
+| pip install | ✅ | ✅ | ❌ |
+| Memory safety | ✅ (Rust) | ❌ | ❌ |
+| GPU (wgpu) | ✅ | Partial | Partial |
+| Parallel CPU | ✅ rayon | ✅ | ✅ |
+| ICP registration | ✅ | ✅ | ✅ |
+| Global registration | ✅ FPFH+RANSAC | ✅ | ✅ |
+| Surface reconstruction | ✅ 6 algorithms | ✅ | ✅ |
+| Mesh smoothing | ✅ Laplacian/Taubin/HC | ✅ | ✅ |
+| Mesh boolean ops | ✅ | ✅ | ❌ |
+| Streaming I/O | ✅ | ❌ | ❌ |
+| LAS/LAZ support | ✅ | ✅ | ✅ |
+| E57 support | ✅ | ❌ | ❌ |
+| Async/WebAssembly | Roadmap | ❌ | ❌ |
 
 ## Contributing
 
-Contributions are welcome. Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+Contributions are very welcome — from bug fixes and new algorithms to Python bindings and documentation.
+
+- Read [CONTRIBUTING.md](CONTRIBUTING.md) for setup instructions and guidelines
+- Browse [open issues](https://github.com/rajgandhi1/threecrate/issues) — issues labelled **`good first issue`** are a great starting point
+- Ask questions or propose ideas in [GitHub Discussions](https://github.com/rajgandhi1/threecrate/discussions)
+
+The biggest area for contribution right now is **expanding the Python API** — most Rust algorithms are implemented but not yet exposed to Python. See the [gap table in CONTRIBUTING.md](CONTRIBUTING.md#current-gaps-in-the-python-bindings) for specifics.
+
+## License
+
+Dual-licensed under MIT or Apache-2.0. See [LICENSE-MIT](LICENSE-MIT) for details.

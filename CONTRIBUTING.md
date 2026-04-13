@@ -1,90 +1,166 @@
 # Contributing to threecrate
 
-Thank you for your interest in contributing! This project is in early development with many `todo!()` algorithms waiting for implementation.
+Thank you for your interest in contributing! threecrate is a modular, high-performance 3D point cloud and mesh processing library written in Rust, with Python bindings via PyO3.
 
-## Quick Start
+---
 
-1. **Fork and Clone**
+## Table of Contents
+
+- [Getting Started](#getting-started)
+- [Project Structure](#project-structure)
+- [Development Setup](#development-setup)
+- [What to Work On](#what-to-work-on)
+- [Code Style](#code-style)
+- [Testing](#testing)
+- [Pull Request Process](#pull-request-process)
+
+---
+
+## Getting Started
+
+1. **Fork and clone**
    ```bash
    git clone https://github.com/YOUR_USERNAME/threecrate.git
-cd threecrate
-git remote add upstream https://github.com/ORIGINAL_OWNER/threecrate.git
+   cd threecrate
+   git remote add upstream https://github.com/rajgandhi1/threecrate.git
    ```
 
-2. **Build and Test**
+2. **Build the workspace**
    ```bash
    cargo build --workspace
    cargo test --workspace
-   cargo run --bin basic_usage
    ```
 
-## What We Need
+3. **Run an example**
+   ```bash
+   cargo run --example basic_usage
+   cargo run --example ransac_plane_example
+   ```
 
-- **Algorithm Implementation**: Replace `todo!()` in `threecrate-algorithms`
-- **File I/O**: PLY/OBJ readers/writers in `threecrate-io`  
-- **GPU Computing**: WGPU acceleration in `threecrate-gpu`
-- **Testing**: Unit tests for all modules
-- **Documentation**: API docs and examples
+---
 
 ## Project Structure
 
 ```
 threecrate/
-├── threecrate-core/           # Core data structures
-├── threecrate-algorithms/     # Point cloud algorithms (filtering, normals, ICP)
-├── threecrate-gpu/           # GPU acceleration
-├── threecrate-io/            # File I/O (PLY, OBJ)
-├── threecrate-reconstruction/ # Surface reconstruction
-├── threecrate-simplification/ # Mesh simplification
-└── threecrate-visualization/  # 3D visualization
+├── threecrate-core/           # Point, PointCloud, TriangleMesh, Transform3D
+├── threecrate-algorithms/     # Filtering, ICP, segmentation, normals, features, smoothing
+├── threecrate-gpu/            # GPU-accelerated compute via wgpu
+├── threecrate-io/             # PLY, OBJ, PCD, LAS/LAZ, XYZ/CSV, E57
+├── threecrate-reconstruction/ # Poisson, BPA, alpha shapes, Marching Cubes, MLS, Delaunay
+├── threecrate-simplification/ # Quadric error, edge collapse, clustering, progressive mesh
+├── threecrate-visualization/  # Interactive 3D viewer (wgpu)
+├── threecrate-python/         # Python bindings (PyO3 + maturin)
+├── threecrate-umbrella/       # `threecrate` re-export crate published to crates.io
+└── examples/                  # Runnable examples for every major feature
 ```
 
-## Implementation Best Practices
+---
 
-### Algorithm Implementation Pattern
+## Development Setup
 
+### Rust (all crates)
+
+Requirements: **Rust 1.75+**
+
+```bash
+cargo build --workspace
+cargo test --workspace
+cargo clippy --workspace -- -D warnings
+cargo fmt --check
+```
+
+### Python bindings
+
+Requirements: **Python 3.8+**, **maturin 1.x**
+
+```bash
+pip install maturin
+cd threecrate-python
+maturin develop --release   # installs an editable wheel into the current venv
+python -c "import threecrate as tc; print(tc.PointCloud())"
+```
+
+To run the full build as CI does:
+```bash
+maturin build --release --out dist/
+pip install dist/threecrate-*.whl --force-reinstall
+```
+
+### Benchmarks
+
+```bash
+cargo bench -p threecrate-bench
+```
+
+---
+
+## What to Work On
+
+Check the [issues list](https://github.com/rajgandhi1/threecrate/issues) for open tasks. Issues labelled **`good first issue`** are intentionally scoped to be approachable.
+
+### Current gaps in the Python bindings (`threecrate-python`)
+
+The Rust library is feature-complete in most areas, but the Python API still has significant gaps. These are great entry points for contributors:
+
+| Feature | Rust crate | Python status |
+|---|---|---|
+| Point-to-plane ICP | `threecrate-algorithms` | Not exposed |
+| Global registration (FPFH+RANSAC) | `threecrate-algorithms` | Not exposed |
+| Radius-based normal estimation | `threecrate-algorithms` | Not exposed |
+| Mesh boolean ops (union/intersect/diff) | `threecrate-algorithms` | Not exposed |
+| Ball Pivoting reconstruction | `threecrate-reconstruction` | Not exposed |
+| Alpha shapes reconstruction | `threecrate-reconstruction` | Not exposed |
+| Delaunay triangulation | `threecrate-reconstruction` | Not exposed |
+| Moving Least Squares | `threecrate-reconstruction` | Not exposed |
+| Edge collapse simplification | `threecrate-simplification` | Not exposed |
+| Clustering simplification | `threecrate-simplification` | Not exposed |
+
+The pattern for adding a new binding is in `threecrate-python/src/lib.rs`. Look at how `segment_plane` or `simplify_mesh` are implemented — it's usually 15–30 lines.
+
+### Other areas
+
+- **New file formats**: STL, glTF/GLB support in `threecrate-io`
+- **Examples**: new `examples/` entries demonstrating existing features
+- **Documentation**: `///` doc comments on any public item that lacks them
+- **Benchmarks**: add criterion benchmarks in `threecrate-bench` for algorithms that don't have one yet
+
+---
+
+## Code Style
+
+| Tool | Command | Required |
+|---|---|---|
+| Formatting | `cargo fmt` | Yes |
+| Linting | `cargo clippy --workspace -- -D warnings` | Yes |
+| Doc tests | `cargo test --doc` | For public API |
+
+**Error handling**: use `threecrate_core::Result<T>` (aliased to `Result<T, threecrate_core::Error>`) for all fallible public functions. Do not use `unwrap()` or `expect()` in library code.
+
+**Doc comment format**:
 ```rust
-/// Brief description of the algorithm
-/// 
+/// One-line summary of what this does.
+///
+/// Longer explanation if needed. Include the algorithm name and a reference
+/// if it implements a known technique.
+///
 /// # Arguments
-/// * `input` - Description
-/// 
+/// * `cloud` - The input point cloud (must be non-empty)
+/// * `k` - Number of nearest neighbours
+///
 /// # Returns
-/// Description of return value
-/// 
-/// # Complexity
-/// Time/space complexity
-pub fn algorithm_name<T>(input: &T) -> Result<Output, ProcessingError> {
-    // 1. Validate input
-    // 2. Implement core algorithm
-    // 3. Return result
-    todo!("Implement [algorithm name]")
-}
+/// A new `PointCloud<NormalPoint3f>` with estimated surface normals.
+///
+/// # Errors
+/// Returns `Err` if `cloud` is empty or `k` is zero.
+pub fn estimate_normals(cloud: &PointCloud<Point3f>, k: usize) -> Result<PointCloud<NormalPoint3f>> {
 ```
 
-### Implementation Steps
+---
 
-1. **Research**: Understand the algorithm's mathematical foundation
-2. **Test First**: Write tests before implementation
-3. **Document**: Include complexity notes and references
-4. **Validate**: Check edge cases and error conditions
+## Testing
 
-## Priority Tasks
-
-### High Priority
-- [ ] Statistical outlier removal (`filtering.rs`)
-- [ ] Surface normal estimation (`normals.rs`) 
-- [ ] PLY file reader/writer (`ply.rs`)
-- [ ] Basic point cloud rendering
-
-### Medium Priority  
-- [ ] ICP registration algorithm (`registration.rs`)
-- [ ] RANSAC plane segmentation (`segmentation.rs`)
-- [ ] GPU buffer management
-
-## Testing Requirements
-
-**All new algorithms must include tests.** Example:
+**All new algorithms must include tests.**
 
 ```rust
 #[cfg(test)]
@@ -93,51 +169,54 @@ mod tests {
     use threecrate_core::{PointCloud, Point3f};
 
     #[test]
-    fn test_algorithm_name() {
-        let points = vec![
+    fn test_algorithm_basic() {
+        let cloud = PointCloud::from_points(vec![
             Point3f::new(0.0, 0.0, 0.0),
             Point3f::new(1.0, 0.0, 0.0),
-        ];
-        let cloud = PointCloud::from_points(points);
-        
-        let result = your_algorithm(&cloud);
+            Point3f::new(0.0, 1.0, 0.0),
+        ]);
+        let result = your_algorithm(&cloud, /* params */);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_algorithm_empty_input_errors() {
+        let empty = PointCloud::new();
+        assert!(your_algorithm(&empty, /* params */).is_err());
     }
 }
 ```
 
-**Run tests**: `cargo test --workspace`
-
-## Pull Request Process
-
-### Before Submitting
+Run tests:
 ```bash
-git fetch upstream && git rebase upstream/main
-cargo fmt && cargo clippy && cargo test --workspace
-```
-
-### PR Requirements
-- **Descriptive title**: "Implement statistical outlier removal filter"
-- **Include tests** for new functionality
-- **Update documentation** if adding major features
-- **Keep PRs focused** - one feature per PR
-
-## Code Style
-
-**Formatting**: `cargo fmt` (required)
-**Linting**: `cargo clippy` (required)
-**Error Handling**: Use `Result<T, ProcessingError>` for fallible operations
-
-```rust
-use threecrate_core::ProcessingError;
-
-pub fn process_point_cloud(
-    cloud: &PointCloud<Point3f>
-) -> Result<PointCloud<Point3f>, ProcessingError> {
-    // Implementation
-}
+cargo test --workspace                  # all crates
+cargo test -p threecrate-algorithms     # one crate
+cargo test algorithm_name               # one test by name
 ```
 
 ---
 
-Questions? Open an issue or check existing documentation in `examples/`. 
+## Pull Request Process
+
+1. **Branch from main**
+   ```bash
+   git checkout main && git pull upstream main
+   git checkout -b your-feature-branch
+   ```
+
+2. **Before pushing**, make sure these all pass:
+   ```bash
+   cargo fmt --check
+   cargo clippy --workspace -- -D warnings
+   cargo test --workspace
+   ```
+
+3. **PR title format**: `Add <feature>` / `Fix <bug>` / `Improve <thing>` — one line, no period.
+
+4. **Keep PRs focused** — one feature or fix per PR. Avoid mixing refactors with new functionality.
+
+5. A maintainer will review and merge. For larger changes, open an issue first to align on approach before writing code.
+
+---
+
+Questions? Open a [GitHub Discussion](https://github.com/rajgandhi1/threecrate/discussions) or file an issue.
