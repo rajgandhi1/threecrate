@@ -20,3 +20,4 @@ threecrate-core = { path = "../threecrate-core" }
 threecrate-algorithms = { path = "../threecrate-algorithms" }
 threecrate-io = { path = "../threecrate-io" }
 threecrate-reconstruction = { path = "../threecrate-reconstruction" }
+threecrate-simplification = { path = "../threecrate-simplification" }
