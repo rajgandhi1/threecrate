@@ -6,6 +6,7 @@ build-backend = "maturin"
 name = "threecrate"
 requires-python = ">=3.8"
 description = "Python bindings for threecrate: a high-performance 3D point cloud and mesh processing library"
+readme = "README.md"
 license = { text = "MIT OR Apache-2.0" }
 classifiers = [
     "Programming Language :: Rust",
@@ -20,3 +21,4 @@ dependencies = ["numpy>=1.20"]
 [tool.maturin]
 features = ["pyo3/extension-module"]
 module-name = "threecrate"
+
