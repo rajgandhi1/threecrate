@@ -1,10 +1,12 @@
 use nalgebra::Isometry3;
-use numpy::{ndarray::Array2, IntoPyArray, PyArray2, PyReadonlyArray2};
+use numpy::{ndarray::Array1, ndarray::Array2, IntoPyArray, PyArray1, PyArray2, PyReadonlyArray2};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use threecrate_algorithms::{
-    estimate_normals as tc_estimate_normals, icp_point_to_point_default, radius_outlier_removal,
-    statistical_outlier_removal, voxel_grid_filter,
+    estimate_normals as tc_estimate_normals, extract_euclidean_clusters,
+    icp_point_to_point_default, radius_outlier_removal, segment_plane as tc_segment_plane,
+    smooth_hc, smooth_laplacian, smooth_taubin, statistical_outlier_removal, voxel_grid_filter,
+    HcSmoothingConfig, LaplacianSmoothingConfig, TaubinSmoothingConfig,
 };
 use threecrate_core::{NormalPoint3f, Point3f, PointCloud, TriangleMesh};
 use threecrate_io::{
@@ -12,6 +14,7 @@ use threecrate_io::{
     write_point_cloud as rs_write_pc,
 };
 use threecrate_reconstruction::{auto_reconstruct, poisson_reconstruction_default};
+use threecrate_simplification::{MeshSimplifier, QuadricErrorSimplifier};
 
 fn to_py_err(e: impl std::fmt::Display) -> PyErr {
     PyRuntimeError::new_err(e.to_string())
@@ -224,6 +227,65 @@ impl PyIcpResult {
 }
 
 // ---------------------------------------------------------------------------
+// PlaneSegmentationResult
+// ---------------------------------------------------------------------------
+
+/// Result returned by `segment_plane()`.
+///
+/// Contains the fitted plane model and the indices of inlier points.
+#[pyclass(name = "PlaneSegmentationResult")]
+pub struct PyPlaneSegmentationResult {
+    /// Plane coefficients [a, b, c, d] (ax + by + cz + d = 0).
+    coefficients: [f32; 4],
+    inliers: Vec<usize>,
+}
+
+#[pymethods]
+impl PyPlaneSegmentationResult {
+    /// Plane coefficients as a numpy array of shape (4,) float32: [a, b, c, d].
+    ///
+    /// The plane equation is: a·x + b·y + c·z + d = 0.
+    /// The [a, b, c] part is the unit normal of the plane.
+    fn plane_coefficients<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f32>> {
+        let data = Array1::from_vec(self.coefficients.to_vec());
+        data.into_pyarray_bound(py)
+    }
+
+    /// Indices of the inlier points in the original cloud (sorted).
+    fn inlier_indices(&self) -> Vec<usize> {
+        self.inliers.clone()
+    }
+
+    /// Number of inlier points.
+    #[getter]
+    fn num_inliers(&self) -> usize {
+        self.inliers.len()
+    }
+
+    /// Extract a new PointCloud containing only the inlier points.
+    fn inlier_cloud(&self, cloud: &PyPointCloud) -> PyPointCloud {
+        let points = self
+            .inliers
+            .iter()
+            .map(|&i| cloud.inner.points[i])
+            .collect();
+        PyPointCloud {
+            inner: PointCloud::from_points(points),
+        }
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "PlaneSegmentationResult(inliers={}, normal=[{:.3}, {:.3}, {:.3}])",
+            self.inliers.len(),
+            self.coefficients[0],
+            self.coefficients[1],
+            self.coefficients[2],
+        )
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Filtering
 // ---------------------------------------------------------------------------
 
@@ -325,6 +387,188 @@ fn icp(
 }
 
 // ---------------------------------------------------------------------------
+// Segmentation
+// ---------------------------------------------------------------------------
+
+/// Fit a plane to a point cloud using RANSAC.
+///
+/// Returns a `PlaneSegmentationResult` with the plane equation and inlier indices.
+/// Use `result.inlier_cloud(cloud)` to extract the planar points, or
+/// filter them out to keep the non-planar remainder.
+///
+/// Args:
+///     cloud: Input point cloud.
+///     threshold: Max point-to-plane distance to count as an inlier (default 0.01).
+///     max_iterations: Number of RANSAC iterations (default 1000).
+#[pyfunction]
+#[pyo3(signature = (cloud, threshold = 0.01, max_iterations = 1000))]
+fn segment_plane(
+    cloud: &PyPointCloud,
+    threshold: f32,
+    max_iterations: usize,
+) -> PyResult<PyPlaneSegmentationResult> {
+    tc_segment_plane(&cloud.inner, threshold, max_iterations)
+        .map(|r| {
+            let c = r.model.coefficients;
+            PyPlaneSegmentationResult {
+                coefficients: [c.x, c.y, c.z, c.w],
+                inliers: r.inliers,
+            }
+        })
+        .map_err(to_py_err)
+}
+
+/// Extract Euclidean clusters from a point cloud.
+///
+/// Grows clusters by BFS: any unvisited point within `tolerance` of a seed
+/// is added to the same cluster. Clusters smaller than `min_cluster_size` or
+/// larger than `max_cluster_size` are discarded.
+///
+/// Returns a list of `PointCloud` objects, one per cluster, ordered largest first.
+///
+/// Args:
+///     cloud: Input point cloud.
+///     tolerance: Max distance between neighbouring points in the same cluster (default 0.02).
+///     min_cluster_size: Minimum points for a valid cluster (default 100).
+///     max_cluster_size: Maximum points allowed in a cluster (default 25000).
+#[pyfunction]
+#[pyo3(signature = (cloud, tolerance = 0.02, min_cluster_size = 100, max_cluster_size = 25000))]
+fn extract_clusters(
+    cloud: &PyPointCloud,
+    tolerance: f32,
+    min_cluster_size: usize,
+    max_cluster_size: usize,
+) -> PyResult<Vec<PyPointCloud>> {
+    use threecrate_algorithms::EuclideanClusterConfig;
+    let config = EuclideanClusterConfig::new(tolerance, min_cluster_size, max_cluster_size);
+    extract_euclidean_clusters(&cloud.inner, &config)
+        .map(|result| {
+            result
+                .clusters
+                .iter()
+                .map(|indices| {
+                    let pts = indices.iter().map(|&i| cloud.inner.points[i]).collect();
+                    PyPointCloud {
+                        inner: PointCloud::from_points(pts),
+                    }
+                })
+                .collect()
+        })
+        .map_err(to_py_err)
+}
+
+// ---------------------------------------------------------------------------
+// Mesh simplification
+// ---------------------------------------------------------------------------
+
+/// Simplify a triangle mesh using quadric error decimation (Garland-Heckbert).
+///
+/// `reduction_ratio` is the fraction of faces to remove: 0.0 = no change,
+/// 0.5 = half the faces, 1.0 = maximum reduction.
+///
+/// Args:
+///     mesh: Input triangle mesh.
+///     reduction_ratio: Fraction of faces to remove, in [0, 1] (default 0.5).
+#[pyfunction]
+#[pyo3(signature = (mesh, reduction_ratio = 0.5))]
+fn simplify_mesh(mesh: &PyTriangleMesh, reduction_ratio: f32) -> PyResult<PyTriangleMesh> {
+    if !(0.0..=1.0).contains(&reduction_ratio) {
+        return Err(PyValueError::new_err("reduction_ratio must be in [0, 1]"));
+    }
+    QuadricErrorSimplifier::new()
+        .simplify(&mesh.inner, reduction_ratio)
+        .map(|m| PyTriangleMesh { inner: m })
+        .map_err(to_py_err)
+}
+
+// ---------------------------------------------------------------------------
+// Mesh smoothing
+// ---------------------------------------------------------------------------
+
+/// Smooth a mesh with Laplacian smoothing.
+///
+/// Each vertex is iteratively moved toward the centroid of its one-ring
+/// neighbours. Fast but causes mesh shrinkage over many iterations.
+/// For volume-preserving smoothing prefer `smooth_mesh_taubin`.
+///
+/// Args:
+///     mesh: Input triangle mesh.
+///     iterations: Number of smoothing passes (default 10).
+///     lambda_: Per-iteration blend factor in (0, 1] (default 0.5).
+#[pyfunction]
+#[pyo3(signature = (mesh, iterations = 10, lambda_ = 0.5))]
+fn smooth_mesh_laplacian(
+    mesh: &PyTriangleMesh,
+    iterations: usize,
+    lambda_: f32,
+) -> PyResult<PyTriangleMesh> {
+    let config = LaplacianSmoothingConfig {
+        iterations,
+        lambda: lambda_,
+    };
+    smooth_laplacian(&mesh.inner, &config)
+        .map(|m| PyTriangleMesh { inner: m })
+        .map_err(to_py_err)
+}
+
+/// Smooth a mesh with Taubin (μ|λ) smoothing.
+///
+/// Two alternating Laplacian passes per iteration: a positive λ pass followed
+/// by a negative μ pass. Reduces noise without the volume shrinkage of plain
+/// Laplacian smoothing.
+///
+/// Args:
+///     mesh: Input triangle mesh.
+///     iterations: Number of full (λ + μ) iterations (default 10).
+///     lambda_: Positive step factor in (0, 1) (default 0.5).
+///     mu: Negative step factor, must be < 0 (default -0.53).
+#[pyfunction]
+#[pyo3(signature = (mesh, iterations = 10, lambda_ = 0.5, mu = -0.53))]
+fn smooth_mesh_taubin(
+    mesh: &PyTriangleMesh,
+    iterations: usize,
+    lambda_: f32,
+    mu: f32,
+) -> PyResult<PyTriangleMesh> {
+    let config = TaubinSmoothingConfig {
+        iterations,
+        lambda: lambda_,
+        mu,
+    };
+    smooth_taubin(&mesh.inner, &config)
+        .map(|m| PyTriangleMesh { inner: m })
+        .map_err(to_py_err)
+}
+
+/// Smooth a mesh with HC (Humphrey's Classes) smoothing.
+///
+/// A two-phase algorithm: Laplacian step + backward correction toward original
+/// positions. Less shrinkage than Laplacian while still reducing noise.
+///
+/// Args:
+///     mesh: Input triangle mesh.
+///     iterations: Number of smoothing iterations (default 10).
+///     alpha: Blend toward original positions in [0, 1]; 0 = more smoothing (default 0.0).
+///     beta: Balance per-vertex vs neighbour correction in [0, 1] (default 0.5).
+#[pyfunction]
+#[pyo3(signature = (mesh, iterations = 10, alpha = 0.0, beta = 0.5))]
+fn smooth_mesh_hc(
+    mesh: &PyTriangleMesh,
+    iterations: usize,
+    alpha: f32,
+    beta: f32,
+) -> PyResult<PyTriangleMesh> {
+    let config = HcSmoothingConfig {
+        iterations,
+        alpha,
+        beta,
+    };
+    smooth_hc(&mesh.inner, &config)
+        .map(|m| PyTriangleMesh { inner: m })
+        .map_err(to_py_err)
+}
+
+// ---------------------------------------------------------------------------
 // Reconstruction
 // ---------------------------------------------------------------------------
 
@@ -402,6 +646,7 @@ fn threecrate(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyNormalPointCloud>()?;
     m.add_class::<PyTriangleMesh>()?;
     m.add_class::<PyIcpResult>()?;
+    m.add_class::<PyPlaneSegmentationResult>()?;
 
     // Filtering
     m.add_function(wrap_pyfunction!(voxel_downsample, m)?)?;
@@ -413,6 +658,18 @@ fn threecrate(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Registration
     m.add_function(wrap_pyfunction!(icp, m)?)?;
+
+    // Segmentation
+    m.add_function(wrap_pyfunction!(segment_plane, m)?)?;
+    m.add_function(wrap_pyfunction!(extract_clusters, m)?)?;
+
+    // Simplification
+    m.add_function(wrap_pyfunction!(simplify_mesh, m)?)?;
+
+    // Smoothing
+    m.add_function(wrap_pyfunction!(smooth_mesh_laplacian, m)?)?;
+    m.add_function(wrap_pyfunction!(smooth_mesh_taubin, m)?)?;
+    m.add_function(wrap_pyfunction!(smooth_mesh_hc, m)?)?;
 
     // Reconstruction
     m.add_function(wrap_pyfunction!(reconstruct, m)?)?;
