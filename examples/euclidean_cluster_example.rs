@@ -75,9 +75,9 @@ fn create_three_blobs() -> PointCloud<Point3f> {
     for (center, radius, count) in &blobs {
         let mut added = 0;
         while added < *count {
-            let x: f32 = rng.gen_range(-radius..=*radius);
-            let y: f32 = rng.gen_range(-radius..=*radius);
-            let z: f32 = rng.gen_range(-radius..=*radius);
+            let x: f32 = rng.random_range(-radius..=*radius);
+            let y: f32 = rng.random_range(-radius..=*radius);
+            let z: f32 = rng.random_range(-radius..=*radius);
             if x * x + y * y + z * z <= radius * radius {
                 cloud.push(Point3f::new(center.x + x, center.y + y, center.z + z));
                 added += 1;
@@ -103,9 +103,9 @@ fn create_dense_scene() -> PointCloud<Point3f> {
     for (center, radius, count) in &blobs {
         let mut added = 0;
         while added < *count {
-            let x: f32 = rng.gen_range(-radius..=*radius);
-            let y: f32 = rng.gen_range(-radius..=*radius);
-            let z: f32 = rng.gen_range(-radius..=*radius);
+            let x: f32 = rng.random_range(-radius..=*radius);
+            let y: f32 = rng.random_range(-radius..=*radius);
+            let z: f32 = rng.random_range(-radius..=*radius);
             if x * x + y * y + z * z <= radius * radius {
                 cloud.push(Point3f::new(center.x + x, center.y + y, center.z + z));
                 added += 1;
@@ -128,9 +128,9 @@ fn create_cloud_with_noise_blobs() -> PointCloud<Point3f> {
     ] {
         let mut added = 0;
         while added < count {
-            let x: f32 = rng.gen_range(-radius..=radius);
-            let y: f32 = rng.gen_range(-radius..=radius);
-            let z: f32 = rng.gen_range(-radius..=radius);
+            let x: f32 = rng.random_range(-radius..=radius);
+            let y: f32 = rng.random_range(-radius..=radius);
+            let z: f32 = rng.random_range(-radius..=radius);
             if x * x + y * y + z * z <= radius * radius {
                 cloud.push(Point3f::new(center.x + x, center.y + y, center.z + z));
                 added += 1;
@@ -141,9 +141,9 @@ fn create_cloud_with_noise_blobs() -> PointCloud<Point3f> {
     // Tiny noise blobs (10 points each) – below min_cluster_size of 200
     for cx in [3.0_f32, 5.0, 7.0] {
         for _ in 0..10 {
-            let x: f32 = rng.gen_range(-0.1..0.1);
-            let y: f32 = rng.gen_range(-0.1..0.1);
-            let z: f32 = rng.gen_range(-0.1..0.1);
+            let x: f32 = rng.random_range(-0.1..0.1);
+            let y: f32 = rng.random_range(-0.1..0.1);
+            let z: f32 = rng.random_range(-0.1..0.1);
             cloud.push(Point3f::new(cx + x, 3.0 + y, z));
         }
     }

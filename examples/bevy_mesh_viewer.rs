@@ -1,8 +1,9 @@
-//! Interactive Bevy mesh viewer for threecrate meshes
+//! ThreeCrate unified viewer — meshes and point clouds
 //!
 //! Controls:
-//!   1 / 2 / 3  — Switch mesh (Sphere / Torus / Cube)
-//!   C          — Cycle material colour
+//!   1 / 2 / 3  — Switch mesh (Sphere / Torus / Gyroid)
+//!   4          — Show point cloud
+//!   C          — Cycle material colour (mesh mode only)
 //!   R          — Toggle auto-rotate
 //!   Mouse drag — Orbit camera
 //!   Scroll     — Zoom
@@ -18,7 +19,7 @@ fn main() {
     App::new()
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
-                title: "ThreeCrate Mesh Viewer".to_string(),
+                title: "ThreeCrate Viewer".to_string(),
                 resolution: (1280u32, 720u32).into(),
                 ..default()
             }),
@@ -29,7 +30,7 @@ fn main() {
         .add_systems(
             Update,
             (
-                update_mesh,
+                update_scene,
                 auto_rotate_mesh,
                 rotate_camera,
                 handle_input,
@@ -42,13 +43,21 @@ fn main() {
 #[cfg(feature = "bevy_interop")]
 mod viewer {
     use bevy::input::mouse::{MouseMotion, MouseWheel};
+    use bevy::mesh::{PrimitiveTopology, VertexAttributeValues};
     use bevy::prelude::*;
+    use bevy::asset::RenderAssetUsages;
     use threecrate_core::Point3f;
     use threecrate_reconstruction::marching_cubes::{
         create_sphere_volume, marching_cubes, VolumetricGrid,
     };
 
     // ── State ─────────────────────────────────────────────────────────────────
+
+    #[derive(Clone, Copy, PartialEq, Debug)]
+    pub enum DisplayMode {
+        Mesh(MeshType),
+        PointCloud,
+    }
 
     #[derive(Clone, Copy, PartialEq, Debug)]
     pub enum MeshType {
@@ -77,19 +86,19 @@ mod viewer {
 
     #[derive(Resource)]
     pub struct ViewerState {
-        pub mesh_type: MeshType,
+        pub mode: DisplayMode,
         pub auto_rotate: bool,
         pub color_index: usize,
-        pub mesh_dirty: bool,
+        pub scene_dirty: bool,
     }
 
     impl Default for ViewerState {
         fn default() -> Self {
             Self {
-                mesh_type: MeshType::Sphere,
+                mode: DisplayMode::Mesh(MeshType::Sphere),
                 auto_rotate: true,
                 color_index: 0,
-                mesh_dirty: false,
+                scene_dirty: false,
             }
         }
     }
@@ -183,7 +192,7 @@ mod viewer {
         grid
     }
 
-    fn build_bevy_mesh(mesh_type: MeshType) -> bevy::mesh::Mesh {
+    fn build_bevy_mesh(mesh_type: MeshType) -> Mesh {
         let grid = match mesh_type {
             MeshType::Sphere => create_sphere_volume(
                 Point3f::new(0.0, 0.0, 0.0),
@@ -204,6 +213,50 @@ mod viewer {
         tri.to_bevy_mesh().expect("mesh conversion failed")
     }
 
+    /// Build a rainbow sphere point cloud as a Bevy PointList mesh.
+    fn build_point_cloud_mesh() -> Mesh {
+        use std::f32::consts::PI;
+        const N: usize = 10_000;
+        let golden = PI * (3.0 - 5f32.sqrt());
+
+        let mut positions: Vec<[f32; 3]> = Vec::with_capacity(N);
+        let mut colors: Vec<[f32; 4]> = Vec::with_capacity(N);
+
+        for i in 0..N {
+            // Fibonacci sphere — uniform distribution
+            let y_unit = 1.0 - (i as f32 / (N - 1) as f32) * 2.0;
+            let r = (1.0 - y_unit * y_unit).sqrt();
+            let theta = golden * i as f32;
+            let scale = 2.5_f32;
+            positions.push([theta.cos() * r * scale, y_unit * scale, theta.sin() * r * scale]);
+
+            // Hue from 0° to 360° across the sphere
+            let hue = (i as f32 / N as f32) * 360.0;
+            let (cr, cg, cb) = hsv_to_rgb(hue, 1.0, 1.0);
+            colors.push([cr, cg, cb, 1.0]);
+        }
+
+        let mut mesh = Mesh::new(PrimitiveTopology::PointList, RenderAssetUsages::default());
+        mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+        mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
+        mesh
+    }
+
+    /// HSV → linear RGB (simple, no gamma correction needed for point hues).
+    fn hsv_to_rgb(h: f32, s: f32, v: f32) -> (f32, f32, f32) {
+        let h = h % 360.0;
+        let c = v * s;
+        let x = c * (1.0 - ((h / 60.0) % 2.0 - 1.0).abs());
+        let m = v - c;
+        let (r, g, b) = if h < 60.0 { (c, x, 0.0) }
+            else if h < 120.0 { (x, c, 0.0) }
+            else if h < 180.0 { (0.0, c, x) }
+            else if h < 240.0 { (0.0, x, c) }
+            else if h < 300.0 { (x, 0.0, c) }
+            else              { (c, 0.0, x) };
+        (r + m, g + m, b + m)
+    }
+
     fn make_material(color_index: usize) -> StandardMaterial {
         let (r, g, b, _) = COLORS[color_index];
         StandardMaterial {
@@ -211,6 +264,14 @@ mod viewer {
             metallic: 0.45,
             perceptual_roughness: 0.25,
             reflectance: 0.6,
+            ..default()
+        }
+    }
+
+    fn make_point_cloud_material() -> StandardMaterial {
+        StandardMaterial {
+            unlit: true,
+            base_color: Color::WHITE,
             ..default()
         }
     }
@@ -297,31 +358,42 @@ mod viewer {
         ));
     }
 
-    pub fn update_mesh(
+    pub fn update_scene(
         mut commands: Commands,
-        mut meshes: ResMut<Assets<bevy::mesh::Mesh>>,
+        mut meshes: ResMut<Assets<Mesh>>,
         mut materials: ResMut<Assets<StandardMaterial>>,
         mut state: ResMut<ViewerState>,
         query: Query<Entity, With<SceneMesh>>,
     ) {
-        if !state.mesh_dirty {
+        if !state.scene_dirty {
             return;
         }
-        state.mesh_dirty = false;
+        state.scene_dirty = false;
 
         for e in query.iter() {
             commands.entity(e).despawn();
         }
 
-        let mesh_type = state.mesh_type;
-        let color_index = state.color_index;
-        println!("Generating {} mesh…", mesh_type.label());
-        commands.spawn((
-            Mesh3d(meshes.add(build_bevy_mesh(mesh_type))),
-            MeshMaterial3d(materials.add(make_material(color_index))),
-            Transform::default(),
-            SceneMesh,
-        ));
+        match state.mode {
+            DisplayMode::Mesh(mesh_type) => {
+                println!("Generating {} mesh…", mesh_type.label());
+                commands.spawn((
+                    Mesh3d(meshes.add(build_bevy_mesh(mesh_type))),
+                    MeshMaterial3d(materials.add(make_material(state.color_index))),
+                    Transform::default(),
+                    SceneMesh,
+                ));
+            }
+            DisplayMode::PointCloud => {
+                println!("Generating point cloud…");
+                commands.spawn((
+                    Mesh3d(meshes.add(build_point_cloud_mesh())),
+                    MeshMaterial3d(materials.add(make_point_cloud_material())),
+                    Transform::default(),
+                    SceneMesh,
+                ));
+            }
+        }
     }
 
     pub fn auto_rotate_mesh(
@@ -345,24 +417,30 @@ mod viewer {
         if keyboard.just_pressed(KeyCode::Escape) {
             exit.write(bevy::app::AppExit::Success);
         }
-        if keyboard.just_pressed(KeyCode::Digit1) && state.mesh_type != MeshType::Sphere {
-            state.mesh_type = MeshType::Sphere;
-            state.mesh_dirty = true;
+        if keyboard.just_pressed(KeyCode::Digit1) && state.mode != DisplayMode::Mesh(MeshType::Sphere) {
+            state.mode = DisplayMode::Mesh(MeshType::Sphere);
+            state.scene_dirty = true;
         }
-        if keyboard.just_pressed(KeyCode::Digit2) && state.mesh_type != MeshType::Torus {
-            state.mesh_type = MeshType::Torus;
-            state.mesh_dirty = true;
+        if keyboard.just_pressed(KeyCode::Digit2) && state.mode != DisplayMode::Mesh(MeshType::Torus) {
+            state.mode = DisplayMode::Mesh(MeshType::Torus);
+            state.scene_dirty = true;
         }
-        if keyboard.just_pressed(KeyCode::Digit3) && state.mesh_type != MeshType::Gyroid {
-            state.mesh_type = MeshType::Gyroid;
-            state.mesh_dirty = true;
+        if keyboard.just_pressed(KeyCode::Digit3) && state.mode != DisplayMode::Mesh(MeshType::Gyroid) {
+            state.mode = DisplayMode::Mesh(MeshType::Gyroid);
+            state.scene_dirty = true;
+        }
+        if keyboard.just_pressed(KeyCode::Digit4) && state.mode != DisplayMode::PointCloud {
+            state.mode = DisplayMode::PointCloud;
+            state.scene_dirty = true;
         }
         if keyboard.just_pressed(KeyCode::KeyR) {
             state.auto_rotate = !state.auto_rotate;
         }
         if keyboard.just_pressed(KeyCode::KeyC) {
-            state.color_index = (state.color_index + 1) % COLORS.len();
-            state.mesh_dirty = true;
+            if matches!(state.mode, DisplayMode::Mesh(_)) {
+                state.color_index = (state.color_index + 1) % COLORS.len();
+                state.scene_dirty = true;
+            }
         }
     }
 
@@ -417,19 +495,23 @@ mod viewer {
     }
 
     fn status_string(state: &ViewerState) -> String {
-        let (_, _, _, color_name) = COLORS[state.color_index];
+        let mode_line = match state.mode {
+            DisplayMode::Mesh(t) => {
+                let (_, _, _, color_name) = COLORS[state.color_index];
+                format!("Mode : Mesh — {} (1·2·3)\nColor: {} (C to cycle)", t.label(), color_name)
+            }
+            DisplayMode::PointCloud => "Mode : Point Cloud (4)".to_string(),
+        };
         format!(
-            "ThreeCrate Mesh Viewer\n\
-             ──────────────────────\n\
-             Mesh :  {} (1·2·3 to switch)\n\
-             Color:  {} (C to cycle)\n\
-             Spin :  {} (R to toggle)\n\
-             ──────────────────────\n\
+            "ThreeCrate Viewer\n\
+             ─────────────────\n\
+             {}\n\
+             Spin : {} (R to toggle)\n\
+             ─────────────────\n\
              Drag   — Orbit camera\n\
              Scroll — Zoom\n\
              ESC    — Exit",
-            state.mesh_type.label(),
-            color_name,
+            mode_line,
             if state.auto_rotate { "ON " } else { "OFF" },
         )
     }

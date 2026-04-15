@@ -301,9 +301,9 @@ fn generate_sample_data() -> (PointCloud<Point3f>, PointCloud<Point3f>, Vec<f32>
     // Generate first point cloud (sphere)
     let mut source_points = Vec::new();
     for _ in 0..1000 {
-        let theta: f32 = rng.gen_range(0.0..2.0 * std::f32::consts::PI);
-        let phi: f32 = rng.gen_range(0.0..std::f32::consts::PI);
-        let radius = 1.0 + rng.gen_range(-0.1..0.1);
+        let theta: f32 = rng.random_range(0.0..2.0 * std::f32::consts::PI);
+        let phi: f32 = rng.random_range(0.0..std::f32::consts::PI);
+        let radius = 1.0 + rng.random_range(-0.1..0.1);
         
         let x = radius * phi.sin() * theta.cos();
         let y = radius * phi.sin() * theta.sin();
@@ -315,9 +315,9 @@ fn generate_sample_data() -> (PointCloud<Point3f>, PointCloud<Point3f>, Vec<f32>
     // Generate second point cloud (slightly transformed sphere)
     let mut target_points = Vec::new();
     for _ in 0..1000 {
-        let theta: f32 = rng.gen_range(0.0..2.0 * std::f32::consts::PI);
-        let phi: f32 = rng.gen_range(0.0..std::f32::consts::PI);
-        let radius = 1.0 + rng.gen_range(-0.1..0.1);
+        let theta: f32 = rng.random_range(0.0..2.0 * std::f32::consts::PI);
+        let phi: f32 = rng.random_range(0.0..std::f32::consts::PI);
+        let radius = 1.0 + rng.random_range(-0.1..0.1);
         
         let x = radius * phi.sin() * theta.cos() + 0.1;
         let y = radius * phi.sin() * theta.sin() + 0.1;
@@ -338,7 +338,7 @@ fn generate_sample_data() -> (PointCloud<Point3f>, PointCloud<Point3f>, Vec<f32>
             let distance_from_center = (u * u + v * v).sqrt();
             
             let depth = if distance_from_center < 0.8 {
-                2.0 + 0.5 * (u * u + v * v).sqrt() + rng.gen_range(-0.1..0.1)
+                2.0 + 0.5 * (u * u + v * v).sqrt() + rng.random_range(-0.1..0.1)
             } else {
                 0.0 // No measurement
             };

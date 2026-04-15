@@ -105,9 +105,9 @@ fn add_outliers(cloud: &mut PointCloud<Point3f>, num_outliers: usize) {
     
     for _ in 0..num_outliers {
         // Add points far from the main cluster
-        let x = rng.gen_range(-5.0..5.0);
-        let y = rng.gen_range(-5.0..5.0);
-        let z = rng.gen_range(-5.0..5.0);
+        let x = rng.random_range(-5.0..5.0);
+        let y = rng.random_range(-5.0..5.0);
+        let z = rng.random_range(-5.0..5.0);
         
         cloud.push(Point3::new(x, y, z));
     }

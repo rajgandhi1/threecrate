@@ -91,16 +91,16 @@ fn create_noisy_planar_cloud() -> PointCloud<Point3f> {
         for j in 0..20 {
             let x = i as f32;
             let y = j as f32;
-            let z = rng.gen_range(-0.03..0.03); // Add noise to z coordinate
+            let z = rng.random_range(-0.03..0.03); // Add noise to z coordinate
             cloud.push(Point3f::new(x, y, z));
         }
     }
     
     // Add outliers
     for _ in 0..30 {
-        let x = rng.gen_range(0.0..20.0);
-        let y = rng.gen_range(0.0..20.0);
-        let z = rng.gen_range(2.0..8.0); // Outliers above the plane
+        let x = rng.random_range(0.0..20.0);
+        let y = rng.random_range(0.0..20.0);
+        let z = rng.random_range(2.0..8.0); // Outliers above the plane
         cloud.push(Point3f::new(x, y, z));
     }
     
@@ -120,9 +120,9 @@ fn create_tilted_plane_with_outliers() -> PointCloud<Point3f> {
             let z = -(x + y); // Points on the plane x + y + z = 0
             
             // Add some noise
-            let noise_x = rng.gen_range(-0.02..0.02);
-            let noise_y = rng.gen_range(-0.02..0.02);
-            let noise_z = rng.gen_range(-0.02..0.02);
+            let noise_x = rng.random_range(-0.02..0.02);
+            let noise_y = rng.random_range(-0.02..0.02);
+            let noise_z = rng.random_range(-0.02..0.02);
             
             cloud.push(Point3f::new(x + noise_x, y + noise_y, z + noise_z));
         }
@@ -130,9 +130,9 @@ fn create_tilted_plane_with_outliers() -> PointCloud<Point3f> {
     
     // Add outliers
     for _ in 0..50 {
-        let x = rng.gen_range(0.0..15.0);
-        let y = rng.gen_range(0.0..15.0);
-        let z = rng.gen_range(5.0..15.0); // Outliers above the plane
+        let x = rng.random_range(0.0..15.0);
+        let y = rng.random_range(0.0..15.0);
+        let z = rng.random_range(5.0..15.0); // Outliers above the plane
         cloud.push(Point3f::new(x, y, z));
     }
     
@@ -149,7 +149,7 @@ fn create_multiple_planes() -> PointCloud<Point3f> {
         for j in 0..25 {
             let x = i as f32;
             let y = j as f32;
-            let z = rng.gen_range(-0.02..0.02); // Small noise
+            let z = rng.random_range(-0.02..0.02); // Small noise
             cloud.push(Point3f::new(x, y, z));
         }
     }
@@ -159,7 +159,7 @@ fn create_multiple_planes() -> PointCloud<Point3f> {
         for j in 0..10 {
             let x = i as f32;
             let y = j as f32;
-            let z = 5.0 + rng.gen_range(-0.02..0.02); // Small noise
+            let z = 5.0 + rng.random_range(-0.02..0.02); // Small noise
             cloud.push(Point3f::new(x, y, z));
         }
     }
@@ -167,7 +167,7 @@ fn create_multiple_planes() -> PointCloud<Point3f> {
     // Third plane: x = 0 (smallest)
     for i in 0..5 {
         for j in 0..5 {
-            let x = rng.gen_range(-0.02..0.02); // Small noise
+            let x = rng.random_range(-0.02..0.02); // Small noise
             let y = i as f32;
             let z = j as f32;
             cloud.push(Point3f::new(x, y, z));
@@ -176,9 +176,9 @@ fn create_multiple_planes() -> PointCloud<Point3f> {
     
     // Add some random outliers
     for _ in 0..20 {
-        let x = rng.gen_range(-5.0..30.0);
-        let y = rng.gen_range(-5.0..30.0);
-        let z = rng.gen_range(-5.0..10.0);
+        let x = rng.random_range(-5.0..30.0);
+        let y = rng.random_range(-5.0..30.0);
+        let z = rng.random_range(-5.0..10.0);
         cloud.push(Point3f::new(x, y, z));
     }
     

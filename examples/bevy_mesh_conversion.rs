@@ -39,8 +39,8 @@ fn main() {
         .expect("Failed to convert to Bevy mesh");
 
     println!("   Bevy Mesh created successfully!");
-    println!("   - Has positions: {}", bevy_mesh.attribute(bevy::render::mesh::Mesh::ATTRIBUTE_POSITION).is_some());
-    println!("   - Has normals: {}", bevy_mesh.attribute(bevy::render::mesh::Mesh::ATTRIBUTE_NORMAL).is_some());
+    println!("   - Has positions: {}", bevy_mesh.attribute(bevy::prelude::Mesh::ATTRIBUTE_POSITION).is_some());
+    println!("   - Has normals: {}", bevy_mesh.attribute(bevy::prelude::Mesh::ATTRIBUTE_NORMAL).is_some());
     println!("   - Has indices: {}", bevy_mesh.indices().is_some());
     println!();
 
@@ -76,7 +76,7 @@ fn main() {
     let bevy_colored = colored_mesh.to_bevy_mesh()
         .expect("Failed to convert colored mesh");
 
-    println!("   - Has colors: {}", bevy_colored.attribute(bevy::render::mesh::Mesh::ATTRIBUTE_COLOR).is_some());
+    println!("   - Has colors: {}", bevy_colored.attribute(bevy::prelude::Mesh::ATTRIBUTE_COLOR).is_some());
     println!();
 
     println!("============================");
