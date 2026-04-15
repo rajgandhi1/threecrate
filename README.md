@@ -96,4 +96,4 @@ Contributions are welcome — algorithms, Python bindings, new formats, docs.
 
 ## License
 
-Dual-licensed under MIT or Apache-2.0.
+licensed under MIT
