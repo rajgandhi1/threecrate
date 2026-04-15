@@ -148,9 +148,9 @@ fn noisy_icp_example() -> Result<(), Box<dyn std::error::Error>> {
         let transformed = transform * point;
         // Add Gaussian noise
         let noise = Vector3f::new(
-            (rng.gen_range(-0.5..0.5)) * 0.05,
-            (rng.gen_range(-0.5..0.5)) * 0.05,
-            (rng.gen_range(-0.5..0.5)) * 0.05,
+            (rng.random_range(-0.5..0.5)) * 0.05,
+            (rng.random_range(-0.5..0.5)) * 0.05,
+            (rng.random_range(-0.5..0.5)) * 0.05,
         );
         target.push(transformed + noise);
     }

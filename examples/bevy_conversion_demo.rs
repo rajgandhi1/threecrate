@@ -59,33 +59,12 @@ fn main() {
 
     // Step 5: Show Bevy Mesh details
     println!("Step 5: Bevy Mesh Details:");
-    println!("  Type: bevy::render::mesh::Mesh");
+    println!("  Type: bevy::prelude::Mesh");
     println!("  Primitive Topology: TriangleList");
-
-    if let Some(positions) = bevy_mesh.attribute(Mesh::ATTRIBUTE_POSITION) {
-        if let bevy::render::mesh::VertexAttributeValues::Float32x3(verts) = positions {
-            println!("  Position attribute: {} vertices", verts.len());
-        }
-    }
-
-    if let Some(normals) = bevy_mesh.attribute(Mesh::ATTRIBUTE_NORMAL) {
-        if let bevy::render::mesh::VertexAttributeValues::Float32x3(norms) = normals {
-            println!("  Normal attribute: {} normals", norms.len());
-        }
-    }
-
-    if let Some(colors) = bevy_mesh.attribute(Mesh::ATTRIBUTE_COLOR) {
-        if let bevy::render::mesh::VertexAttributeValues::Float32x4(cols) = colors {
-            println!("  Color attribute: {} colors (RGBA)", cols.len());
-        }
-    }
-
-    if let Some(indices) = bevy_mesh.indices() {
-        match indices {
-            bevy::render::mesh::Indices::U16(idx) => println!("  Indices: {} (U16)", idx.len()),
-            bevy::render::mesh::Indices::U32(idx) => println!("  Indices: {} (U32)", idx.len()),
-        }
-    }
+    println!("  Vertex count : {}", bevy_mesh.count_vertices());
+    println!("  Has normals  : {}", bevy_mesh.attribute(Mesh::ATTRIBUTE_NORMAL).is_some());
+    println!("  Has colors   : {}", bevy_mesh.attribute(Mesh::ATTRIBUTE_COLOR).is_some());
+    println!("  Has indices  : {}", bevy_mesh.indices().is_some());
     println!();
 
     // Step 6: Launch Bevy viewer
@@ -102,7 +81,7 @@ fn main() {
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
                 title: "Bevy Mesh Conversion Demo - Orange Cube".to_string(),
-                resolution: (1024., 768.).into(),
+                resolution: (1024u32, 768u32).into(),
                 ..default()
             }),
             ..default()
@@ -119,7 +98,7 @@ mod demo {
     use bevy::input::mouse::{MouseMotion, MouseWheel};
 
     #[derive(Resource)]
-    pub struct ConvertedMesh(pub bevy::render::mesh::Mesh);
+    pub struct ConvertedMesh(pub Mesh);
 
     #[derive(Component)]
     pub struct CameraController {
@@ -144,16 +123,16 @@ mod demo {
 
     pub fn setup_demo_scene(
         mut commands: Commands,
-        mut meshes: ResMut<Assets<bevy::render::mesh::Mesh>>,
+        mut meshes: ResMut<Assets<Mesh>>,
         mut materials: ResMut<Assets<StandardMaterial>>,
         converted_mesh: Res<ConvertedMesh>,
     ) {
         // Add the converted Bevy mesh with vertex colors
         let mesh_handle = meshes.add(converted_mesh.0.clone());
         let material_handle = materials.add(StandardMaterial {
-            base_color: Color::WHITE, // Use white to show vertex colors
-            metallic: 0.1,
-            perceptual_roughness: 0.7,
+            base_color: Color::srgb(1.0, 0.39, 0.20), // orange — matches the vertex colors set in main()
+            metallic: 0.2,
+            perceptual_roughness: 0.5,
             ..default()
         });
 
@@ -163,20 +142,33 @@ mod demo {
             Transform::from_xyz(0.0, 0.0, 0.0),
         ));
 
-        // Directional light
+        // Key light
         commands.spawn((
             DirectionalLight {
-                illuminance: 8000.0,
+                illuminance: 15_000.0,
+                shadows_enabled: true,
+                color: Color::srgb(1.0, 0.97, 0.90),
+                ..default()
+            },
+            Transform::from_xyz(5.0, 8.0, 5.0).looking_at(Vec3::ZERO, Vec3::Y),
+        ));
+
+        // Fill light
+        commands.spawn((
+            DirectionalLight {
+                illuminance: 4_000.0,
+                color: Color::srgb(0.6, 0.75, 1.0),
                 shadows_enabled: false,
                 ..default()
             },
-            Transform::from_xyz(3.0, 5.0, 3.0).looking_at(Vec3::ZERO, Vec3::Y),
+            Transform::from_xyz(-4.0, 2.0, -4.0).looking_at(Vec3::ZERO, Vec3::Y),
         ));
 
         // Ambient light
-        commands.insert_resource(AmbientLight {
-            color: Color::srgb(0.6, 0.6, 0.7),
-            brightness: 200.0,
+        commands.insert_resource(GlobalAmbientLight {
+            color: Color::srgb(0.5, 0.5, 0.6),
+            brightness: 80.0,
+            ..default()
         });
 
         // Camera
@@ -197,12 +189,14 @@ mod demo {
     }
 
     pub fn rotate_camera(
-        mut mouse_motion: EventReader<MouseMotion>,
-        mut mouse_wheel: EventReader<MouseWheel>,
+        mut mouse_motion: MessageReader<MouseMotion>,
+        mut mouse_wheel: MessageReader<MouseWheel>,
         mouse_button: Res<ButtonInput<MouseButton>>,
         mut query: Query<(&mut Transform, &mut CameraController)>,
     ) {
-        let (mut transform, mut controller) = query.single_mut();
+        let Ok((mut transform, mut controller)) = query.single_mut() else {
+            return;
+        };
 
         if mouse_button.pressed(MouseButton::Left) {
             for motion in mouse_motion.read() {
@@ -228,10 +222,10 @@ mod demo {
 
     pub fn handle_input(
         keyboard: Res<ButtonInput<KeyCode>>,
-        mut exit: EventWriter<bevy::app::AppExit>,
+        mut exit: MessageWriter<bevy::app::AppExit>,
     ) {
         if keyboard.just_pressed(KeyCode::Escape) {
-            exit.send(bevy::app::AppExit::Success);
+            exit.write(bevy::app::AppExit::Success);
         }
     }
 }

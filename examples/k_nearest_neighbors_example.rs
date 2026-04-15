@@ -29,9 +29,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut rng = rand::thread_rng();
     for _ in 0..20 {
         cloud.push(Point3f::new(
-            rng.gen_range(-2.0..7.0),
-            rng.gen_range(-2.0..7.0),
-            rng.gen_range(-1.0..4.0),
+            rng.random_range(-2.0..7.0),
+            rng.random_range(-2.0..7.0),
+            rng.random_range(-1.0..4.0),
         ));
     }
     
@@ -110,9 +110,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let iterations = 100;
     let query_points: Vec<Point3f> = (0..iterations)
         .map(|_| Point3f::new(
-            rng.gen_range(-1.0..6.0),
-            rng.gen_range(-1.0..6.0),
-            rng.gen_range(0.0..3.0),
+            rng.random_range(-1.0..6.0),
+            rng.random_range(-1.0..6.0),
+            rng.random_range(0.0..3.0),
         ))
         .collect();
     

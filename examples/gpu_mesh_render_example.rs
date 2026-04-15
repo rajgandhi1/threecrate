@@ -1,137 +1,185 @@
 //! GPU Mesh Rendering Example
+//!
+//! Loads assets/bunny.obj, converts it to a Bevy mesh, and renders it
+//! with PBR lighting using the same Bevy viewer as bevy_mesh_viewer.
+//!
+//! Controls:
+//!   Mouse drag — Orbit camera
+//!   Scroll     — Zoom
+//!   ESC        — Exit
+//!
+//! Run with: cargo run -p threecrate-examples --bin gpu_mesh_render_example --features bevy_interop
 
-use std::sync::Arc;
-use threecrate_core::TriangleMesh;
-use threecrate_gpu::{MeshRenderer, MeshRenderConfig, ShadingMode, PbrMaterial, mesh_to_gpu_mesh};
-use winit::{
-    application::ApplicationHandler,
-    event_loop::{EventLoop, ActiveEventLoop},
-    event::WindowEvent,
-    window::{Window, WindowId},
-};
-use nalgebra::{Point3, Vector3};
+#[cfg(feature = "bevy_interop")]
+fn main() {
+    use bevy::prelude::*;
+    use threecrate_io::obj::RobustObjReader;
 
-fn build_cube_mesh() -> TriangleMesh {
-    let vertices = vec![
-        // Front face
-        Point3::new(-1.0, -1.0,  1.0),
-        Point3::new( 1.0, -1.0,  1.0),
-        Point3::new( 1.0,  1.0,  1.0),
-        Point3::new(-1.0,  1.0,  1.0),
-        // Back face
-        Point3::new( 1.0, -1.0, -1.0),
-        Point3::new(-1.0, -1.0, -1.0),
-        Point3::new(-1.0,  1.0, -1.0),
-        Point3::new( 1.0,  1.0, -1.0),
-    ];
-    let faces = vec![
-        [0,1,2], [2,3,0], // front
-        [4,5,6], [6,7,4], // back
-        [3,2,7], [7,6,3], // top
-        [5,4,1], [1,0,5], // bottom
-        [1,4,7], [7,2,1], // right
-        [5,0,3], [3,6,5], // left
-    ];
-    TriangleMesh::from_vertices_and_faces(vertices, faces)
+    let obj_path = "assets/bunny.obj";
+    println!("Loading {}…", obj_path);
+    let obj_data = RobustObjReader::read_obj_file(obj_path).expect("failed to read bunny.obj");
+    let mesh = RobustObjReader::obj_data_to_mesh(&obj_data).expect("failed to parse obj");
+
+    println!(
+        "Loaded: {} vertices, {} faces",
+        mesh.vertex_count(),
+        mesh.face_count()
+    );
+
+    // Compute bounding sphere so setup_scene can centre and zoom correctly.
+    let (cx, cy, cz) = mesh.vertices.iter().fold((0f32, 0f32, 0f32), |(ax, ay, az), v| {
+        (ax + v.x, ay + v.y, az + v.z)
+    });
+    let n = mesh.vertices.len() as f32;
+    let center = Vec3::new(cx / n, cy / n, cz / n);
+    let radius = mesh.vertices.iter()
+        .map(|v| (Vec3::new(v.x, v.y, v.z) - center).length())
+        .fold(0f32, f32::max);
+
+    println!("Bounding sphere: center={:.2?} radius={:.2}", center, radius);
+
+    let mut bevy_mesh = mesh.to_bevy_mesh().expect("failed to convert to Bevy mesh");
+    // OBJ normal indices are per-face-vertex and don't survive the vertex
+    // deduplication in obj_data_to_mesh, so recompute them from geometry.
+    bevy_mesh.compute_smooth_normals();
+
+    App::new()
+        .add_plugins(DefaultPlugins.set(WindowPlugin {
+            primary_window: Some(Window {
+                title: format!(
+                    "ThreeCrate GPU Mesh — bunny.obj ({} verts, {} faces)",
+                    mesh.vertex_count(),
+                    mesh.face_count()
+                ),
+                resolution: (1280u32, 720u32).into(),
+                ..default()
+            }),
+            ..default()
+        }))
+        .insert_resource(viewer::LoadedMesh { mesh: bevy_mesh, center, radius })
+        .add_systems(Startup, viewer::setup_scene)
+        .add_systems(Update, (viewer::rotate_camera, viewer::handle_input))
+        .run();
 }
 
-struct App {
-    mesh: TriangleMesh,
-    window: Option<Arc<Window>>,
-    renderer: Option<MeshRenderer<'static>>,
-}
+#[cfg(feature = "bevy_interop")]
+mod viewer {
+    use bevy::prelude::*;
+    use bevy::input::mouse::{MouseMotion, MouseWheel};
 
-impl ApplicationHandler for App {
-    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if self.window.is_none() {
-            // Create window
-            let window_attrs = Window::default_attributes()
-                .with_title("threecrate GPU Mesh Rendering Example");
+    #[derive(Resource)]
+    pub struct LoadedMesh {
+        pub mesh:   Mesh,
+        pub center: Vec3,
+        pub radius: f32,
+    }
 
-            let window = match event_loop.create_window(window_attrs) {
-                Ok(w) => Arc::new(w),
-                Err(e) => {
-                    eprintln!("Failed to create window: {}", e);
-                    event_loop.exit();
-                    return;
-                }
-            };
+    #[derive(Component)]
+    pub struct CameraController {
+        pub rotation_speed: f32,
+        pub zoom_speed:     f32,
+        pub distance:       f32,
+        pub rotation_x:     f32,
+        pub rotation_y:     f32,
+        pub target:         Vec3,
+    }
 
-            // Use transmute to get a 'static reference
-            // This is safe because the window Arc will live for the duration of the program
-            let window_ref: &'static Window = unsafe {
-                std::mem::transmute::<&Window, &'static Window>(window.as_ref())
-            };
+    pub fn setup_scene(
+        mut commands: Commands,
+        mut meshes:   ResMut<Assets<Mesh>>,
+        mut materials: ResMut<Assets<StandardMaterial>>,
+        loaded: Res<LoadedMesh>,
+    ) {
+        // Centre the mesh at the world origin via its Transform.
+        commands.spawn((
+            Mesh3d(meshes.add(loaded.mesh.clone())),
+            MeshMaterial3d(materials.add(StandardMaterial {
+                base_color: Color::srgb(0.85, 0.85, 0.85),
+                metallic: 0.1,
+                perceptual_roughness: 0.6,
+                ..default()
+            })),
+            Transform::from_translation(-loaded.center),
+        ));
 
-            // Create mesh renderer
-            let renderer = match pollster::block_on(MeshRenderer::new(window_ref, MeshRenderConfig::default())) {
-                Ok(r) => r,
-                Err(e) => {
-                    eprintln!("Failed to create renderer: {}", e);
-                    event_loop.exit();
-                    return;
-                }
-            };
+        commands.spawn((
+            DirectionalLight { illuminance: 18_000.0, shadows_enabled: true, color: Color::srgb(1.0, 0.97, 0.90), ..default() },
+            Transform::from_xyz(5.0, 10.0, 5.0).looking_at(Vec3::ZERO, Vec3::Y),
+        ));
+        commands.spawn((
+            DirectionalLight { illuminance: 5_000.0, color: Color::srgb(0.6, 0.75, 1.0), shadows_enabled: false, ..default() },
+            Transform::from_xyz(-5.0, 2.0, -5.0).looking_at(Vec3::ZERO, Vec3::Y),
+        ));
+        commands.insert_resource(GlobalAmbientLight {
+            color: Color::srgb(0.5, 0.5, 0.6),
+            brightness: 80.0,
+            ..default()
+        });
 
-            self.window = Some(window);
-            self.renderer = Some(renderer);
+        // Place the camera far enough to see the whole mesh.
+        let distance = loaded.radius * 2.5;
+        let ctrl = CameraController {
+            rotation_speed: 0.5,
+            zoom_speed:     loaded.radius * 0.2,
+            distance,
+            rotation_x:     0.3,
+            rotation_y:     0.6,
+            target:         Vec3::ZERO,
+        };
+        let (x, y, z) = cam_pos(&ctrl);
+        commands.spawn((
+            Camera3d::default(),
+            Transform::from_xyz(x, y, z).looking_at(Vec3::ZERO, Vec3::Y),
+            ctrl,
+        ));
+    }
 
-            // Set up camera
-            if let Some(renderer) = &mut self.renderer {
-                let eye = nalgebra::Point3::new(3.0, 3.0, 3.0);
-                let center = nalgebra::Point3::origin();
-                let up = Vector3::y_axis().into_inner();
-                let view = nalgebra::Isometry3::look_at_rh(&eye, &center, &up).to_homogeneous();
-                let proj = nalgebra::Perspective3::new(16.0/9.0, 45.0_f32.to_radians(), 0.1, 100.0).to_homogeneous();
-                renderer.update_camera(view, proj, eye.coords);
+    pub fn rotate_camera(
+        mut mouse_motion: MessageReader<MouseMotion>,
+        mut mouse_wheel:  MessageReader<MouseWheel>,
+        mouse_button: Res<ButtonInput<MouseButton>>,
+        mut query: Query<(&mut Transform, &mut CameraController)>,
+    ) {
+        let Ok((mut transform, mut ctrl)) = query.single_mut() else { return; };
+
+        if mouse_button.pressed(MouseButton::Left) {
+            for ev in mouse_motion.read() {
+                ctrl.rotation_y -= ev.delta.x * 0.01 * ctrl.rotation_speed;
+                ctrl.rotation_x -= ev.delta.y * 0.01 * ctrl.rotation_speed;
+                ctrl.rotation_x = ctrl.rotation_x.clamp(-1.4, 1.4);
             }
+        } else {
+            mouse_motion.clear();
+        }
+
+        for ev in mouse_wheel.read() {
+            ctrl.distance -= ev.y * ctrl.zoom_speed;
+            ctrl.distance = ctrl.distance.clamp(ctrl.zoom_speed, ctrl.distance.max(ctrl.zoom_speed) * 4.0);
+        }
+
+        let (x, y, z) = cam_pos(&ctrl);
+        *transform = Transform::from_xyz(x, y, z).looking_at(ctrl.target, Vec3::Y);
+    }
+
+    pub fn handle_input(
+        keyboard: Res<ButtonInput<KeyCode>>,
+        mut exit: MessageWriter<bevy::app::AppExit>,
+    ) {
+        if keyboard.just_pressed(KeyCode::Escape) {
+            exit.write(bevy::app::AppExit::Success);
         }
     }
 
-    fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
-        let Some(window) = &self.window else { return; };
-        let Some(renderer) = &mut self.renderer else { return; };
-
-        match event {
-            WindowEvent::CloseRequested => {
-                event_loop.exit();
-            }
-            WindowEvent::Resized(size) => {
-                renderer.resize(size);
-            }
-            WindowEvent::RedrawRequested => {
-                // Build indices and convert to GPU mesh
-                let indices: Vec<u32> = self.mesh.faces.iter().flat_map(|f| [f[0] as u32, f[1] as u32, f[2] as u32]).collect();
-                let gpu_mesh = mesh_to_gpu_mesh(&self.mesh.vertices, &indices, self.mesh.normals.as_deref(), None, Some(PbrMaterial::default()));
-                let _ = renderer.render(&gpu_mesh, ShadingMode::Flat);
-            }
-            _ => {}
-        }
-    }
-
-    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-        if let Some(window) = &self.window {
-            window.request_redraw();
-        }
+    fn cam_pos(ctrl: &CameraController) -> (f32, f32, f32) {
+        let x = ctrl.rotation_y.sin() * ctrl.rotation_x.cos() * ctrl.distance;
+        let y = ctrl.rotation_x.sin() * ctrl.distance;
+        let z = ctrl.rotation_y.cos() * ctrl.rotation_x.cos() * ctrl.distance;
+        (x, y, z)
     }
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Build a simple cube mesh
-    let mesh = build_cube_mesh();
-
-    // Event loop
-    let event_loop = EventLoop::new()?;
-
-    // Create app
-    let mut app = App {
-        mesh,
-        window: None,
-        renderer: None,
-    };
-
-    // Run event loop
-    event_loop.run_app(&mut app)?;
-
-    Ok(())
+#[cfg(not(feature = "bevy_interop"))]
+fn main() {
+    println!("This example requires the 'bevy_interop' feature.");
+    println!("Run with: cargo run -p threecrate-examples --bin gpu_mesh_render_example --features bevy_interop");
 }

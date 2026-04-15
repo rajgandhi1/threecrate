@@ -43,6 +43,7 @@ path = "comprehensive_gpu_example.rs"
 [[bin]]
 name = "interactive_viewer_example"
 path = "interactive_viewer_example.rs"
+required-features = ["bevy_interop"]
 
 [[bin]]
 name = "normal_estimation_example"
@@ -67,6 +68,7 @@ path = "gpu_filtering_example.rs"
 [[bin]]
 name = "gpu_mesh_render_example"
 path = "gpu_mesh_render_example.rs"
+required-features = ["bevy_interop"]
 
 [[bin]]
 name = "read_ply"
