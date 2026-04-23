@@ -72,5 +72,5 @@ winit = "0.30"
 criterion = { version = "0.8", features = ["html_reports"] }
 
 clap = { version = "4.4", features = ["derive"] }
-bpa_rs = "0.1.3"
+bpa_rs = "0.2.0"
 e57 = "0.11"
