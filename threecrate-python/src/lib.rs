@@ -4,11 +4,12 @@ use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use threecrate_algorithms::{
     estimate_normals as tc_estimate_normals, extract_euclidean_clusters,
-    icp_point_to_point_default, radius_outlier_removal, segment_plane as tc_segment_plane,
+    icp_point_to_plane as tc_icp_point_to_plane, icp_point_to_point_default,
+    radius_outlier_removal, segment_plane as tc_segment_plane,
     smooth_hc, smooth_laplacian, smooth_taubin, statistical_outlier_removal, voxel_grid_filter,
     HcSmoothingConfig, LaplacianSmoothingConfig, TaubinSmoothingConfig,
 };
-use threecrate_core::{NormalPoint3f, Point3f, PointCloud, TriangleMesh};
+use threecrate_core::{NormalPoint3f, Point3f, PointCloud, TriangleMesh, Vector3f};
 use threecrate_io::{
     read_mesh as rs_read_mesh, read_point_cloud as rs_read_pc, write_mesh as rs_write_mesh,
     write_point_cloud as rs_write_pc,
@@ -386,6 +387,58 @@ fn icp(
     .map_err(to_py_err)
 }
 
+/// Align `source` to `target` using point-to-plane ICP.
+///
+/// Uses the surface normal at each target point to define a local tangent
+/// plane, which typically converges faster and more accurately than
+/// point-to-point ICP.
+///
+/// Returns an `IcpResult` containing the 4×4 transformation matrix,
+/// final MSE, iteration count, and convergence flag.
+#[pyfunction]
+#[pyo3(signature = (source, target, max_iterations = 50))]
+fn icp_point_to_plane(
+    source: &PyNormalPointCloud,
+    target: &PyNormalPointCloud,
+    max_iterations: usize,
+) -> PyResult<PyIcpResult> {
+    let source_cloud = PointCloud::from_points(
+        source.inner.points.iter()
+            .map(|p| Point3f::new(p.position.x, p.position.y, p.position.z))
+            .collect(),
+    );
+    let target_cloud = PointCloud::from_points(
+        target.inner.points.iter()
+            .map(|p| Point3f::new(p.position.x, p.position.y, p.position.z))
+            .collect(),
+    );
+    let target_normals: Vec<Vector3f> = target.inner.points.iter()
+        .map(|p| Vector3f::new(p.normal.x, p.normal.y, p.normal.z))
+        .collect();
+    tc_icp_point_to_plane(
+        &source_cloud,
+        &target_cloud,
+        &target_normals,
+        Isometry3::identity(),
+        max_iterations,
+    )
+    .map(|r| {
+        let mat = r.transformation.to_homogeneous();
+        PyIcpResult {
+            _transformation: [
+                [mat[(0, 0)], mat[(0, 1)], mat[(0, 2)], mat[(0, 3)]],
+                [mat[(1, 0)], mat[(1, 1)], mat[(1, 2)], mat[(1, 3)]],
+                [mat[(2, 0)], mat[(2, 1)], mat[(2, 2)], mat[(2, 3)]],
+                [mat[(3, 0)], mat[(3, 1)], mat[(3, 2)], mat[(3, 3)]],
+            ],
+            mse: r.mse,
+            iterations: r.iterations,
+            converged: r.converged,
+        }
+    })
+    .map_err(to_py_err)
+}
+
 // ---------------------------------------------------------------------------
 // Segmentation
 // ---------------------------------------------------------------------------
@@ -658,6 +711,7 @@ fn threecrate(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Registration
     m.add_function(wrap_pyfunction!(icp, m)?)?;
+    m.add_function(wrap_pyfunction!(icp_point_to_plane, m)?)?;
 
     // Segmentation
     m.add_function(wrap_pyfunction!(segment_plane, m)?)?;
