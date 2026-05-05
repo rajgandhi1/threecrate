@@ -389,22 +389,19 @@ fn icp(
 
 /// Align `source` to `target` using point-to-plane ICP.
 ///
-/// Uses the surface normal at each target point to define a local tangent
-/// plane, which typically converges faster and more accurately than
-/// point-to-point ICP.
-///
-/// Returns an `IcpResult` containing the 4×4 transformation matrix,
-/// final MSE, iteration count, and convergence flag.
+/// `source` is a plain point cloud (positions only). `target` must be a
+/// `NormalPointCloud` — the surface normals at each target point define
+/// the local tangent plane used by the algorithm.
 #[pyfunction]
 #[pyo3(signature = (source, target, max_iterations = 50))]
 fn icp_point_to_plane(
-    source: &PyNormalPointCloud,
+    source: &PyPointCloud,
     target: &PyNormalPointCloud,
     max_iterations: usize,
 ) -> PyResult<PyIcpResult> {
     let source_cloud = PointCloud::from_points(
         source.inner.points.iter()
-            .map(|p| Point3f::new(p.position.x, p.position.y, p.position.z))
+            .map(|p| Point3f::new(p.x, p.y, p.z))
             .collect(),
     );
     let target_cloud = PointCloud::from_points(
