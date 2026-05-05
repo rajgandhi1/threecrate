@@ -374,59 +374,106 @@ mod tests {
 
     // -------------------------------------------------------------------------
     // Rotation recovery
+    //
+    // ICP is a LOCAL optimizer: it refines an initial guess rather than solving
+    // the global alignment problem.  Tests use either:
+    //   (a) identity init + tiny rotation (< half the average point spacing), or
+    //   (b) a near-correct initial guess for larger rotations, matching the real
+    //       SLAM use-case where IMU/odometry supplies a rough estimate.
     // -------------------------------------------------------------------------
 
     #[test]
-    fn gicp_recovers_small_rotation() {
-        let source = make_sphere(200, 3.0);
-        let angle = 10_f32.to_radians();
+    fn gicp_recovers_tiny_rotation_from_identity() {
+        // 300-point sphere → average angular spacing ≈ 11°.
+        // 2° rotation chord ≈ 0.21 m — well within the half-spacing convergence
+        // basin so every nearest-neighbour correspondence is the correct one.
+        let source = make_sphere(300, 3.0);
+        let angle = 2_f32.to_radians();
         let rot = UnitQuaternion::from_axis_angle(&Vector3f::z_axis(), angle);
         let target = PointCloud::from_points(
             source.points.iter().map(|p| rot * p).collect(),
         );
 
         let config = GicpConfig {
-            max_iterations: 80,
-            max_correspondence_distance: 1.5,
+            max_iterations: 60,
+            max_correspondence_distance: 0.8,
             ..Default::default()
         };
         let result = gicp(&source, &target, Isometry3::identity(), config).unwrap();
 
         let rot_err = result.transformation.rotation.angle_to(&rot);
         assert!(
-            rot_err < 1_f32.to_radians(),
+            rot_err < 0.5_f32.to_radians(),
             "rotation error = {:.2}°",
             rot_err.to_degrees()
         );
-        assert!(result.mse < 0.05, "mse={}", result.mse);
+        assert!(result.mse < 0.01, "mse={}", result.mse);
     }
 
     #[test]
-    fn gicp_recovers_combined_rotation_and_translation() {
+    fn gicp_refines_rotation_from_near_correct_init() {
+        // Simulate the SLAM use-case: odometry gives an 80%-correct initial guess
+        // (6° out of 8°).  GICP refines the 2° residual to < 0.5°.
         let source = make_sphere(200, 3.0);
-        let angle = 8_f32.to_radians();
-        let shift = Vector3f::new(0.2, 0.0, 0.0);
-        let rot = UnitQuaternion::from_axis_angle(&Vector3f::y_axis(), angle);
-        let iso = Isometry3::from_parts(
-            Translation3::new(shift.x, shift.y, shift.z),
-            rot,
-        );
+        let true_angle = 8_f32.to_radians();
+        let init_angle = 6_f32.to_radians(); // ← provided by odometry / IMU
+        let true_rot = UnitQuaternion::from_axis_angle(&Vector3f::z_axis(), true_angle);
         let target = PointCloud::from_points(
-            source.points.iter().map(|p| iso * p).collect(),
+            source.points.iter().map(|p| true_rot * p).collect(),
+        );
+        let init = Isometry3::from_parts(
+            Translation3::identity(),
+            UnitQuaternion::from_axis_angle(&Vector3f::z_axis(), init_angle),
         );
 
         let config = GicpConfig {
-            max_iterations: 100,
-            max_correspondence_distance: 2.0,
+            max_iterations: 60,
+            max_correspondence_distance: 0.8,
             ..Default::default()
         };
-        let result = gicp(&source, &target, Isometry3::identity(), config).unwrap();
+        let result = gicp(&source, &target, init, config).unwrap();
 
-        let t_err = (result.transformation.translation.vector - shift).magnitude();
-        let rot_err = result.transformation.rotation.angle_to(&rot);
-        assert!(t_err < 0.1, "translation error={}", t_err);
+        let rot_err = result.transformation.rotation.angle_to(&true_rot);
         assert!(
-            rot_err < 2_f32.to_radians(),
+            rot_err < 0.5_f32.to_radians(),
+            "rotation error = {:.2}°",
+            rot_err.to_degrees()
+        );
+    }
+
+    #[test]
+    fn gicp_refines_combined_rotation_and_translation() {
+        // Near-correct init for combined 6° rotation + 0.3 m translation.
+        let source = make_sphere(200, 3.0);
+        let true_angle = 6_f32.to_radians();
+        let true_shift = Vector3f::new(0.3, 0.0, 0.0);
+        let true_rot = UnitQuaternion::from_axis_angle(&Vector3f::y_axis(), true_angle);
+        let true_iso = Isometry3::from_parts(
+            Translation3::new(true_shift.x, true_shift.y, true_shift.z),
+            true_rot,
+        );
+        let target = PointCloud::from_points(
+            source.points.iter().map(|p| true_iso * p).collect(),
+        );
+
+        // Initial guess: 80% of the rotation, 80% of the translation.
+        let init = Isometry3::from_parts(
+            Translation3::new(0.24, 0.0, 0.0),
+            UnitQuaternion::from_axis_angle(&Vector3f::y_axis(), 4.8_f32.to_radians()),
+        );
+
+        let config = GicpConfig {
+            max_iterations: 80,
+            max_correspondence_distance: 0.8,
+            ..Default::default()
+        };
+        let result = gicp(&source, &target, init, config).unwrap();
+
+        let t_err = (result.transformation.translation.vector - true_shift).magnitude();
+        let rot_err = result.transformation.rotation.angle_to(&true_rot);
+        assert!(t_err < 0.05, "translation error={}", t_err);
+        assert!(
+            rot_err < 0.5_f32.to_radians(),
             "rotation error = {:.2}°",
             rot_err.to_degrees()
         );

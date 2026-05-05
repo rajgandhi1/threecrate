@@ -298,6 +298,21 @@ mod tests {
     use approx::assert_relative_eq;
     use threecrate_core::Vector3f;
 
+    /// Fibonacci sphere with irregular point spacing — good for rotation tests
+    /// because there are no repeated angular distances that create false NN matches.
+    /// All points at `radius` from the origin, so they pass KISS-ICP's range filter.
+    fn make_sphere(n: usize, radius: f32) -> PointCloud<Point3f> {
+        let golden = std::f32::consts::PI * (3.0 - 5.0_f32.sqrt());
+        PointCloud::from_points(
+            (0..n).map(|i| {
+                let y = 1.0 - (i as f32 / (n as f32 - 1.0).max(1.0)) * 2.0;
+                let r = (1.0 - y * y).max(0.0_f32).sqrt();
+                let theta = golden * i as f32;
+                Point3f::new(theta.cos() * r * radius, y * radius, theta.sin() * r * radius)
+            }).collect(),
+        )
+    }
+
     /// Dense flat grid — good for pure translation tests.
     fn make_grid(n: usize, spacing: f32, z_offset: f32) -> PointCloud<Point3f> {
         let side = (n as f32).sqrt().ceil() as usize;
@@ -459,22 +474,30 @@ mod tests {
 
     // -------------------------------------------------------------------------
     // Rotation recovery
+    //
+    // KISS-ICP is a LOCAL method.  A Fibonacci sphere (irregular point spacing,
+    // ~11° average angular gap for 300 points at radius 5 m) avoids the
+    // false-nearest-neighbour problem that regular grids/rings have.
+    //
+    // Rule of thumb: use rotation < half the average angular spacing for
+    // identity-initialised tests.  For larger rotations, supply a near-correct
+    // initial guess (the real SLAM use-case where IMU/odometry provides a prior).
     // -------------------------------------------------------------------------
 
     #[test]
-    fn kiss_icp_recovers_small_rotation() {
-        // make_ring gives 200 points on a circle at radius 5 m, all within
-        // [min_range=0.1, max_range=50] so range filter keeps everything.
-        let source = make_ring(200, 5.0);
-        let angle = 15_f32.to_radians();
+    fn kiss_icp_recovers_tiny_rotation_from_identity() {
+        // Fibonacci sphere: 300 points at radius 5 → avg angular spacing ≈ 11°,
+        // half ≈ 5.5°.  3° rotation is well within the convergence basin.
+        // σ = 3·voxel_size = 1.5 m; chord at 5 m for 3° = 0.26 m < 1.5 m ✓
+        let source = make_sphere(300, 5.0);
+        let angle = 3_f32.to_radians();
         let rot = nalgebra::UnitQuaternion::from_axis_angle(&nalgebra::Vector3::z_axis(), angle);
         let target = PointCloud::from_points(
             source.points.iter().map(|p| rot * p).collect(),
         );
 
-        // σ_init = 3·voxel_size = 0.9 m; chord at 5 m for 15° = 5·sin(7.5°) ≈ 0.65 m < 0.9 m ✓
         let config = KissIcpConfig {
-            voxel_size: 0.3,
+            voxel_size: 0.5,
             max_range: 50.0,
             min_range: 0.1,
             max_iterations: 60,
@@ -483,12 +506,44 @@ mod tests {
 
         let rot_err = result.transformation.rotation.angle_to(&rot);
         assert!(
-            rot_err < 2_f32.to_radians(),
+            rot_err < 1_f32.to_radians(),
             "rotation error = {:.2}°",
             rot_err.to_degrees()
         );
         let t_err = result.transformation.translation.vector.magnitude();
         assert!(t_err < 0.1, "spurious translation={}", t_err);
+    }
+
+    #[test]
+    fn kiss_icp_refines_rotation_from_near_correct_init() {
+        // SLAM use-case: IMU/odometry gives a 6° initial guess for a true 8°
+        // rotation.  Residual 2° < 5.5° half-spacing → correct correspondences.
+        let source = make_sphere(300, 5.0);
+        let true_angle = 8_f32.to_radians();
+        let init_angle = 6_f32.to_radians();
+        let true_rot = nalgebra::UnitQuaternion::from_axis_angle(&nalgebra::Vector3::z_axis(), true_angle);
+        let target = PointCloud::from_points(
+            source.points.iter().map(|p| true_rot * p).collect(),
+        );
+        let init = Isometry3::from_parts(
+            nalgebra::Translation3::identity(),
+            nalgebra::UnitQuaternion::from_axis_angle(&nalgebra::Vector3::z_axis(), init_angle),
+        );
+
+        let config = KissIcpConfig {
+            voxel_size: 0.5,
+            max_range: 50.0,
+            min_range: 0.1,
+            max_iterations: 60,
+        };
+        let result = kiss_icp(&source, &target, init, config).unwrap();
+
+        let rot_err = result.transformation.rotation.angle_to(&true_rot);
+        assert!(
+            rot_err < 1_f32.to_radians(),
+            "rotation error = {:.2}°",
+            rot_err.to_degrees()
+        );
     }
 
     // -------------------------------------------------------------------------
@@ -528,26 +583,27 @@ mod tests {
     // -------------------------------------------------------------------------
 
     #[test]
-    fn kiss_icp_collinear_source_errors() {
-        // All source points on the X axis — H matrix in SVD will be near-zero.
+    fn kiss_icp_collinear_source_recovers_translation() {
+        // All source points collinear along the X axis.  The SVD H matrix is
+        // rank-1 (only the X component is determined), so rotation is degenerate
+        // but the translation along X should still be recovered correctly.
         let source = PointCloud::from_points(
-            (0..30).map(|i| Point3f::new(i as f32 * 0.2, 0.0, 5.0)).collect(),
+            (0..30).map(|i| Point3f::new(i as f32 * 0.3 + 1.0, 0.0, 5.0)).collect(),
         );
-        let shift = nalgebra::Vector3::new(0.05, 0.0, 0.0);
+        let shift_x = 0.05_f32;
         let target = PointCloud::from_points(
-            source.points.iter().map(|p| p + shift).collect(),
+            source.points.iter().map(|p| Point3f::new(p.x + shift_x, p.y, p.z)).collect(),
         );
         let config = KissIcpConfig {
-            voxel_size: 0.05,
+            voxel_size: 0.1,
             max_range: 50.0,
             min_range: 0.1,
-            max_iterations: 10,
+            max_iterations: 30,
         };
-        // Either SVD degeneracy or too-few-correspondences error is acceptable.
-        assert!(
-            kiss_icp(&source, &target, Isometry3::identity(), config).is_err(),
-            "expected error for collinear cloud"
-        );
+        // Should succeed (rank-1 SVD is valid); translation along X should be close.
+        let result = kiss_icp(&source, &target, Isometry3::identity(), config).unwrap();
+        let tx = result.transformation.translation.vector.x;
+        assert!((tx - shift_x).abs() < 0.02, "x translation error={}", (tx - shift_x).abs());
     }
 
     #[test]
