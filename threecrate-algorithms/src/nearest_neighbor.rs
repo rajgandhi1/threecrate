@@ -139,171 +139,120 @@ impl KdTree {
 }
 
 impl NearestNeighborSearch for KdTree {
+    /// Find the `k` nearest neighbors using an iterative stack-based traversal.
+    ///
+    /// Uses an explicit `Vec` stack (LIFO) so that recursion depth is bounded only
+    /// by available heap memory — not the call stack — making it safe from stack
+    /// overflows even for very deep or unbalanced trees and when called from rayon
+    /// worker threads (which have smaller default stacks than the main thread).
     fn find_k_nearest(&self, query: &Point3f, k: usize) -> Vec<(usize, f32)> {
         if k == 0 || self.points.is_empty() {
             return Vec::new();
         }
 
-        let mut heap = BinaryHeap::new();
-        let mut result = Vec::new();
-        
+        // Max-heap: the *farthest* accepted neighbor sits at the top so we can
+        // evict it in O(log k) when a closer point is found.
+        let mut heap: BinaryHeap<Neighbor> = BinaryHeap::with_capacity(k + 1);
+        let mut stack: Vec<&KdNode> = Vec::new();
+
         if let Some(ref root) = self.root {
-            self.search_k_nearest(root, query, k, &mut heap, 0);
+            stack.push(root);
         }
-        
-        // Convert heap to sorted result
-        while let Some(Neighbor { distance, index }) = heap.pop() {
-            result.push((index, distance));
+
+        while let Some(node) = stack.pop() {
+            let dist = Self::distance_squared(&node.point, query).sqrt();
+
+            if heap.len() < k {
+                heap.push(Neighbor { distance: dist, index: node.original_index });
+            } else if let Some(farthest) = heap.peek() {
+                if dist < farthest.distance {
+                    heap.pop();
+                    heap.push(Neighbor { distance: dist, index: node.original_index });
+                }
+            }
+
+            let query_val = query.coords[node.axis];
+            let node_val  = node.point.coords[node.axis];
+            let axis_dist = (query_val - node_val).abs();
+
+            // Near child: the half-space the query point lives in.
+            // Far child:  the other half-space, searched only when it could
+            //             contain a point closer than the current k-th nearest.
+            let (near, far) = if query_val <= node_val {
+                (&node.left, &node.right)
+            } else {
+                (&node.right, &node.left)
+            };
+
+            // Push far before near so near is popped first (LIFO), giving the
+            // same visit order as the recursive "near first" traversal and
+            // maximising early pruning of the far subtree.
+            let search_far = if let Some(farthest) = heap.peek() {
+                heap.len() < k || axis_dist < farthest.distance
+            } else {
+                true
+            };
+            if search_far {
+                if let Some(ref far_node) = far {
+                    stack.push(far_node);
+                }
+            }
+            if let Some(ref near_node) = near {
+                stack.push(near_node);
+            }
         }
-        
-        result.reverse(); // Sort by distance (ascending)
-        result
+
+        // `into_sorted_vec` drains the max-heap in ascending order (smallest first).
+        heap.into_sorted_vec()
+            .into_iter()
+            .map(|n| (n.index, n.distance))
+            .collect()
     }
-    
+
+    /// Find all neighbors within `radius` using an iterative stack-based traversal.
     fn find_radius_neighbors(&self, query: &Point3f, radius: f32) -> Vec<(usize, f32)> {
         if radius <= 0.0 || self.points.is_empty() {
             return Vec::new();
         }
 
-        let radius_squared = radius * radius;
-        let mut result = Vec::new();
-        
+        let radius_sq = radius * radius;
+        let mut result: Vec<(usize, f32)> = Vec::new();
+        let mut stack: Vec<&KdNode> = Vec::new();
+
         if let Some(ref root) = self.root {
-            self.search_radius_neighbors(root, query, radius_squared, &mut result, 0);
+            stack.push(root);
         }
-        
+
+        while let Some(node) = stack.pop() {
+            let dist_sq = Self::distance_squared(&node.point, query);
+            if dist_sq <= radius_sq {
+                result.push((node.original_index, dist_sq.sqrt()));
+            }
+
+            let query_val = query.coords[node.axis];
+            let node_val  = node.point.coords[node.axis];
+            let axis_dist = query_val - node_val;
+
+            let (near, far) = if query_val <= node_val {
+                (&node.left, &node.right)
+            } else {
+                (&node.right, &node.left)
+            };
+
+            // The far subtree can only contain in-radius points when the
+            // distance to the splitting hyperplane is within the search radius.
+            if axis_dist * axis_dist <= radius_sq {
+                if let Some(ref far_node) = far {
+                    stack.push(far_node);
+                }
+            }
+            if let Some(ref near_node) = near {
+                stack.push(near_node);
+            }
+        }
+
         result.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal));
         result
-    }
-}
-
-impl KdTree {
-    /// Search for k nearest neighbors using the KD-tree
-    #[allow(clippy::only_used_in_recursion)]
-    fn search_k_nearest(
-        &self,
-        node: &KdNode,
-        query: &Point3f,
-        k: usize,
-        heap: &mut BinaryHeap<Neighbor>,
-        depth: usize,
-    ) {
-        // Prevent infinite recursion - reasonable depth limit for KD-tree
-        if depth > 100 {
-            return;
-        }
-        let distance_squared = Self::distance_squared(&node.point, query);
-        let distance = distance_squared.sqrt();
-        
-        // Add current point to heap if we have space or it's closer than the farthest
-        if heap.len() < k {
-            heap.push(Neighbor {
-                distance,
-                index: node.original_index,
-            });
-        } else if let Some(farthest) = heap.peek() {
-            if distance < farthest.distance {
-                heap.pop();
-                heap.push(Neighbor {
-                    distance,
-                    index: node.original_index,
-                });
-            }
-        }
-        
-        let query_value = match node.axis {
-            0 => query.x,
-            1 => query.y,
-            2 => query.z,
-            _ => unreachable!(),
-        };
-        let node_value = match node.axis {
-            0 => node.point.x,
-            1 => node.point.y,
-            2 => node.point.z,
-            _ => unreachable!(),
-        };
-        
-        // Determine which subtree to search first
-        let (near_subtree, far_subtree) = if query_value <= node_value {
-            (&node.left, &node.right)
-        } else {
-            (&node.right, &node.left)
-        };
-        
-        // Search near subtree first
-        if let Some(ref near) = near_subtree {
-            self.search_k_nearest(near, query, k, heap, depth + 1);
-        }
-        
-        // Check if we need to search far subtree
-        let axis_distance = (query_value - node_value).abs();
-        let should_search_far = if let Some(farthest) = heap.peek() {
-            heap.len() < k || axis_distance < farthest.distance
-        } else {
-            true
-        };
-        
-        if should_search_far {
-            if let Some(ref far) = far_subtree {
-                self.search_k_nearest(far, query, k, heap, depth + 1);
-            }
-        }
-    }
-    
-    /// Search for neighbors within radius using the KD-tree
-    #[allow(clippy::only_used_in_recursion)]
-    fn search_radius_neighbors(
-        &self,
-        node: &KdNode,
-        query: &Point3f,
-        radius_squared: f32,
-        result: &mut Vec<(usize, f32)>,
-        depth: usize,
-    ) {
-        // Prevent infinite recursion - reasonable depth limit for KD-tree
-        if depth > 100 {
-            return;
-        }
-        let distance_squared = Self::distance_squared(&node.point, query);
-        
-        if distance_squared <= radius_squared {
-            let distance = distance_squared.sqrt();
-            result.push((node.original_index, distance));
-        }
-        
-        let query_value = match node.axis {
-            0 => query.x,
-            1 => query.y,
-            2 => query.z,
-            _ => unreachable!(),
-        };
-        let node_value = match node.axis {
-            0 => node.point.x,
-            1 => node.point.y,
-            2 => node.point.z,
-            _ => unreachable!(),
-        };
-        
-        // Determine which subtree to search first
-        let (near_subtree, far_subtree) = if query_value <= node_value {
-            (&node.left, &node.right)
-        } else {
-            (&node.right, &node.left)
-        };
-        
-        // Search near subtree
-        if let Some(ref near) = near_subtree {
-            self.search_radius_neighbors(near, query, radius_squared, result, depth + 1);
-        }
-        
-        // Check if far subtree might contain points within radius
-        let axis_distance = (query_value - node_value).abs();
-        if axis_distance * axis_distance <= radius_squared {
-            if let Some(ref far) = far_subtree {
-                self.search_radius_neighbors(far, query, radius_squared, result, depth + 1);
-            }
-        }
     }
 }
 
@@ -324,7 +273,9 @@ impl PartialOrd for Neighbor {
 
 impl Ord for Neighbor {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.partial_cmp(other).unwrap_or(Ordering::Equal)
+        // Max-heap ordered by distance: larger distance = "greater" element,
+        // so heap.peek() returns the farthest neighbour for eviction.
+        self.distance.partial_cmp(&other.distance).unwrap_or(Ordering::Equal)
     }
 }
 
@@ -410,7 +361,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // Temporarily disabled due to stack overflow - needs investigation
     fn test_kd_tree_construction() {
         let points = create_test_points();
         let kdtree = KdTree::new(&points).unwrap();
@@ -420,7 +370,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // Temporarily disabled due to stack overflow - needs investigation
     fn test_empty_kd_tree() {
         let kdtree = KdTree::new(&[]).unwrap();
         assert!(kdtree.root.is_none());
@@ -432,7 +381,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // Temporarily disabled due to stack overflow - needs investigation
     fn test_k_nearest_neighbors_consistency() {
         let points = create_test_points();
         let kdtree = KdTree::new(&points).unwrap();
@@ -481,7 +429,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // Temporarily disabled due to stack overflow - needs investigation
     fn test_radius_neighbors_consistency() {
         let points = create_test_points();
         let kdtree = KdTree::new(&points).unwrap();
@@ -530,8 +477,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // Temporarily disabled due to stack overflow - needs investigation
-    #[ignore] // Temporarily disabled due to stack overflow - needs investigation
     fn test_edge_cases() {
         let points = create_test_points();
         let kdtree = KdTree::new(&points).unwrap();
@@ -557,7 +502,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // Temporarily disabled due to stack overflow - needs investigation
     fn test_random_points() {
         let mut rng = rand::thread_rng();
         let mut points = Vec::new();
@@ -632,7 +576,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // Temporarily disabled due to stack overflow - needs investigation
     fn test_performance_comparison() {
         let mut rng = rand::thread_rng();
         let mut points = Vec::new();
@@ -674,59 +617,34 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // Temporarily disabled due to stack overflow - needs investigation
-    #[ignore] // Temporarily disabled due to stack overflow - needs investigation
     fn test_debug_k_nearest() {
-        // Use a thread with larger stack to prevent stack overflow
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024) // 8MB stack
-            .spawn(|| {
-                let points = vec![
-                    Point3f::new(0.0, 0.0, 0.0),
-                    Point3f::new(1.0, 0.0, 0.0),
-                    Point3f::new(0.0, 1.0, 0.0),
-                    Point3f::new(0.0, 0.0, 1.0),
-                    Point3f::new(1.0, 1.0, 0.0),
-                    Point3f::new(1.0, 0.0, 1.0),
-                    Point3f::new(0.0, 1.0, 1.0),
-                    Point3f::new(1.0, 1.0, 1.0),
-                ];
+        let points = vec![
+            Point3f::new(0.0, 0.0, 0.0),
+            Point3f::new(1.0, 0.0, 0.0),
+            Point3f::new(0.0, 1.0, 0.0),
+            Point3f::new(0.0, 0.0, 1.0),
+            Point3f::new(1.0, 1.0, 0.0),
+            Point3f::new(1.0, 0.0, 1.0),
+            Point3f::new(0.0, 1.0, 1.0),
+            Point3f::new(1.0, 1.0, 1.0),
+        ];
 
-                let kdtree = KdTree::new(&points).unwrap();
-                let brute_force = BruteForceSearch::new(&points);
+        let kdtree = KdTree::new(&points).unwrap();
+        let brute_force = BruteForceSearch::new(&points);
 
-                let query = Point3f::new(0.5, 0.5, 0.5);
-                let k = 3;
+        let query = Point3f::new(0.5, 0.5, 0.5);
+        let k = 3;
 
-                let kdtree_result = kdtree.find_k_nearest(&query, k);
-                let brute_force_result = brute_force.find_k_nearest(&query, k);
+        let mut kdtree_result = kdtree.find_k_nearest(&query, k);
+        let mut brute_force_result = brute_force.find_k_nearest(&query, k);
 
-                println!("KD-tree result: {:?}", kdtree_result);
-                println!("Brute force result: {:?}", brute_force_result);
+        kdtree_result.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal).then(a.0.cmp(&b.0)));
+        brute_force_result.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal).then(a.0.cmp(&b.0)));
 
-                // Calculate distances manually for verification
-                let mut manual_distances: Vec<(usize, f32)> = points
-                    .iter()
-                    .enumerate()
-                    .map(|(i, point)| {
-                        let dx = point.x - query.x;
-                        let dy = point.y - query.y;
-                        let dz = point.z - query.z;
-                        let distance = (dx * dx + dy * dy + dz * dz).sqrt();
-                        (i, distance)
-                    })
-                    .collect();
-
-                manual_distances.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal));
-                manual_distances.truncate(k);
-
-                println!("Manual calculation: {:?}", manual_distances);
-
-                assert_eq!(kdtree_result.len(), brute_force_result.len());
-                assert_eq!(kdtree_result.len(), k);
-            })
-            .unwrap()
-            .join()
-            .unwrap();
+        assert_eq!(kdtree_result.len(), brute_force_result.len());
+        assert_eq!(kdtree_result.len(), k);
+        for (kd, bf) in kdtree_result.iter().zip(brute_force_result.iter()) {
+            assert!((kd.1 - bf.1).abs() < 1e-6, "distance mismatch: kd={}, bf={}", kd.1, bf.1);
+        }
     }
 } 
