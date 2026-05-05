@@ -34,8 +34,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         metallic: 1.0,
         roughness: 0.2,
         ao: 1.0,
+        _padding1: [0.0, 0.0],
         emission: [0.0, 0.0, 0.0],
-        _padding: 0.0,
+        _padding2: 0.0,
     });
 
     // --- Enable PBR shading ---

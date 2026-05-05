@@ -118,12 +118,13 @@ pub struct MeshCameraUniform {
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
 pub struct PbrMaterial {
-    pub albedo: [f32; 3],
-    pub metallic: f32,
-    pub roughness: f32,
-    pub ao: f32,
-    pub emission: [f32; 3],
-    pub _padding: f32,
+    pub albedo: [f32; 3],      // offset  0 (12 bytes)
+    pub metallic: f32,         // offset 12 (4 bytes)
+    pub roughness: f32,        // offset 16 (4 bytes)
+    pub ao: f32,               // offset 20 (4 bytes)
+    pub _padding1: [f32; 2],   // offset 24 (8 bytes) — aligns emission to offset 32 per WGSL std140
+    pub emission: [f32; 3],    // offset 32 (12 bytes)
+    pub _padding2: f32,        // offset 44 (4 bytes) — total: 48 bytes
 }
 
 impl Default for PbrMaterial {
@@ -133,8 +134,9 @@ impl Default for PbrMaterial {
             metallic: 0.0,
             roughness: 0.5,
             ao: 1.0,
+            _padding1: [0.0, 0.0],
             emission: [0.0, 0.0, 0.0],
-            _padding: 0.0,
+            _padding2: 0.0,
         }
     }
 }
