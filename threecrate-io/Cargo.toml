@@ -14,6 +14,7 @@ default = []
 las_laz = ["pasture-core", "pasture-io"]
 io-mmap = ["memmap2"]
 e57 = ["dep:e57"]
+ros2 = []
 
 [dependencies]
 threecrate-core = { path = "../threecrate-core", version = "0.7.0" }

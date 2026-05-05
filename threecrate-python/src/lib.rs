@@ -8,10 +8,15 @@ use threecrate_algorithms::{
     smooth_hc, smooth_laplacian, smooth_taubin, statistical_outlier_removal, voxel_grid_filter,
     HcSmoothingConfig, LaplacianSmoothingConfig, TaubinSmoothingConfig,
 };
-use threecrate_core::{NormalPoint3f, Point3f, PointCloud, TriangleMesh};
+use threecrate_core::{ColoredNormalPoint3f, ColoredPoint3f, NormalPoint3f, Point3f, PointCloud, TriangleMesh};
 use threecrate_io::{
     read_mesh as rs_read_mesh, read_point_cloud as rs_read_pc, write_mesh as rs_write_mesh,
     write_point_cloud as rs_write_pc,
+    ros2::{
+        self as tc_ros2,
+        PointCloud2Info,
+        PointField as Ros2PointField,
+    },
 };
 use threecrate_reconstruction::{auto_reconstruct, poisson_reconstruction_default};
 use threecrate_simplification::{MeshSimplifier, QuadricErrorSimplifier};
@@ -636,6 +641,348 @@ fn write_mesh(mesh: &PyTriangleMesh, path: &str) -> PyResult<()> {
 }
 
 // ---------------------------------------------------------------------------
+// PointCloud2 support
+// ---------------------------------------------------------------------------
+
+/// A coloured point cloud (XYZ + RGB).
+/// Returned by `pointcloud2_to_colored()` and `pointcloud2_to_colored_normals()`.
+#[pyclass(name = "ColoredPointCloud")]
+#[derive(Clone)]
+pub struct PyColoredPointCloud {
+    pub(crate) inner: PointCloud<ColoredPoint3f>,
+}
+
+#[pymethods]
+impl PyColoredPointCloud {
+    /// Point positions as a numpy array of shape (N, 3) float32.
+    fn positions<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f32>> {
+        let n = self.inner.len();
+        let mut data = Array2::<f32>::zeros((n, 3));
+        for (i, p) in self.inner.points.iter().enumerate() {
+            data[[i, 0]] = p.position.x;
+            data[[i, 1]] = p.position.y;
+            data[[i, 2]] = p.position.z;
+        }
+        data.into_pyarray_bound(py)
+    }
+
+    /// Colors as a numpy array of shape (N, 3) uint8 (R, G, B).
+    fn colors<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<u8>> {
+        use numpy::ndarray::Array2 as NdArray2;
+        let n = self.inner.len();
+        let mut data = NdArray2::<u8>::zeros((n, 3));
+        for (i, p) in self.inner.points.iter().enumerate() {
+            data[[i, 0]] = p.color[0];
+            data[[i, 1]] = p.color[1];
+            data[[i, 2]] = p.color[2];
+        }
+        data.into_pyarray_bound(py)
+    }
+
+    fn __len__(&self) -> usize {
+        self.inner.len()
+    }
+
+    fn __repr__(&self) -> String {
+        format!("ColoredPointCloud({} points)", self.inner.len())
+    }
+}
+
+/// A coloured point cloud with surface normals (XYZ + normal + RGB).
+#[pyclass(name = "ColoredNormalPointCloud")]
+#[derive(Clone)]
+pub struct PyColoredNormalPointCloud {
+    pub(crate) inner: PointCloud<ColoredNormalPoint3f>,
+}
+
+#[pymethods]
+impl PyColoredNormalPointCloud {
+    /// Point positions as a numpy array of shape (N, 3) float32.
+    fn positions<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f32>> {
+        let n = self.inner.len();
+        let mut data = Array2::<f32>::zeros((n, 3));
+        for (i, p) in self.inner.points.iter().enumerate() {
+            data[[i, 0]] = p.position.x;
+            data[[i, 1]] = p.position.y;
+            data[[i, 2]] = p.position.z;
+        }
+        data.into_pyarray_bound(py)
+    }
+
+    /// Surface normals as a numpy array of shape (N, 3) float32.
+    fn normals<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f32>> {
+        let n = self.inner.len();
+        let mut data = Array2::<f32>::zeros((n, 3));
+        for (i, p) in self.inner.points.iter().enumerate() {
+            data[[i, 0]] = p.normal.x;
+            data[[i, 1]] = p.normal.y;
+            data[[i, 2]] = p.normal.z;
+        }
+        data.into_pyarray_bound(py)
+    }
+
+    /// Colors as a numpy array of shape (N, 3) uint8 (R, G, B).
+    fn colors<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<u8>> {
+        use numpy::ndarray::Array2 as NdArray2;
+        let n = self.inner.len();
+        let mut data = NdArray2::<u8>::zeros((n, 3));
+        for (i, p) in self.inner.points.iter().enumerate() {
+            data[[i, 0]] = p.color[0];
+            data[[i, 1]] = p.color[1];
+            data[[i, 2]] = p.color[2];
+        }
+        data.into_pyarray_bound(py)
+    }
+
+    fn __len__(&self) -> usize {
+        self.inner.len()
+    }
+
+    fn __repr__(&self) -> String {
+        format!("ColoredNormalPointCloud({} points)", self.inner.len())
+    }
+}
+
+/// The serialised form of a `sensor_msgs/PointCloud2` payload.
+///
+/// Attributes
+/// ----------
+/// data : bytes
+///     Raw point bytes, row-major.
+/// fields : list[tuple[str, int, int, int]]
+///     Each tuple is ``(name, offset, datatype, count)``.
+///     Datatype values: 1=int8, 2=uint8, 3=int16, 4=uint16, 5=int32,
+///     6=uint32, 7=float32, 8=float64.
+/// point_step : int
+///     Byte stride per point.
+/// width : int
+///     Points per row (total points for unorganised clouds).
+/// height : int
+///     Number of rows (1 for unorganised clouds).
+/// is_bigendian : bool
+/// is_dense : bool
+#[pyclass(name = "PointCloud2Data")]
+#[derive(Clone)]
+pub struct PyPointCloud2Data {
+    pub(crate) inner: tc_ros2::PointCloud2Data,
+}
+
+#[pymethods]
+impl PyPointCloud2Data {
+    /// Raw bytes of the point data.
+    fn data<'py>(&self, py: Python<'py>) -> Bound<'py, pyo3::types::PyBytes> {
+        pyo3::types::PyBytes::new_bound(py, &self.inner.data)
+    }
+
+    /// Field descriptors as a list of ``(name, offset, datatype, count)`` tuples.
+    fn fields(&self) -> Vec<(String, u32, u8, u32)> {
+        self.inner
+            .info
+            .fields
+            .iter()
+            .map(|f| (f.name.clone(), f.offset, f.datatype, f.count))
+            .collect()
+    }
+
+    #[getter]
+    fn point_step(&self) -> u32 {
+        self.inner.info.point_step
+    }
+
+    #[getter]
+    fn row_step(&self) -> u32 {
+        self.inner.info.row_step
+    }
+
+    #[getter]
+    fn width(&self) -> u32 {
+        self.inner.info.width
+    }
+
+    #[getter]
+    fn height(&self) -> u32 {
+        self.inner.info.height
+    }
+
+    #[getter]
+    fn is_bigendian(&self) -> bool {
+        self.inner.info.is_bigendian
+    }
+
+    #[getter]
+    fn is_dense(&self) -> bool {
+        self.inner.info.is_dense
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "PointCloud2Data({}×{} points, point_step={})",
+            self.inner.info.width,
+            self.inner.info.height,
+            self.inner.info.point_step,
+        )
+    }
+}
+
+/// Build a `PointCloud2Info` from the flat Python field representation.
+fn build_info(
+    fields: Vec<(String, u32, u8, u32)>,
+    point_step: u32,
+    width: u32,
+    height: u32,
+    is_bigendian: bool,
+    is_dense: bool,
+) -> PointCloud2Info {
+    PointCloud2Info {
+        fields: fields
+            .into_iter()
+            .map(|(name, offset, datatype, count)| Ros2PointField {
+                name,
+                offset,
+                datatype,
+                count,
+            })
+            .collect(),
+        point_step,
+        row_step: point_step * width,
+        width,
+        height,
+        is_bigendian,
+        is_dense,
+    }
+}
+
+/// Parse raw `PointCloud2` bytes into an XYZ `PointCloud`.
+///
+/// Parameters
+/// ----------
+/// data : bytes
+///     Raw payload from ``sensor_msgs/PointCloud2.data``.
+/// fields : list[tuple[str, int, int, int]]
+///     Field descriptors ``(name, offset, datatype, count)``.
+/// point_step : int
+///     Bytes per point.
+/// width : int
+///     Points per row.
+/// height : int
+///     Number of rows (use 1 for an unorganised cloud).
+/// is_bigendian : bool, optional
+/// is_dense : bool, optional
+///     When ``False``, NaN points are silently dropped.
+///
+/// Returns
+/// -------
+/// PointCloud
+#[pyfunction]
+#[pyo3(signature = (data, fields, point_step, width, height, is_bigendian = false, is_dense = true))]
+fn pointcloud2_to_xyz(
+    data: &[u8],
+    fields: Vec<(String, u32, u8, u32)>,
+    point_step: u32,
+    width: u32,
+    height: u32,
+    is_bigendian: bool,
+    is_dense: bool,
+) -> PyResult<PyPointCloud> {
+    let info = build_info(fields, point_step, width, height, is_bigendian, is_dense);
+    tc_ros2::pointcloud2_to_xyz(data, &info)
+        .map(|c| PyPointCloud { inner: c })
+        .map_err(to_py_err)
+}
+
+/// Parse raw `PointCloud2` bytes into a `NormalPointCloud`.
+///
+/// Requires ``normal_x``, ``normal_y``, ``normal_z`` fields in addition to ``x``, ``y``, ``z``.
+#[pyfunction]
+#[pyo3(signature = (data, fields, point_step, width, height, is_bigendian = false, is_dense = true))]
+fn pointcloud2_to_normals(
+    data: &[u8],
+    fields: Vec<(String, u32, u8, u32)>,
+    point_step: u32,
+    width: u32,
+    height: u32,
+    is_bigendian: bool,
+    is_dense: bool,
+) -> PyResult<PyNormalPointCloud> {
+    let info = build_info(fields, point_step, width, height, is_bigendian, is_dense);
+    tc_ros2::pointcloud2_to_normals(data, &info)
+        .map(|c| PyNormalPointCloud { inner: c })
+        .map_err(to_py_err)
+}
+
+/// Parse raw `PointCloud2` bytes into a `ColoredPointCloud`.
+///
+/// Requires an ``rgb`` or ``rgba`` field.  Alpha is discarded.
+#[pyfunction]
+#[pyo3(signature = (data, fields, point_step, width, height, is_bigendian = false, is_dense = true))]
+fn pointcloud2_to_colored(
+    data: &[u8],
+    fields: Vec<(String, u32, u8, u32)>,
+    point_step: u32,
+    width: u32,
+    height: u32,
+    is_bigendian: bool,
+    is_dense: bool,
+) -> PyResult<PyColoredPointCloud> {
+    let info = build_info(fields, point_step, width, height, is_bigendian, is_dense);
+    tc_ros2::pointcloud2_to_colored(data, &info)
+        .map(|c| PyColoredPointCloud { inner: c })
+        .map_err(to_py_err)
+}
+
+/// Parse raw `PointCloud2` bytes into a `ColoredNormalPointCloud`.
+///
+/// Requires ``x``, ``y``, ``z``, ``normal_x``, ``normal_y``, ``normal_z``, and ``rgb``/``rgba``.
+#[pyfunction]
+#[pyo3(signature = (data, fields, point_step, width, height, is_bigendian = false, is_dense = true))]
+fn pointcloud2_to_colored_normals(
+    data: &[u8],
+    fields: Vec<(String, u32, u8, u32)>,
+    point_step: u32,
+    width: u32,
+    height: u32,
+    is_bigendian: bool,
+    is_dense: bool,
+) -> PyResult<PyColoredNormalPointCloud> {
+    let info = build_info(fields, point_step, width, height, is_bigendian, is_dense);
+    tc_ros2::pointcloud2_to_colored_normals(data, &info)
+        .map(|c| PyColoredNormalPointCloud { inner: c })
+        .map_err(to_py_err)
+}
+
+/// Serialise a `PointCloud` (XYZ) to `PointCloud2` format.
+///
+/// Returns a `PointCloud2Data` with 12-byte point step (x, y, z as float32).
+#[pyfunction]
+fn xyz_to_pointcloud2(cloud: &PyPointCloud) -> PyPointCloud2Data {
+    PyPointCloud2Data { inner: tc_ros2::xyz_to_pointcloud2(&cloud.inner) }
+}
+
+/// Serialise a `NormalPointCloud` to `PointCloud2` format.
+///
+/// Returns a `PointCloud2Data` with 24-byte point step.
+#[pyfunction]
+fn normals_to_pointcloud2(cloud: &PyNormalPointCloud) -> PyPointCloud2Data {
+    PyPointCloud2Data { inner: tc_ros2::normals_to_pointcloud2(&cloud.inner) }
+}
+
+/// Serialise a `ColoredPointCloud` to `PointCloud2` format.
+///
+/// Returns a `PointCloud2Data` with 16-byte point step.
+#[pyfunction]
+fn colored_to_pointcloud2(cloud: &PyColoredPointCloud) -> PyPointCloud2Data {
+    PyPointCloud2Data { inner: tc_ros2::colored_to_pointcloud2(&cloud.inner) }
+}
+
+/// Serialise a `ColoredNormalPointCloud` to `PointCloud2` format.
+///
+/// Returns a `PointCloud2Data` with 28-byte point step.
+#[pyfunction]
+fn colored_normals_to_pointcloud2(cloud: &PyColoredNormalPointCloud) -> PyPointCloud2Data {
+    PyPointCloud2Data { inner: tc_ros2::colored_normals_to_pointcloud2(&cloud.inner) }
+}
+
+// ---------------------------------------------------------------------------
 // Module registration
 // ---------------------------------------------------------------------------
 
@@ -644,9 +991,12 @@ fn threecrate(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Types
     m.add_class::<PyPointCloud>()?;
     m.add_class::<PyNormalPointCloud>()?;
+    m.add_class::<PyColoredPointCloud>()?;
+    m.add_class::<PyColoredNormalPointCloud>()?;
     m.add_class::<PyTriangleMesh>()?;
     m.add_class::<PyIcpResult>()?;
     m.add_class::<PyPlaneSegmentationResult>()?;
+    m.add_class::<PyPointCloud2Data>()?;
 
     // Filtering
     m.add_function(wrap_pyfunction!(voxel_downsample, m)?)?;
@@ -680,6 +1030,16 @@ fn threecrate(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(write_point_cloud, m)?)?;
     m.add_function(wrap_pyfunction!(read_mesh, m)?)?;
     m.add_function(wrap_pyfunction!(write_mesh, m)?)?;
+
+    // PointCloud2 (ROS 2)
+    m.add_function(wrap_pyfunction!(pointcloud2_to_xyz, m)?)?;
+    m.add_function(wrap_pyfunction!(pointcloud2_to_normals, m)?)?;
+    m.add_function(wrap_pyfunction!(pointcloud2_to_colored, m)?)?;
+    m.add_function(wrap_pyfunction!(pointcloud2_to_colored_normals, m)?)?;
+    m.add_function(wrap_pyfunction!(xyz_to_pointcloud2, m)?)?;
+    m.add_function(wrap_pyfunction!(normals_to_pointcloud2, m)?)?;
+    m.add_function(wrap_pyfunction!(colored_to_pointcloud2, m)?)?;
+    m.add_function(wrap_pyfunction!(colored_normals_to_pointcloud2, m)?)?;
 
     Ok(())
 }

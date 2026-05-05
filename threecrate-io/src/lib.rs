@@ -11,6 +11,8 @@ pub mod pcd;
 pub mod xyz_csv;
 #[cfg(feature = "e57")]
 pub mod e57;
+#[cfg(feature = "ros2")]
+pub mod ros2;
 pub mod error;
 pub mod registry;
 pub mod mesh_attributes;
@@ -28,6 +30,14 @@ pub use pcd::{RobustPcdReader, RobustPcdWriter, PcdWriteOptions, PcdDataFormat, 
 pub use xyz_csv::{XyzCsvReader, XyzCsvWriter, XyzCsvStreamingReader, XyzCsvWriteOptions, XyzCsvSchema, XyzCsvPoint, Delimiter, ColumnType};
 #[cfg(feature = "e57")]
 pub use e57::{RobustE57Reader, RobustE57Writer, E57WriteOptions};
+#[cfg(feature = "ros2")]
+pub use ros2::{
+    PointField, PointCloud2Info, PointCloud2Data,
+    pointcloud2_to_xyz, pointcloud2_to_colored, pointcloud2_to_normals,
+    pointcloud2_to_colored_normals,
+    xyz_to_pointcloud2, colored_to_pointcloud2, normals_to_pointcloud2,
+    colored_normals_to_pointcloud2,
+};
 pub use registry::{IoRegistry, FormatHandler};
 pub use mesh_attributes::{ExtendedTriangleMesh, MeshAttributeOptions, MeshMetadata, Tangent, UV};
 pub use serialization::{SerializationOptions, AttributePreservingReader, AttributePreservingWriter};
