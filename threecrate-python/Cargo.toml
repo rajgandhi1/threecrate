@@ -18,6 +18,6 @@ numpy = "0.22"
 nalgebra = { workspace = true }
 threecrate-core = { path = "../threecrate-core" }
 threecrate-algorithms = { path = "../threecrate-algorithms" }
-threecrate-io = { path = "../threecrate-io" }
+threecrate-io = { path = "../threecrate-io", features = ["ros2"] }
 threecrate-reconstruction = { path = "../threecrate-reconstruction" }
 threecrate-simplification = { path = "../threecrate-simplification" }
