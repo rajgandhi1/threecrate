@@ -134,8 +134,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             metallic: 0.3,
             roughness: 0.7,
             ao: 1.0,
+            _padding1: [0.0, 0.0],
             emission: [0.0, 0.0, 0.0],
-            _padding: 0.0,
+            _padding2: 0.0,
         }),
     );
     
