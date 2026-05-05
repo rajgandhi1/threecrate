@@ -397,6 +397,8 @@ fn icp(
 /// `source` is a plain point cloud (positions only). `target` must be a
 /// `NormalPointCloud` — the surface normals at each target point define
 /// the local tangent plane used by the algorithm.
+/// Returns an `IcpResult` containing the 4x4 transformation matrix,
+/// final MSE, iteration count, and convergence flag.
 #[pyfunction]
 #[pyo3(signature = (source, target, max_iterations = 50))]
 fn icp_point_to_plane(
