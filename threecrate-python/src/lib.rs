@@ -4,6 +4,7 @@ use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use threecrate_algorithms::{
     estimate_normals as tc_estimate_normals, extract_euclidean_clusters,
+    gicp as tc_gicp, kiss_icp as tc_kiss_icp,
     icp_point_to_plane as tc_icp_point_to_plane, icp_point_to_point_default,
     gicp as tc_gicp, GicpConfig,
     icp_point_to_point_default,
@@ -13,6 +14,8 @@ use threecrate_algorithms::{
     HcSmoothingConfig, LaplacianSmoothingConfig, TaubinSmoothingConfig,
 };
 use threecrate_core::{ColoredNormalPoint3f, ColoredPoint3f, NormalPoint3f, Point3f, PointCloud, TriangleMesh, Vector3f};
+use threecrate_algorithms::gicp::GicpConfig;
+use threecrate_algorithms::kiss_icp::KissIcpConfig;
 use threecrate_io::{
     read_mesh as rs_read_mesh, read_point_cloud as rs_read_pc, write_mesh as rs_write_mesh,
     write_point_cloud as rs_write_pc,
@@ -393,6 +396,112 @@ fn icp(
         }
     })
     .map_err(to_py_err)
+}
+
+/// Align `source` to `target` using Generalized ICP (GICP).
+///
+/// GICP models each point as a local Gaussian distribution estimated from its
+/// k nearest neighbours and weights correspondences by the combined covariance.
+/// More robust to noise than point-to-point or point-to-plane ICP.
+///
+/// Args:
+///     source: Source point cloud to align.
+///     target: Target (reference) point cloud.
+///     max_iterations: Maximum ICP iterations (default 50).
+///     max_correspondence_distance: Maximum distance for accepting a match (default 1.0).
+///     convergence_threshold: Stop when |ΔMSE| is below this value (default 1e-6).
+///     k_correspondences: Neighbours used to estimate per-point covariances (default 20).
+#[pyfunction]
+#[pyo3(signature = (
+    source, target,
+    max_iterations = 50,
+    max_correspondence_distance = 1.0,
+    convergence_threshold = 1e-6,
+    k_correspondences = 20,
+))]
+fn gicp(
+    source: &PyPointCloud,
+    target: &PyPointCloud,
+    max_iterations: usize,
+    max_correspondence_distance: f32,
+    convergence_threshold: f32,
+    k_correspondences: usize,
+) -> PyResult<PyIcpResult> {
+    let config = GicpConfig {
+        max_iterations,
+        max_correspondence_distance,
+        convergence_threshold,
+        k_correspondences,
+    };
+    tc_gicp(&source.inner, &target.inner, nalgebra::Isometry3::identity(), config)
+        .map(|r| {
+            let mat = r.transformation.to_homogeneous();
+            PyIcpResult {
+                _transformation: [
+                    [mat[(0, 0)], mat[(0, 1)], mat[(0, 2)], mat[(0, 3)]],
+                    [mat[(1, 0)], mat[(1, 1)], mat[(1, 2)], mat[(1, 3)]],
+                    [mat[(2, 0)], mat[(2, 1)], mat[(2, 2)], mat[(2, 3)]],
+                    [mat[(3, 0)], mat[(3, 1)], mat[(3, 2)], mat[(3, 3)]],
+                ],
+                mse: r.mse,
+                iterations: r.iterations,
+                converged: r.converged,
+            }
+        })
+        .map_err(to_py_err)
+}
+
+/// Align `source` to `target` using KISS-ICP.
+///
+/// KISS-ICP (Bai et al., IROS 2023) applies range filtering, voxel downsampling,
+/// and standard point-to-point ICP with an adaptive correspondence threshold.
+/// Designed for real-time LiDAR odometry without per-dataset parameter tuning.
+///
+/// Args:
+///     source: Current LiDAR scan (raw; range filtering + downsampling are applied internally).
+///     target: Reference / map point cloud.
+///     voxel_size: Downsampling voxel size in metres (default 1.0).
+///     max_range: Discard points farther than this from the sensor (default 100.0 m).
+///     min_range: Discard points closer than this (removes ego-vehicle noise, default 0.5 m).
+///     max_iterations: Maximum ICP iterations (default 50).
+#[pyfunction]
+#[pyo3(signature = (
+    source, target,
+    voxel_size = 1.0,
+    max_range = 100.0,
+    min_range = 0.5,
+    max_iterations = 50,
+))]
+fn kiss_icp(
+    source: &PyPointCloud,
+    target: &PyPointCloud,
+    voxel_size: f32,
+    max_range: f32,
+    min_range: f32,
+    max_iterations: usize,
+) -> PyResult<PyIcpResult> {
+    let config = KissIcpConfig {
+        voxel_size,
+        max_range,
+        min_range,
+        max_iterations,
+    };
+    tc_kiss_icp(&source.inner, &target.inner, nalgebra::Isometry3::identity(), config)
+        .map(|r| {
+            let mat = r.transformation.to_homogeneous();
+            PyIcpResult {
+                _transformation: [
+                    [mat[(0, 0)], mat[(0, 1)], mat[(0, 2)], mat[(0, 3)]],
+                    [mat[(1, 0)], mat[(1, 1)], mat[(1, 2)], mat[(1, 3)]],
+                    [mat[(2, 0)], mat[(2, 1)], mat[(2, 2)], mat[(2, 3)]],
+                    [mat[(3, 0)], mat[(3, 1)], mat[(3, 2)], mat[(3, 3)]],
+                ],
+                mse: r.mse,
+                iterations: r.iterations,
+                converged: r.converged,
+            }
+        })
+        .map_err(to_py_err)
 }
 
 /// Align `source` to `target` using point-to-plane ICP.
