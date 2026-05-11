@@ -5,15 +5,13 @@ use pyo3::prelude::*;
 use threecrate_algorithms::{
     estimate_normals as tc_estimate_normals, extract_euclidean_clusters,
     icp_point_to_plane as tc_icp_point_to_plane, icp_point_to_point_default,
-    gicp as tc_gicp,
-    kiss_icp as tc_kiss_icp,
+    gicp::{gicp as tc_gicp, GicpConfig},
+    kiss_icp::{kiss_icp as tc_kiss_icp, KissIcpConfig},
     radius_outlier_removal, segment_plane as tc_segment_plane,
     smooth_hc, smooth_laplacian, smooth_taubin, statistical_outlier_removal, voxel_grid_filter,
     HcSmoothingConfig, LaplacianSmoothingConfig, TaubinSmoothingConfig,
 };
 use threecrate_core::{ColoredNormalPoint3f, ColoredPoint3f, NormalPoint3f, Point3f, PointCloud, TriangleMesh, Vector3f};
-use threecrate_algorithms::gicp::GicpConfig;
-use threecrate_algorithms::kiss_icp::KissIcpConfig;
 use threecrate_io::{
     read_mesh as rs_read_mesh, read_point_cloud as rs_read_pc, write_mesh as rs_write_mesh,
     write_point_cloud as rs_write_pc,
