@@ -60,12 +60,12 @@ impl<T> PointCloud<T> {
     }
 
     /// Get an iterator over the points
-    pub fn iter(&self) -> std::slice::Iter<T> {
+    pub fn iter(&self) -> std::slice::Iter<'_, T> {
         self.points.iter()
     }
 
     /// Get a mutable iterator over the points
-    pub fn iter_mut(&mut self) -> std::slice::IterMut<T> {
+    pub fn iter_mut(&mut self) -> std::slice::IterMut<'_, T> {
         self.points.iter_mut()
     }
 
