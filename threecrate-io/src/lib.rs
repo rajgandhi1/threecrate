@@ -5,6 +5,7 @@
 
 pub mod ply;
 pub mod obj;
+pub mod stl;
 #[cfg(feature = "las_laz")]
 pub mod pasture;
 pub mod pcd;
@@ -26,6 +27,7 @@ pub mod tests;
 pub use error::*;
 pub use ply::{RobustPlyReader, RobustPlyWriter, PlyWriteOptions, PlyFormat, PlyValue};
 pub use obj::{RobustObjReader, RobustObjWriter, ObjData, ObjWriteOptions, Material, FaceVertex, Face, Group};
+pub use stl::{StlReader, StlWriter, StlWriteOptions, read_stl, write_stl};
 pub use pcd::{RobustPcdReader, RobustPcdWriter, PcdWriteOptions, PcdDataFormat, PcdFieldType, PcdHeader, PcdValue};
 pub use xyz_csv::{XyzCsvReader, XyzCsvWriter, XyzCsvStreamingReader, XyzCsvWriteOptions, XyzCsvSchema, XyzCsvPoint, Delimiter, ColumnType};
 #[cfg(feature = "e57")]
@@ -80,6 +82,10 @@ lazy_static::lazy_static! {
         // Register OBJ format handlers
         registry.register_mesh_handler("obj", Box::new(obj::ObjReader));
         registry.register_mesh_writer("obj", Box::new(obj::ObjWriter));
+
+        // Register STL format handlers
+        registry.register_mesh_handler("stl", Box::new(stl::StlReader));
+        registry.register_mesh_writer("stl", Box::new(stl::StlWriter));
         
         // Register pasture format handlers (when feature is enabled)
         #[cfg(feature = "las_laz")]
