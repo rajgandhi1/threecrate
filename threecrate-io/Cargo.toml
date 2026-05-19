@@ -15,6 +15,7 @@ las_laz = ["pasture-core", "pasture-io"]
 io-mmap = ["memmap2"]
 e57 = ["dep:e57"]
 ros2 = []
+rosbag = ["ros2", "dep:mcap", "dep:rusqlite", "dep:memchr"]
 
 [dependencies]
 threecrate-core = { path = "../threecrate-core", version = "0.7.0" }
@@ -29,6 +30,9 @@ byteorder = "1.5"
 lazy_static = "1.4"
 memmap2 = { version = "0.9", optional = true }
 e57 = { workspace = true, optional = true }
+mcap = { version = "0.24", optional = true }
+rusqlite = { version = "0.39", features = ["bundled"], optional = true }
+memchr = { version = "2.7", optional = true }
 
 [dev-dependencies]
 approx = { workspace = true }
