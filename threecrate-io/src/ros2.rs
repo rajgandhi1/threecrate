@@ -25,8 +25,8 @@
 //! `0xAARRGGBB`.  Alpha is silently dropped when storing into `[u8; 3]`.
 
 use threecrate_core::{
-    ColoredNormalPoint3f, ColoredPoint3f, NormalPoint3f, Point3f, PointCloud, Result, Vector3f,
-    Error,
+    ColoredNormalPoint3f, ColoredPoint3f, NormalPoint3f, OrganizedPointCloud, Point3f, PointCloud,
+    Result, Vector3f, Error,
 };
 
 // ---------------------------------------------------------------------------
@@ -361,6 +361,89 @@ pub fn pointcloud2_to_colored_normals(
     Ok(PointCloud::from_points(points))
 }
 
+/// Parse raw PointCloud2 bytes into `OrganizedPointCloud<Point3f>`, preserving
+/// the sensor's `width × height` grid. NaN/Inf points become `None`, regardless
+/// of `info.is_dense`.
+pub fn pointcloud2_to_organized_xyz(
+    data: &[u8],
+    info: &PointCloud2Info,
+) -> Result<OrganizedPointCloud<Point3f>> {
+    check_buffer(data, info)?;
+
+    let xf = find_field(&info.fields, "x")
+        .ok_or_else(|| Error::InvalidData("PointCloud2 missing field 'x'".into()))?;
+    let yf = find_field(&info.fields, "y")
+        .ok_or_else(|| Error::InvalidData("PointCloud2 missing field 'y'".into()))?;
+    let zf = find_field(&info.fields, "z")
+        .ok_or_else(|| Error::InvalidData("PointCloud2 missing field 'z'".into()))?;
+
+    let ps = info.point_step as usize;
+    let big = info.is_bigendian;
+    let width = info.width as usize;
+    let height = info.height as usize;
+    let mut cells: Vec<Option<Point3f>> = Vec::with_capacity(width * height);
+    let mut any_invalid = false;
+
+    for row in 0..height {
+        let row_base = row * info.row_step as usize;
+        for col in 0..width {
+            let base = row_base + col * ps;
+            let x = read_field_f64(data, base, xf, big)? as f32;
+            let y = read_field_f64(data, base, yf, big)? as f32;
+            let z = read_field_f64(data, base, zf, big)? as f32;
+            if !x.is_finite() || !y.is_finite() || !z.is_finite() {
+                cells.push(None);
+                any_invalid = true;
+            } else {
+                cells.push(Some(Point3f::new(x, y, z)));
+            }
+        }
+    }
+
+    let is_dense = info.is_dense && !any_invalid;
+    Ok(OrganizedPointCloud {
+        width,
+        height,
+        points: cells,
+        is_dense,
+    })
+}
+
+/// Serialise an organized cloud to PointCloud2, preserving `width`/`height`.
+/// `None` cells are written as NaN points and `is_dense` is set to `false`.
+pub fn organized_xyz_to_pointcloud2(cloud: &OrganizedPointCloud<Point3f>) -> PointCloud2Data {
+    let point_step: u32 = 12;
+    let width = cloud.width as u32;
+    let height = cloud.height as u32;
+    let row_step = point_step * width;
+    let mut data = Vec::with_capacity((row_step * height) as usize);
+    for cell in &cloud.points {
+        let (x, y, z) = match cell {
+            Some(p) => (p.x, p.y, p.z),
+            None => (f32::NAN, f32::NAN, f32::NAN),
+        };
+        data.extend_from_slice(&x.to_le_bytes());
+        data.extend_from_slice(&y.to_le_bytes());
+        data.extend_from_slice(&z.to_le_bytes());
+    }
+    PointCloud2Data {
+        info: PointCloud2Info {
+            fields: vec![
+                make_field("x", 0),
+                make_field("y", 4),
+                make_field("z", 8),
+            ],
+            point_step,
+            row_step,
+            width,
+            height,
+            is_bigendian: false,
+            is_dense: cloud.is_dense,
+        },
+        data,
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Serialization helpers
 // ---------------------------------------------------------------------------
@@ -536,6 +619,31 @@ mod tests {
             is_bigendian: false,
             is_dense: true,
         }
+    }
+
+    // ---- organized round-trip ----
+
+    #[test]
+    fn organized_round_trip_preserves_grid_and_none() {
+        let mut grid: OrganizedPointCloud<Point3f> = OrganizedPointCloud::new(3, 2);
+        grid.set(0, 0, Some(Point3f::new(1.0, 0.0, 0.0)));
+        grid.set(0, 2, Some(Point3f::new(2.0, 0.0, 0.0)));
+        grid.set(1, 1, Some(Point3f::new(0.0, 1.0, 0.5)));
+
+        let msg = organized_xyz_to_pointcloud2(&grid);
+        assert_eq!(msg.info.width, 3);
+        assert_eq!(msg.info.height, 2);
+        assert!(!msg.info.is_dense);
+
+        let back = pointcloud2_to_organized_xyz(&msg.data, &msg.info).unwrap();
+        assert_eq!(back.width, 3);
+        assert_eq!(back.height, 2);
+        assert!(!back.is_dense);
+        assert_eq!(back.get(0, 0).unwrap().x, 1.0);
+        assert!(back.get(0, 1).is_none());
+        assert_eq!(back.get(0, 2).unwrap().x, 2.0);
+        assert!(back.get(1, 0).is_none());
+        assert_eq!(back.get(1, 1).unwrap().y, 1.0);
     }
 
     // ---- round-trip XYZ ----

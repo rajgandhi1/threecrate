@@ -36,9 +36,9 @@ pub use e57::{RobustE57Reader, RobustE57Writer, E57WriteOptions};
 pub use ros2::{
     PointField, PointCloud2Info, PointCloud2Data,
     pointcloud2_to_xyz, pointcloud2_to_colored, pointcloud2_to_normals,
-    pointcloud2_to_colored_normals,
+    pointcloud2_to_colored_normals, pointcloud2_to_organized_xyz,
     xyz_to_pointcloud2, colored_to_pointcloud2, normals_to_pointcloud2,
-    colored_normals_to_pointcloud2,
+    colored_normals_to_pointcloud2, organized_xyz_to_pointcloud2,
 };
 pub use registry::{IoRegistry, FormatHandler};
 pub use mesh_attributes::{ExtendedTriangleMesh, MeshAttributeOptions, MeshMetadata, Tangent, UV};

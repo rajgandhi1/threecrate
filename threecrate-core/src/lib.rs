@@ -5,6 +5,7 @@
 
 pub mod point;
 pub mod point_cloud;
+pub mod organized_point_cloud;
 pub mod mesh;
 pub mod traits;
 pub mod transform;
@@ -15,6 +16,7 @@ pub mod bevy_interop;
 
 pub use point::*;
 pub use point_cloud::*;
+pub use organized_point_cloud::*;
 pub use mesh::*;
 pub use traits::*;
 pub use transform::*;
