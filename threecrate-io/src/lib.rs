@@ -14,6 +14,8 @@ pub mod xyz_csv;
 pub mod e57;
 #[cfg(feature = "ros2")]
 pub mod ros2;
+#[cfg(feature = "rosbag")]
+pub mod rosbag;
 pub mod error;
 pub mod registry;
 pub mod mesh_attributes;
