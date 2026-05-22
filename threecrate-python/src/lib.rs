@@ -1,5 +1,8 @@
 use nalgebra::Isometry3;
-use numpy::{ndarray::Array1, ndarray::Array2, IntoPyArray, PyArray1, PyArray2, PyReadonlyArray2};
+use numpy::{
+    ndarray::Array1, ndarray::Array2, IntoPyArray,
+    PyArray1, PyArray2, PyReadonlyArray1, PyReadonlyArray2,
+};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use threecrate_algorithms::{
@@ -10,8 +13,29 @@ use threecrate_algorithms::{
     radius_outlier_removal, segment_plane as tc_segment_plane,
     smooth_hc, smooth_laplacian, smooth_taubin, statistical_outlier_removal, voxel_grid_filter,
     HcSmoothingConfig, LaplacianSmoothingConfig, TaubinSmoothingConfig,
+    // Global registration
+    global_registration as tc_global_registration,
+    global_registration_with_normals as tc_global_registration_with_normals,
+    GlobalRegistrationConfig,
+    // NDT registration
+    ndt_registration as tc_ndt_registration,
+    NdtConfig,
+    // Mesh boolean operations
+    mesh_union as tc_mesh_union,
+    mesh_intersection as tc_mesh_intersection,
+    mesh_difference as tc_mesh_difference,
+    // FPFH feature extraction
+    features::{extract_fpfh_features_with_normals, FpfhConfig, FPFH_DIM},
+    // Colorization
+    CameraIntrinsics, RgbImageView, ColorizationConfig,
+    colorize_point_cloud as tc_colorize_point_cloud,
+    // KD-Tree
+    KdTree as TcKdTree,
 };
-use threecrate_core::{ColoredNormalPoint3f, ColoredPoint3f, NormalPoint3f, Point3f, PointCloud, TriangleMesh, Vector3f};
+use threecrate_core::{
+    ColoredNormalPoint3f, ColoredPoint3f, NormalPoint3f, NearestNeighborSearch,
+    Point3f, PointCloud, TriangleMesh, Vector3f,
+};
 use threecrate_io::{
     read_mesh as rs_read_mesh, read_point_cloud as rs_read_pc, write_mesh as rs_write_mesh,
     write_point_cloud as rs_write_pc,
@@ -21,11 +45,80 @@ use threecrate_io::{
         PointField as Ros2PointField,
     },
 };
-use threecrate_reconstruction::{auto_reconstruct, poisson_reconstruction_default};
+use threecrate_reconstruction::{
+    auto_reconstruct, poisson_reconstruction_default,
+    ball_pivoting_reconstruction as tc_ball_pivoting,
+    alpha_shape_reconstruction as tc_alpha_shape,
+    delaunay_triangulation as tc_delaunay,
+    moving_least_squares as tc_moving_least_squares,
+};
 use threecrate_simplification::{MeshSimplifier, QuadricErrorSimplifier};
 
 fn to_py_err(e: impl std::fmt::Display) -> PyErr {
     PyRuntimeError::new_err(e.to_string())
+}
+
+// ---------------------------------------------------------------------------
+// Shared conversion helpers
+// ---------------------------------------------------------------------------
+
+/// Convert an ICPResult into the PyIcpResult wrapper.
+fn icp_result_to_py(r: threecrate_algorithms::ICPResult) -> PyIcpResult {
+    let mat = r.transformation.to_homogeneous();
+    PyIcpResult {
+        _transformation: [
+            [mat[(0, 0)], mat[(0, 1)], mat[(0, 2)], mat[(0, 3)]],
+            [mat[(1, 0)], mat[(1, 1)], mat[(1, 2)], mat[(1, 3)]],
+            [mat[(2, 0)], mat[(2, 1)], mat[(2, 2)], mat[(2, 3)]],
+            [mat[(3, 0)], mat[(3, 1)], mat[(3, 2)], mat[(3, 3)]],
+        ],
+        mse: r.mse,
+        iterations: r.iterations,
+        converged: r.converged,
+    }
+}
+
+/// Convert an Isometry3 into a 4×4 row array suitable for PyIcpResult.
+fn isometry_to_mat4(iso: &Isometry3<f32>) -> [[f32; 4]; 4] {
+    let mat = iso.to_homogeneous();
+    [
+        [mat[(0, 0)], mat[(0, 1)], mat[(0, 2)], mat[(0, 3)]],
+        [mat[(1, 0)], mat[(1, 1)], mat[(1, 2)], mat[(1, 3)]],
+        [mat[(2, 0)], mat[(2, 1)], mat[(2, 2)], mat[(2, 3)]],
+        [mat[(3, 0)], mat[(3, 1)], mat[(3, 2)], mat[(3, 3)]],
+    ]
+}
+
+/// Convert an optional (N, 3) or 4×4 numpy array to `Isometry3<f32>`.
+/// If `None`, returns the identity transform.
+fn numpy_to_isometry(arr: Option<PyReadonlyArray2<f32>>) -> PyResult<Isometry3<f32>> {
+    let arr = match arr {
+        None => return Ok(Isometry3::identity()),
+        Some(a) => a,
+    };
+    let a = arr.as_array();
+    if a.shape() != [4, 4] {
+        return Err(PyValueError::new_err(
+            "init_transform must be a 4×4 float32 array",
+        ));
+    }
+    let rot = nalgebra::Matrix3::new(
+        a[[0, 0]], a[[0, 1]], a[[0, 2]],
+        a[[1, 0]], a[[1, 1]], a[[1, 2]],
+        a[[2, 0]], a[[2, 1]], a[[2, 2]],
+    );
+    let rotation = nalgebra::UnitQuaternion::from_matrix(&rot);
+    let translation = nalgebra::Translation3::new(a[[0, 3]], a[[1, 3]], a[[2, 3]]);
+    Ok(Isometry3::from_parts(translation, rotation))
+}
+
+/// Convert a 1-D length-3 numpy array to `Point3f`.
+fn numpy1d_to_point(arr: &PyReadonlyArray1<f32>) -> PyResult<Point3f> {
+    let a = arr.as_array();
+    if a.len() != 3 {
+        return Err(PyValueError::new_err("Query point must be a 1D array of length 3"));
+    }
+    Ok(Point3f::new(a[0], a[1], a[2]))
 }
 
 // ---------------------------------------------------------------------------
@@ -203,7 +296,7 @@ impl PyTriangleMesh {
 // IcpResult
 // ---------------------------------------------------------------------------
 
-/// Result returned by `icp()`.
+/// Result returned by `icp()`, `gicp()`, `kiss_icp()`, and `icp_point_to_plane()`.
 #[pyclass(name = "IcpResult")]
 pub struct PyIcpResult {
     _transformation: [[f32; 4]; 4],
@@ -230,6 +323,92 @@ impl PyIcpResult {
         format!(
             "IcpResult(converged={}, mse={:.6}, iterations={})",
             self.converged, self.mse, self.iterations
+        )
+    }
+}
+
+// ---------------------------------------------------------------------------
+// GlobalRegistrationResult
+// ---------------------------------------------------------------------------
+
+/// Result returned by `global_registration()`.
+///
+/// Attributes
+/// ----------
+/// inlier_count : int
+///     Number of RANSAC inlier correspondences.
+/// inlier_ratio : float
+///     Fraction of correspondences that are inliers (0.0 – 1.0).
+/// icp_mse : float or None
+///     Final ICP mean squared error when ``refine_with_icp=True``.
+/// icp_converged : bool or None
+///     Whether ICP converged, when ``refine_with_icp=True``.
+#[pyclass(name = "GlobalRegistrationResult")]
+pub struct PyGlobalRegistrationResult {
+    _transformation: [[f32; 4]; 4],
+    #[pyo3(get)]
+    pub inlier_count: usize,
+    #[pyo3(get)]
+    pub inlier_ratio: f32,
+    #[pyo3(get)]
+    pub icp_mse: Option<f32>,
+    #[pyo3(get)]
+    pub icp_converged: Option<bool>,
+}
+
+#[pymethods]
+impl PyGlobalRegistrationResult {
+    /// Return the 4×4 rigid transformation (source → target) as a numpy float32 array.
+    fn transformation<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f32>> {
+        let data = Array2::from_shape_fn((4, 4), |(i, j)| self._transformation[i][j]);
+        data.into_pyarray_bound(py)
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "GlobalRegistrationResult(inliers={}, ratio={:.3})",
+            self.inlier_count, self.inlier_ratio
+        )
+    }
+}
+
+// ---------------------------------------------------------------------------
+// NdtResult
+// ---------------------------------------------------------------------------
+
+/// Result returned by `ndt_registration()`.
+///
+/// Attributes
+/// ----------
+/// score : float
+///     Final NDT score (higher = better alignment).
+/// iterations : int
+///     Number of gradient-descent iterations performed.
+/// converged : bool
+///     Whether the algorithm converged.
+#[pyclass(name = "NdtResult")]
+pub struct PyNdtResult {
+    _transformation: [[f32; 4]; 4],
+    #[pyo3(get)]
+    pub score: f32,
+    #[pyo3(get)]
+    pub iterations: usize,
+    #[pyo3(get)]
+    pub converged: bool,
+}
+
+#[pymethods]
+impl PyNdtResult {
+    /// Return the 4×4 rigid transformation (source → target) as a numpy float32 array.
+    fn transformation<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f32>> {
+        let data = Array2::from_shape_fn((4, 4), |(i, j)| self._transformation[i][j]);
+        data.into_pyarray_bound(py)
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "NdtResult(converged={}, score={:.6}, iterations={})",
+            self.converged, self.score, self.iterations
         )
     }
 }
@@ -290,6 +469,93 @@ impl PyPlaneSegmentationResult {
             self.coefficients[1],
             self.coefficients[2],
         )
+    }
+}
+
+// ---------------------------------------------------------------------------
+// KdTree
+// ---------------------------------------------------------------------------
+
+/// A KD-tree spatial index built from a point cloud.
+///
+/// Provides efficient k-nearest-neighbour and radius searches.
+///
+/// Examples
+/// --------
+/// >>> tree = threecrate.KdTree(cloud)
+/// >>> indices, distances = tree.knn(query, k=5)
+/// >>> indices, distances = tree.radius_search(query, radius=0.5)
+#[pyclass(name = "KdTree")]
+pub struct PyKdTree {
+    inner: TcKdTree,
+}
+
+#[pymethods]
+impl PyKdTree {
+    /// Build a KD-tree from a point cloud.
+    #[new]
+    fn new(cloud: &PyPointCloud) -> PyResult<Self> {
+        TcKdTree::new(&cloud.inner.points)
+            .map(|t| Self { inner: t })
+            .map_err(to_py_err)
+    }
+
+    /// Find the `k` nearest neighbours to a query point.
+    ///
+    /// Parameters
+    /// ----------
+    /// query : ndarray of shape (3,) float32
+    ///     The query position.
+    /// k : int
+    ///     Number of neighbours to return.
+    ///
+    /// Returns
+    /// -------
+    /// tuple[list[int], list[float]]
+    ///     ``(indices, distances)`` — point indices in the original cloud and
+    ///     their Euclidean distances from the query, ordered nearest first.
+    fn knn(
+        &self,
+        query: PyReadonlyArray1<f32>,
+        k: usize,
+    ) -> PyResult<(Vec<usize>, Vec<f32>)> {
+        let q = numpy1d_to_point(&query)?;
+        let results = self.inner.find_k_nearest(&q, k);
+        Ok((
+            results.iter().map(|(i, _)| *i).collect(),
+            results.iter().map(|(_, d)| *d).collect(),
+        ))
+    }
+
+    /// Find all neighbours within `radius` of a query point.
+    ///
+    /// Parameters
+    /// ----------
+    /// query : ndarray of shape (3,) float32
+    ///     The query position.
+    /// radius : float
+    ///     Search radius (same units as the point cloud).
+    ///
+    /// Returns
+    /// -------
+    /// tuple[list[int], list[float]]
+    ///     ``(indices, distances)`` — point indices and their Euclidean distances,
+    ///     unordered.
+    fn radius_search(
+        &self,
+        query: PyReadonlyArray1<f32>,
+        radius: f32,
+    ) -> PyResult<(Vec<usize>, Vec<f32>)> {
+        let q = numpy1d_to_point(&query)?;
+        let results = self.inner.find_radius_neighbors(&q, radius);
+        Ok((
+            results.iter().map(|(i, _)| *i).collect(),
+            results.iter().map(|(_, d)| *d).collect(),
+        ))
+    }
+
+    fn __repr__(&self) -> String {
+        "KdTree".to_string()
     }
 }
 
@@ -364,34 +630,25 @@ fn py_estimate_normals(
 ///
 /// Returns an `IcpResult` containing the 4x4 transformation matrix,
 /// final MSE, iteration count, and convergence flag.
+///
+/// Args:
+///     source: Source point cloud to align.
+///     target: Target (reference) point cloud.
+///     max_iterations: Maximum ICP iterations (default 50).
+///     init_transform: Optional 4×4 float32 numpy array for the initial pose
+///         estimate. Defaults to the identity transform.
 #[pyfunction]
-#[pyo3(signature = (source, target, max_iterations = 50))]
+#[pyo3(signature = (source, target, max_iterations = 50, init_transform = None))]
 fn icp(
     source: &PyPointCloud,
     target: &PyPointCloud,
     max_iterations: usize,
+    init_transform: Option<PyReadonlyArray2<f32>>,
 ) -> PyResult<PyIcpResult> {
-    icp_point_to_point_default(
-        &source.inner,
-        &target.inner,
-        Isometry3::identity(),
-        max_iterations,
-    )
-    .map(|r| {
-        let mat = r.transformation.to_homogeneous();
-        PyIcpResult {
-            _transformation: [
-                [mat[(0, 0)], mat[(0, 1)], mat[(0, 2)], mat[(0, 3)]],
-                [mat[(1, 0)], mat[(1, 1)], mat[(1, 2)], mat[(1, 3)]],
-                [mat[(2, 0)], mat[(2, 1)], mat[(2, 2)], mat[(2, 3)]],
-                [mat[(3, 0)], mat[(3, 1)], mat[(3, 2)], mat[(3, 3)]],
-            ],
-            mse: r.mse,
-            iterations: r.iterations,
-            converged: r.converged,
-        }
-    })
-    .map_err(to_py_err)
+    let init = numpy_to_isometry(init_transform)?;
+    icp_point_to_point_default(&source.inner, &target.inner, init, max_iterations)
+        .map(icp_result_to_py)
+        .map_err(to_py_err)
 }
 
 /// Align `source` to `target` using Generalized ICP (GICP).
@@ -407,6 +664,7 @@ fn icp(
 ///     max_correspondence_distance: Maximum distance for accepting a match (default 1.0).
 ///     convergence_threshold: Stop when |ΔMSE| is below this value (default 1e-6).
 ///     k_correspondences: Neighbours used to estimate per-point covariances (default 20).
+///     init_transform: Optional 4×4 float32 initial pose. Defaults to identity.
 #[pyfunction]
 #[pyo3(signature = (
     source, target,
@@ -414,6 +672,7 @@ fn icp(
     max_correspondence_distance = 1.0,
     convergence_threshold = 1e-6,
     k_correspondences = 20,
+    init_transform = None,
 ))]
 fn gicp(
     source: &PyPointCloud,
@@ -422,28 +681,17 @@ fn gicp(
     max_correspondence_distance: f32,
     convergence_threshold: f32,
     k_correspondences: usize,
+    init_transform: Option<PyReadonlyArray2<f32>>,
 ) -> PyResult<PyIcpResult> {
+    let init = numpy_to_isometry(init_transform)?;
     let config = GicpConfig {
         max_iterations,
         max_correspondence_distance,
         convergence_threshold,
         k_correspondences,
     };
-    tc_gicp(&source.inner, &target.inner, nalgebra::Isometry3::identity(), config)
-        .map(|r| {
-            let mat = r.transformation.to_homogeneous();
-            PyIcpResult {
-                _transformation: [
-                    [mat[(0, 0)], mat[(0, 1)], mat[(0, 2)], mat[(0, 3)]],
-                    [mat[(1, 0)], mat[(1, 1)], mat[(1, 2)], mat[(1, 3)]],
-                    [mat[(2, 0)], mat[(2, 1)], mat[(2, 2)], mat[(2, 3)]],
-                    [mat[(3, 0)], mat[(3, 1)], mat[(3, 2)], mat[(3, 3)]],
-                ],
-                mse: r.mse,
-                iterations: r.iterations,
-                converged: r.converged,
-            }
-        })
+    tc_gicp(&source.inner, &target.inner, init, config)
+        .map(icp_result_to_py)
         .map_err(to_py_err)
 }
 
@@ -460,6 +708,7 @@ fn gicp(
 ///     max_range: Discard points farther than this from the sensor (default 100.0 m).
 ///     min_range: Discard points closer than this (removes ego-vehicle noise, default 0.5 m).
 ///     max_iterations: Maximum ICP iterations (default 50).
+///     init_transform: Optional 4×4 float32 initial pose. Defaults to identity.
 #[pyfunction]
 #[pyo3(signature = (
     source, target,
@@ -467,6 +716,7 @@ fn gicp(
     max_range = 100.0,
     min_range = 0.5,
     max_iterations = 50,
+    init_transform = None,
 ))]
 fn kiss_icp(
     source: &PyPointCloud,
@@ -475,28 +725,17 @@ fn kiss_icp(
     max_range: f32,
     min_range: f32,
     max_iterations: usize,
+    init_transform: Option<PyReadonlyArray2<f32>>,
 ) -> PyResult<PyIcpResult> {
+    let init = numpy_to_isometry(init_transform)?;
     let config = KissIcpConfig {
         voxel_size,
         max_range,
         min_range,
         max_iterations,
     };
-    tc_kiss_icp(&source.inner, &target.inner, nalgebra::Isometry3::identity(), config)
-        .map(|r| {
-            let mat = r.transformation.to_homogeneous();
-            PyIcpResult {
-                _transformation: [
-                    [mat[(0, 0)], mat[(0, 1)], mat[(0, 2)], mat[(0, 3)]],
-                    [mat[(1, 0)], mat[(1, 1)], mat[(1, 2)], mat[(1, 3)]],
-                    [mat[(2, 0)], mat[(2, 1)], mat[(2, 2)], mat[(2, 3)]],
-                    [mat[(3, 0)], mat[(3, 1)], mat[(3, 2)], mat[(3, 3)]],
-                ],
-                mse: r.mse,
-                iterations: r.iterations,
-                converged: r.converged,
-            }
-        })
+    tc_kiss_icp(&source.inner, &target.inner, init, config)
+        .map(icp_result_to_py)
         .map_err(to_py_err)
 }
 
@@ -505,15 +744,21 @@ fn kiss_icp(
 /// `source` is a plain point cloud (positions only). `target` must be a
 /// `NormalPointCloud` — the surface normals at each target point define
 /// the local tangent plane used by the algorithm.
-/// Returns an `IcpResult` containing the 4x4 transformation matrix,
-/// final MSE, iteration count, and convergence flag.
+///
+/// Args:
+///     source: Source point cloud (positions only).
+///     target: Target NormalPointCloud (positions + normals).
+///     max_iterations: Maximum ICP iterations (default 50).
+///     init_transform: Optional 4×4 float32 initial pose. Defaults to identity.
 #[pyfunction]
-#[pyo3(signature = (source, target, max_iterations = 50))]
+#[pyo3(signature = (source, target, max_iterations = 50, init_transform = None))]
 fn icp_point_to_plane(
     source: &PyPointCloud,
     target: &PyNormalPointCloud,
     max_iterations: usize,
+    init_transform: Option<PyReadonlyArray2<f32>>,
 ) -> PyResult<PyIcpResult> {
+    let init = numpy_to_isometry(init_transform)?;
     let source_cloud = PointCloud::from_points(
         source.inner.points.iter()
             .map(|p| Point3f::new(p.x, p.y, p.z))
@@ -531,24 +776,250 @@ fn icp_point_to_plane(
         &source_cloud,
         &target_cloud,
         &target_normals,
-        Isometry3::identity(),
+        init,
         max_iterations,
     )
+    .map(icp_result_to_py)
+    .map_err(to_py_err)
+}
+
+/// Coarse global registration using FPFH feature matching and RANSAC.
+///
+/// Estimates surface normals, extracts FPFH descriptors from both clouds,
+/// builds putative correspondences by nearest-neighbour feature matching, and
+/// finds the best rigid transformation using RANSAC. An optional ICP refinement
+/// step is run afterwards when `refine_with_icp=True`.
+///
+/// Use the returned `transformation` as `init_transform` for a subsequent ICP
+/// call to achieve fine alignment.
+///
+/// Args:
+///     source: Source point cloud.
+///     target: Target point cloud.
+///     ransac_iterations: RANSAC iteration count (default 50000).
+///     distance_threshold: Max inlier distance in model units (default 0.05).
+///     inlier_ratio: Early-exit RANSAC threshold (default 0.25).
+///     fpfh_radius: Radius for FPFH feature extraction (default 0.25).
+///     fpfh_k_neighbors: Fallback k-NN for FPFH when radius yields too few (default 10).
+///     normal_k_neighbors: k-NN for normal estimation (default 10).
+///     refine_with_icp: Run ICP after RANSAC (default True).
+///     icp_max_iterations: ICP iteration limit when refining (default 50).
+#[pyfunction]
+#[pyo3(signature = (
+    source, target,
+    ransac_iterations = 50_000,
+    distance_threshold = 0.05,
+    inlier_ratio = 0.25,
+    fpfh_radius = 0.25,
+    fpfh_k_neighbors = 10,
+    normal_k_neighbors = 10,
+    refine_with_icp = true,
+    icp_max_iterations = 50,
+))]
+fn global_registration(
+    source: &PyPointCloud,
+    target: &PyPointCloud,
+    ransac_iterations: usize,
+    distance_threshold: f32,
+    inlier_ratio: f32,
+    fpfh_radius: f32,
+    fpfh_k_neighbors: usize,
+    normal_k_neighbors: usize,
+    refine_with_icp: bool,
+    icp_max_iterations: usize,
+) -> PyResult<PyGlobalRegistrationResult> {
+    let config = GlobalRegistrationConfig {
+        ransac_iterations,
+        distance_threshold,
+        inlier_ratio,
+        fpfh_radius,
+        fpfh_k_neighbors,
+        normal_k_neighbors,
+        refine_with_icp,
+        icp_max_iterations,
+        icp_distance_threshold: None,
+    };
+    tc_global_registration(&source.inner, &target.inner, &config)
+        .map(|r| {
+            let (icp_mse, icp_converged) = r
+                .icp_result
+                .map(|icp| (Some(icp.mse), Some(icp.converged)))
+                .unwrap_or((None, None));
+            PyGlobalRegistrationResult {
+                _transformation: isometry_to_mat4(&r.transformation),
+                inlier_count: r.inlier_count,
+                inlier_ratio: r.inlier_ratio,
+                icp_mse,
+                icp_converged,
+            }
+        })
+        .map_err(to_py_err)
+}
+
+/// Global registration when normals are already available.
+///
+/// Same as `global_registration()` but skips the normal-estimation step.
+/// Useful when you have already called `estimate_normals()`.
+///
+/// Args:
+///     source_normals: Source NormalPointCloud (pre-computed normals).
+///     target_normals: Target NormalPointCloud.
+///     source: Raw source positions (used for optional ICP refinement).
+///     target: Raw target positions.
+///     (All other parameters identical to `global_registration`.)
+#[pyfunction]
+#[pyo3(signature = (
+    source_normals, target_normals, source, target,
+    ransac_iterations = 50_000,
+    distance_threshold = 0.05,
+    inlier_ratio = 0.25,
+    fpfh_radius = 0.25,
+    fpfh_k_neighbors = 10,
+    normal_k_neighbors = 10,
+    refine_with_icp = true,
+    icp_max_iterations = 50,
+))]
+fn global_registration_with_normals(
+    source_normals: &PyNormalPointCloud,
+    target_normals: &PyNormalPointCloud,
+    source: &PyPointCloud,
+    target: &PyPointCloud,
+    ransac_iterations: usize,
+    distance_threshold: f32,
+    inlier_ratio: f32,
+    fpfh_radius: f32,
+    fpfh_k_neighbors: usize,
+    normal_k_neighbors: usize,
+    refine_with_icp: bool,
+    icp_max_iterations: usize,
+) -> PyResult<PyGlobalRegistrationResult> {
+    let config = GlobalRegistrationConfig {
+        ransac_iterations,
+        distance_threshold,
+        inlier_ratio,
+        fpfh_radius,
+        fpfh_k_neighbors,
+        normal_k_neighbors,
+        refine_with_icp,
+        icp_max_iterations,
+        icp_distance_threshold: None,
+    };
+    tc_global_registration_with_normals(
+        &source_normals.inner,
+        &target_normals.inner,
+        &source.inner,
+        &target.inner,
+        &config,
+    )
     .map(|r| {
-        let mat = r.transformation.to_homogeneous();
-        PyIcpResult {
-            _transformation: [
-                [mat[(0, 0)], mat[(0, 1)], mat[(0, 2)], mat[(0, 3)]],
-                [mat[(1, 0)], mat[(1, 1)], mat[(1, 2)], mat[(1, 3)]],
-                [mat[(2, 0)], mat[(2, 1)], mat[(2, 2)], mat[(2, 3)]],
-                [mat[(3, 0)], mat[(3, 1)], mat[(3, 2)], mat[(3, 3)]],
-            ],
-            mse: r.mse,
-            iterations: r.iterations,
-            converged: r.converged,
+        let (icp_mse, icp_converged) = r
+            .icp_result
+            .map(|icp| (Some(icp.mse), Some(icp.converged)))
+            .unwrap_or((None, None));
+        PyGlobalRegistrationResult {
+            _transformation: isometry_to_mat4(&r.transformation),
+            inlier_count: r.inlier_count,
+            inlier_ratio: r.inlier_ratio,
+            icp_mse,
+            icp_converged,
         }
     })
     .map_err(to_py_err)
+}
+
+/// Align `source` to `target` using Normal Distributions Transform (NDT).
+///
+/// NDT divides the target cloud into voxels and fits a Gaussian distribution
+/// to each; the source is aligned by gradient-descent maximisation of the
+/// probability of the transformed source points under those distributions.
+/// More robust than ICP to large initial misalignments and sparse data.
+///
+/// Args:
+///     source: Source point cloud to align.
+///     target: Target (reference) point cloud.
+///     init_transform: Optional 4×4 float32 initial pose. Defaults to identity.
+///     resolution: Voxel cell side length (default 1.0).
+///     step_size: Gradient-descent step size (default 0.1).
+///     max_iterations: Maximum iterations (default 35).
+///     epsilon: Convergence threshold on transformation change (default 1e-4).
+///     min_points_per_voxel: Voxels with fewer points are discarded (default 5).
+#[pyfunction]
+#[pyo3(signature = (
+    source, target,
+    init_transform = None,
+    resolution = 1.0,
+    step_size = 0.1,
+    max_iterations = 35,
+    epsilon = 1e-4,
+    min_points_per_voxel = 5,
+))]
+fn ndt_registration(
+    source: &PyPointCloud,
+    target: &PyPointCloud,
+    init_transform: Option<PyReadonlyArray2<f32>>,
+    resolution: f32,
+    step_size: f32,
+    max_iterations: usize,
+    epsilon: f32,
+    min_points_per_voxel: usize,
+) -> PyResult<PyNdtResult> {
+    let init = numpy_to_isometry(init_transform)?;
+    let config = NdtConfig {
+        resolution,
+        step_size,
+        max_iterations,
+        epsilon,
+        min_points_per_voxel,
+    };
+    tc_ndt_registration(&source.inner, &target.inner, init, &config)
+        .map(|r| PyNdtResult {
+            _transformation: isometry_to_mat4(&r.transformation),
+            score: r.score,
+            iterations: r.iterations,
+            converged: r.converged,
+        })
+        .map_err(to_py_err)
+}
+
+// ---------------------------------------------------------------------------
+// FPFH feature extraction
+// ---------------------------------------------------------------------------
+
+/// Extract FPFH (Fast Point Feature Histograms) descriptors from a point cloud.
+///
+/// Surface normals are estimated automatically. Each descriptor encodes the
+/// local geometry around a point as three 11-bin angular sub-histograms
+/// (33 values total).
+///
+/// Args:
+///     cloud: Input point cloud.
+///     search_radius: Radius for neighbourhood search during feature extraction (default 0.1).
+///     k_neighbors: Fallback k-NN count when radius search yields too few points (default 10).
+///
+/// Returns
+/// -------
+/// ndarray of shape (N, 33) float32
+///     One 33-dimensional FPFH descriptor per input point.
+#[pyfunction]
+#[pyo3(signature = (cloud, search_radius = 0.1, k_neighbors = 10))]
+fn extract_fpfh_features<'py>(
+    py: Python<'py>,
+    cloud: &PyPointCloud,
+    search_radius: f32,
+    k_neighbors: usize,
+) -> PyResult<Bound<'py, PyArray2<f32>>> {
+    let cloud_n = tc_estimate_normals(&cloud.inner, k_neighbors).map_err(to_py_err)?;
+    let config = FpfhConfig { search_radius, k_neighbors };
+    let descs = extract_fpfh_features_with_normals(&cloud_n, &config).map_err(to_py_err)?;
+
+    let n = descs.len();
+    let mut data = Array2::<f32>::zeros((n, FPFH_DIM));
+    for (i, desc) in descs.iter().enumerate() {
+        for (j, &v) in desc.iter().enumerate() {
+            data[[i, j]] = v;
+        }
+    }
+    Ok(data.into_pyarray_bound(py))
 }
 
 // ---------------------------------------------------------------------------
@@ -619,6 +1090,61 @@ fn extract_clusters(
                 })
                 .collect()
         })
+        .map_err(to_py_err)
+}
+
+// ---------------------------------------------------------------------------
+// Mesh boolean operations
+// ---------------------------------------------------------------------------
+
+/// Compute the boolean union of two closed triangle meshes (A ∪ B).
+///
+/// Both meshes must be closed (watertight) with consistently outward-facing
+/// normals. Uses a BSP-tree CSG approach.
+///
+/// Args:
+///     mesh_a: First input mesh.
+///     mesh_b: Second input mesh.
+#[pyfunction]
+fn mesh_union(mesh_a: &PyTriangleMesh, mesh_b: &PyTriangleMesh) -> PyResult<PyTriangleMesh> {
+    tc_mesh_union(&mesh_a.inner, &mesh_b.inner)
+        .map(|m| PyTriangleMesh { inner: m })
+        .map_err(to_py_err)
+}
+
+/// Compute the boolean intersection of two closed triangle meshes (A ∩ B).
+///
+/// Both meshes must be closed (watertight) with consistently outward-facing
+/// normals. Uses a BSP-tree CSG approach.
+///
+/// Args:
+///     mesh_a: First input mesh.
+///     mesh_b: Second input mesh.
+#[pyfunction]
+fn mesh_intersection(
+    mesh_a: &PyTriangleMesh,
+    mesh_b: &PyTriangleMesh,
+) -> PyResult<PyTriangleMesh> {
+    tc_mesh_intersection(&mesh_a.inner, &mesh_b.inner)
+        .map(|m| PyTriangleMesh { inner: m })
+        .map_err(to_py_err)
+}
+
+/// Compute the boolean difference of two closed triangle meshes (A − B).
+///
+/// Returns the part of `mesh_a` that lies outside `mesh_b`. Both meshes must
+/// be closed (watertight) with consistently outward-facing normals.
+///
+/// Args:
+///     mesh_a: Minuend mesh.
+///     mesh_b: Subtrahend mesh.
+#[pyfunction]
+fn mesh_difference(
+    mesh_a: &PyTriangleMesh,
+    mesh_b: &PyTriangleMesh,
+) -> PyResult<PyTriangleMesh> {
+    tc_mesh_difference(&mesh_a.inner, &mesh_b.inner)
+        .map(|m| PyTriangleMesh { inner: m })
         .map_err(to_py_err)
 }
 
@@ -760,6 +1286,122 @@ fn poisson_reconstruct(cloud: &PyNormalPointCloud) -> PyResult<PyTriangleMesh> {
         .map_err(to_py_err)
 }
 
+/// Reconstruct a surface using the Ball Pivoting Algorithm (BPA).
+///
+/// A ball of `radius` rolls over the point cloud; wherever it touches three
+/// points simultaneously a triangle is formed. Works best on uniformly sampled
+/// point clouds without large noise.
+///
+/// Args:
+///     cloud: Input point cloud.
+///     radius: Ball radius in point-cloud units (default 0.1).
+#[pyfunction]
+#[pyo3(signature = (cloud, radius = 0.1))]
+fn ball_pivoting_reconstruct(
+    cloud: &PyPointCloud,
+    radius: f32,
+) -> PyResult<PyTriangleMesh> {
+    tc_ball_pivoting(&cloud.inner, radius)
+        .map(|m| PyTriangleMesh { inner: m })
+        .map_err(to_py_err)
+}
+
+/// Reconstruct a surface using alpha shapes.
+///
+/// The alpha shape is a generalisation of the convex hull controlled by `alpha`:
+/// smaller values produce tighter, more detailed shapes; larger values approach
+/// the convex hull.
+///
+/// Args:
+///     cloud: Input point cloud.
+///     alpha: Shape parameter (default 1.0). Lower = tighter fit.
+#[pyfunction]
+#[pyo3(signature = (cloud, alpha = 1.0))]
+fn alpha_shape_reconstruct(
+    cloud: &PyPointCloud,
+    alpha: f32,
+) -> PyResult<PyTriangleMesh> {
+    tc_alpha_shape(&cloud.inner, alpha)
+        .map(|m| PyTriangleMesh { inner: m })
+        .map_err(to_py_err)
+}
+
+/// Reconstruct a surface using Delaunay triangulation.
+///
+/// Projects the 3-D point cloud onto its best-fit plane using PCA, runs 2-D
+/// Delaunay triangulation, and lifts the result back to 3-D. Fast and exact,
+/// but only suitable for nearly planar point sets.
+///
+/// Args:
+///     cloud: Input point cloud.
+#[pyfunction]
+fn delaunay_triangulate(cloud: &PyPointCloud) -> PyResult<PyTriangleMesh> {
+    tc_delaunay(&cloud.inner)
+        .map(|m| PyTriangleMesh { inner: m })
+        .map_err(to_py_err)
+}
+
+/// Reconstruct a surface using Moving Least Squares (MLS).
+///
+/// Fits local polynomial surfaces to the point cloud and extracts a mesh from
+/// the resulting implicit function. Handles noise well and produces smooth
+/// surfaces. Slower than Delaunay or Ball Pivoting.
+///
+/// Args:
+///     cloud: Input point cloud.
+#[pyfunction]
+fn moving_least_squares_reconstruct(cloud: &PyPointCloud) -> PyResult<PyTriangleMesh> {
+    tc_moving_least_squares(&cloud.inner)
+        .map(|m| PyTriangleMesh { inner: m })
+        .map_err(to_py_err)
+}
+
+// ---------------------------------------------------------------------------
+// Colorization
+// ---------------------------------------------------------------------------
+
+/// Colorize a point cloud from a registered RGB image.
+///
+/// Each 3-D point is projected onto the image plane using a pinhole camera
+/// model. Points that project outside the image boundary or lie behind the
+/// camera are assigned the `default_color` (grey by default).
+///
+/// Args:
+///     cloud: Input point cloud.
+///     image_data: Raw RGB image bytes, row-major (R, G, B, R, G, B, …).
+///     width: Image width in pixels.
+///     height: Image height in pixels.
+///     fx: Horizontal focal length in pixels.
+///     fy: Vertical focal length in pixels.
+///     cx: Horizontal principal-point offset (pixels from left edge).
+///     cy: Vertical principal-point offset (pixels from top edge).
+///     world_to_camera: 4×4 float32 rigid transform mapping world coordinates
+///         to the camera coordinate frame.
+///
+/// Returns
+/// -------
+/// ColoredPointCloud
+#[pyfunction]
+fn colorize_point_cloud(
+    cloud: &PyPointCloud,
+    image_data: &[u8],
+    width: u32,
+    height: u32,
+    fx: f32,
+    fy: f32,
+    cx: f32,
+    cy: f32,
+    world_to_camera: PyReadonlyArray2<f32>,
+) -> PyResult<PyColoredPointCloud> {
+    let intrinsics = CameraIntrinsics { fx, fy, cx, cy };
+    let image = RgbImageView::new(image_data, width, height).map_err(to_py_err)?;
+    let pose = numpy_to_isometry(Some(world_to_camera))?;
+    let config = ColorizationConfig::default();
+    tc_colorize_point_cloud(&cloud.inner, &image, &intrinsics, &pose, &config)
+        .map(|r| PyColoredPointCloud { inner: r.cloud })
+        .map_err(to_py_err)
+}
+
 // ---------------------------------------------------------------------------
 // I/O
 // ---------------------------------------------------------------------------
@@ -805,7 +1447,7 @@ fn write_mesh(mesh: &PyTriangleMesh, path: &str) -> PyResult<()> {
 // ---------------------------------------------------------------------------
 
 /// A coloured point cloud (XYZ + RGB).
-/// Returned by `pointcloud2_to_colored()` and `pointcloud2_to_colored_normals()`.
+/// Returned by `pointcloud2_to_colored()` and `colorize_point_cloud()`.
 #[pyclass(name = "ColoredPointCloud")]
 #[derive(Clone)]
 pub struct PyColoredPointCloud {
@@ -1013,26 +1655,6 @@ fn build_info(
 }
 
 /// Parse raw `PointCloud2` bytes into an XYZ `PointCloud`.
-///
-/// Parameters
-/// ----------
-/// data : bytes
-///     Raw payload from ``sensor_msgs/PointCloud2.data``.
-/// fields : list[tuple[str, int, int, int]]
-///     Field descriptors ``(name, offset, datatype, count)``.
-/// point_step : int
-///     Bytes per point.
-/// width : int
-///     Points per row.
-/// height : int
-///     Number of rows (use 1 for an unorganised cloud).
-/// is_bigendian : bool, optional
-/// is_dense : bool, optional
-///     When ``False``, NaN points are silently dropped.
-///
-/// Returns
-/// -------
-/// PointCloud
 #[pyfunction]
 #[pyo3(signature = (data, fields, point_step, width, height, is_bigendian = false, is_dense = true))]
 fn pointcloud2_to_xyz(
@@ -1155,8 +1777,11 @@ fn threecrate(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyColoredNormalPointCloud>()?;
     m.add_class::<PyTriangleMesh>()?;
     m.add_class::<PyIcpResult>()?;
+    m.add_class::<PyGlobalRegistrationResult>()?;
+    m.add_class::<PyNdtResult>()?;
     m.add_class::<PyPlaneSegmentationResult>()?;
     m.add_class::<PyPointCloud2Data>()?;
+    m.add_class::<PyKdTree>()?;
 
     // Filtering
     m.add_function(wrap_pyfunction!(voxel_downsample, m)?)?;
@@ -1171,10 +1796,21 @@ fn threecrate(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(icp_point_to_plane, m)?)?;
     m.add_function(wrap_pyfunction!(gicp, m)?)?;
     m.add_function(wrap_pyfunction!(kiss_icp, m)?)?;
+    m.add_function(wrap_pyfunction!(global_registration, m)?)?;
+    m.add_function(wrap_pyfunction!(global_registration_with_normals, m)?)?;
+    m.add_function(wrap_pyfunction!(ndt_registration, m)?)?;
+
+    // Feature extraction
+    m.add_function(wrap_pyfunction!(extract_fpfh_features, m)?)?;
 
     // Segmentation
     m.add_function(wrap_pyfunction!(segment_plane, m)?)?;
     m.add_function(wrap_pyfunction!(extract_clusters, m)?)?;
+
+    // Mesh boolean operations
+    m.add_function(wrap_pyfunction!(mesh_union, m)?)?;
+    m.add_function(wrap_pyfunction!(mesh_intersection, m)?)?;
+    m.add_function(wrap_pyfunction!(mesh_difference, m)?)?;
 
     // Simplification
     m.add_function(wrap_pyfunction!(simplify_mesh, m)?)?;
@@ -1187,6 +1823,13 @@ fn threecrate(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Reconstruction
     m.add_function(wrap_pyfunction!(reconstruct, m)?)?;
     m.add_function(wrap_pyfunction!(poisson_reconstruct, m)?)?;
+    m.add_function(wrap_pyfunction!(ball_pivoting_reconstruct, m)?)?;
+    m.add_function(wrap_pyfunction!(alpha_shape_reconstruct, m)?)?;
+    m.add_function(wrap_pyfunction!(delaunay_triangulate, m)?)?;
+    m.add_function(wrap_pyfunction!(moving_least_squares_reconstruct, m)?)?;
+
+    // Colorization
+    m.add_function(wrap_pyfunction!(colorize_point_cloud, m)?)?;
 
     // I/O
     m.add_function(wrap_pyfunction!(read_point_cloud, m)?)?;
