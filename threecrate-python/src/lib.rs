@@ -1,9 +1,9 @@
 use nalgebra::Isometry3;
 use numpy::{
-    ndarray::Array1, ndarray::Array2, IntoPyArray,
-    PyArray1, PyArray2, PyReadonlyArray1, PyReadonlyArray2,
+    ndarray::{Array1, Array2},
+    IntoPyArray, PyArray1, PyArray2, PyArrayMethods,
 };
-use pyo3::exceptions::{PyRuntimeError, PyValueError};
+use pyo3::exceptions::{PyIndexError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use threecrate_algorithms::{
     estimate_normals as tc_estimate_normals, extract_euclidean_clusters,
@@ -13,23 +13,17 @@ use threecrate_algorithms::{
     radius_outlier_removal, segment_plane as tc_segment_plane,
     smooth_hc, smooth_laplacian, smooth_taubin, statistical_outlier_removal, voxel_grid_filter,
     HcSmoothingConfig, LaplacianSmoothingConfig, TaubinSmoothingConfig,
-    // Global registration
     global_registration as tc_global_registration,
     global_registration_with_normals as tc_global_registration_with_normals,
     GlobalRegistrationConfig,
-    // NDT registration
     ndt_registration as tc_ndt_registration,
     NdtConfig,
-    // Mesh boolean operations
     mesh_union as tc_mesh_union,
     mesh_intersection as tc_mesh_intersection,
     mesh_difference as tc_mesh_difference,
-    // FPFH feature extraction
     features::{extract_fpfh_features_with_normals, FpfhConfig, FPFH_DIM},
-    // Colorization
     CameraIntrinsics, RgbImageView, ColorizationConfig,
     colorize_point_cloud as tc_colorize_point_cloud,
-    // KD-Tree
     KdTree as TcKdTree,
 };
 use threecrate_core::{
@@ -62,7 +56,6 @@ fn to_py_err(e: impl std::fmt::Display) -> PyErr {
 // Shared conversion helpers
 // ---------------------------------------------------------------------------
 
-/// Convert an ICPResult into the PyIcpResult wrapper.
 fn icp_result_to_py(r: threecrate_algorithms::ICPResult) -> PyIcpResult {
     let mat = r.transformation.to_homogeneous();
     PyIcpResult {
@@ -78,7 +71,6 @@ fn icp_result_to_py(r: threecrate_algorithms::ICPResult) -> PyIcpResult {
     }
 }
 
-/// Convert an Isometry3 into a 4×4 row array suitable for PyIcpResult.
 fn isometry_to_mat4(iso: &Isometry3<f32>) -> [[f32; 4]; 4] {
     let mat = iso.to_homogeneous();
     [
@@ -89,36 +81,137 @@ fn isometry_to_mat4(iso: &Isometry3<f32>) -> [[f32; 4]; 4] {
     ]
 }
 
-/// Convert an optional (N, 3) or 4×4 numpy array to `Isometry3<f32>`.
-/// If `None`, returns the identity transform.
-fn numpy_to_isometry(arr: Option<PyReadonlyArray2<f32>>) -> PyResult<Isometry3<f32>> {
+/// Convert an optional (4, 4) numpy array (float32 or float64) to `Isometry3<f32>`.
+/// Returns the identity transform when `None`.
+fn numpy_to_isometry(arr: Option<Bound<'_, PyAny>>) -> PyResult<Isometry3<f32>> {
     let arr = match arr {
         None => return Ok(Isometry3::identity()),
         Some(a) => a,
     };
-    let a = arr.as_array();
-    if a.shape() != [4, 4] {
+
+    let m: [[f32; 4]; 4] = if let Ok(a) = arr.downcast::<PyArray2<f32>>() {
+        let a = a.readonly();
+        let a = a.as_array();
+        if a.shape() != [4, 4] {
+            return Err(PyValueError::new_err("init_transform must be a 4×4 array"));
+        }
+        [
+            [a[[0,0]], a[[0,1]], a[[0,2]], a[[0,3]]],
+            [a[[1,0]], a[[1,1]], a[[1,2]], a[[1,3]]],
+            [a[[2,0]], a[[2,1]], a[[2,2]], a[[2,3]]],
+            [a[[3,0]], a[[3,1]], a[[3,2]], a[[3,3]]],
+        ]
+    } else if let Ok(a) = arr.downcast::<PyArray2<f64>>() {
+        let a = a.readonly();
+        let a = a.as_array();
+        if a.shape() != [4, 4] {
+            return Err(PyValueError::new_err("init_transform must be a 4×4 array"));
+        }
+        [
+            [a[[0,0]] as f32, a[[0,1]] as f32, a[[0,2]] as f32, a[[0,3]] as f32],
+            [a[[1,0]] as f32, a[[1,1]] as f32, a[[1,2]] as f32, a[[1,3]] as f32],
+            [a[[2,0]] as f32, a[[2,1]] as f32, a[[2,2]] as f32, a[[2,3]] as f32],
+            [a[[3,0]] as f32, a[[3,1]] as f32, a[[3,2]] as f32, a[[3,3]] as f32],
+        ]
+    } else {
         return Err(PyValueError::new_err(
-            "init_transform must be a 4×4 float32 array",
+            "init_transform must be a 4×4 numpy array (float32 or float64)"
         ));
-    }
+    };
+
     let rot = nalgebra::Matrix3::new(
-        a[[0, 0]], a[[0, 1]], a[[0, 2]],
-        a[[1, 0]], a[[1, 1]], a[[1, 2]],
-        a[[2, 0]], a[[2, 1]], a[[2, 2]],
+        m[0][0], m[0][1], m[0][2],
+        m[1][0], m[1][1], m[1][2],
+        m[2][0], m[2][1], m[2][2],
     );
     let rotation = nalgebra::UnitQuaternion::from_matrix(&rot);
-    let translation = nalgebra::Translation3::new(a[[0, 3]], a[[1, 3]], a[[2, 3]]);
+    let translation = nalgebra::Translation3::new(m[0][3], m[1][3], m[2][3]);
     Ok(Isometry3::from_parts(translation, rotation))
 }
 
-/// Convert a 1-D length-3 numpy array to `Point3f`.
-fn numpy1d_to_point(arr: &PyReadonlyArray1<f32>) -> PyResult<Point3f> {
-    let a = arr.as_array();
-    if a.len() != 3 {
-        return Err(PyValueError::new_err("Query point must be a 1D array of length 3"));
+/// Convert a 1-D length-3 numpy array (f32 or f64) to `Point3f`.
+fn numpy1d_to_point(arr: &Bound<'_, PyAny>) -> PyResult<Point3f> {
+    if let Ok(a) = arr.downcast::<PyArray1<f32>>() {
+        let a = a.readonly();
+        let a = a.as_array();
+        if a.len() != 3 {
+            return Err(PyValueError::new_err("Query point must be a 1D array of length 3"));
+        }
+        return Ok(Point3f::new(a[0], a[1], a[2]));
     }
-    Ok(Point3f::new(a[0], a[1], a[2]))
+    if let Ok(a) = arr.downcast::<PyArray1<f64>>() {
+        let a = a.readonly();
+        let a = a.as_array();
+        if a.len() != 3 {
+            return Err(PyValueError::new_err("Query point must be a 1D array of length 3"));
+        }
+        return Ok(Point3f::new(a[0] as f32, a[1] as f32, a[2] as f32));
+    }
+    Err(PyValueError::new_err(
+        "Query point must be a 1D float numpy array of length 3 (float32 or float64)"
+    ))
+}
+
+/// Read an (N, 3) numpy array (float32 or float64) as a `Vec<Point3f>`.
+fn read_nx3_points(arr: &Bound<'_, PyAny>) -> PyResult<Vec<Point3f>> {
+    if let Ok(a) = arr.downcast::<PyArray2<f32>>() {
+        let a = a.readonly();
+        let a = a.as_array();
+        let shape = a.shape();
+        if shape.len() != 2 || shape[1] != 3 {
+            return Err(PyValueError::new_err(format!(
+                "Array must have shape (N, 3), got shape {:?} with dtype float32", shape
+            )));
+        }
+        let n = shape[0];
+        return Ok((0..n).map(|i| Point3f::new(a[[i, 0]], a[[i, 1]], a[[i, 2]])).collect());
+    }
+    if let Ok(a) = arr.downcast::<PyArray2<f64>>() {
+        let a = a.readonly();
+        let a = a.as_array();
+        let shape = a.shape();
+        if shape.len() != 2 || shape[1] != 3 {
+            return Err(PyValueError::new_err(format!(
+                "Array must have shape (N, 3), got shape {:?} with dtype float64", shape
+            )));
+        }
+        let n = shape[0];
+        return Ok((0..n).map(|i| Point3f::new(
+            a[[i, 0]] as f32, a[[i, 1]] as f32, a[[i, 2]] as f32,
+        )).collect());
+    }
+    Err(PyValueError::new_err(
+        "Expected a numpy array of shape (N, 3) with dtype float32 or float64"
+    ))
+}
+
+/// Read an (M, 3) numpy integer array as face indices `Vec<[usize; 3]>`.
+fn read_mx3_faces(arr: &Bound<'_, PyAny>) -> PyResult<Vec<[usize; 3]>> {
+    macro_rules! try_downcast {
+        ($ty:ty) => {
+            if let Ok(a) = arr.downcast::<PyArray2<$ty>>() {
+                let a = a.readonly();
+                let a = a.as_array();
+                let shape = a.shape();
+                if shape.len() != 2 || shape[1] != 3 {
+                    return Err(PyValueError::new_err(format!(
+                        "Faces array must have shape (M, 3), got {:?}", shape
+                    )));
+                }
+                let m = shape[0];
+                return Ok((0..m)
+                    .map(|i| [a[[i, 0]] as usize, a[[i, 1]] as usize, a[[i, 2]] as usize])
+                    .collect());
+            }
+        };
+    }
+    try_downcast!(u32);
+    try_downcast!(i32);
+    try_downcast!(u64);
+    try_downcast!(i64);
+    Err(PyValueError::new_err(
+        "Faces array must be (M, 3) integer numpy array (int32, int64, uint32, or uint64)"
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -134,33 +227,33 @@ pub struct PyPointCloud {
 
 #[pymethods]
 impl PyPointCloud {
-    /// Create an empty PointCloud.
+    /// Create a PointCloud. Optionally accepts a numpy array of shape (N, 3)
+    /// with dtype float32 or float64.
+    ///
+    /// Examples
+    /// --------
+    /// >>> cloud = threecrate.PointCloud()              # empty
+    /// >>> cloud = threecrate.PointCloud(np.array(...)) # from array
     #[new]
-    fn new() -> Self {
-        Self {
-            inner: PointCloud::new(),
+    #[pyo3(signature = (arr=None))]
+    fn new(arr: Option<Bound<'_, PyAny>>) -> PyResult<Self> {
+        match arr {
+            None => Ok(Self { inner: PointCloud::new() }),
+            Some(a) => {
+                let points = read_nx3_points(&a)?;
+                Ok(Self { inner: PointCloud::from_points(points) })
+            }
         }
     }
 
-    /// Create a PointCloud from a numpy array of shape (N, 3) and dtype float32.
+    /// Create a PointCloud from a numpy array of shape (N, 3) (float32 or float64).
     #[staticmethod]
-    fn from_numpy(arr: PyReadonlyArray2<f32>) -> PyResult<Self> {
-        let arr = arr.as_array();
-        let shape = arr.shape();
-        if shape.len() != 2 || shape[1] != 3 {
-            return Err(PyValueError::new_err(
-                "Array must have shape (N, 3) with dtype float32",
-            ));
-        }
-        let points = (0..shape[0])
-            .map(|i| Point3f::new(arr[[i, 0]], arr[[i, 1]], arr[[i, 2]]))
-            .collect();
-        Ok(Self {
-            inner: PointCloud::from_points(points),
-        })
+    fn from_numpy(arr: &Bound<'_, PyAny>) -> PyResult<Self> {
+        let points = read_nx3_points(arr)?;
+        Ok(Self { inner: PointCloud::from_points(points) })
     }
 
-    /// Return the point positions as a numpy array of shape (N, 3) and dtype float32.
+    /// Return the point positions as a numpy array of shape (N, 3) float32.
     fn to_numpy<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f32>> {
         let n = self.inner.len();
         let mut data = Array2::<f32>::zeros((n, 3));
@@ -172,8 +265,52 @@ impl PyPointCloud {
         data.into_pyarray_bound(py)
     }
 
+    /// Point positions as a numpy array of shape (N, 3) float32 (shorthand for `to_numpy()`).
+    #[getter]
+    fn points<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f32>> {
+        self.to_numpy(py)
+    }
+
+    /// True when the cloud contains no points.
+    #[getter]
+    fn is_empty(&self) -> bool {
+        self.inner.is_empty()
+    }
+
     fn __len__(&self) -> usize {
         self.inner.len()
+    }
+
+    /// Return point at `idx` as a numpy array of shape (3,) float32.
+    /// Supports negative indexing. Enables `for pt in cloud:` iteration.
+    fn __getitem__<'py>(&self, py: Python<'py>, idx: isize) -> PyResult<Bound<'py, PyArray1<f32>>> {
+        let n = self.inner.len() as isize;
+        let i = if idx < 0 { n + idx } else { idx };
+        if i < 0 || i >= n {
+            return Err(PyIndexError::new_err("point cloud index out of range"));
+        }
+        let p = &self.inner.points[i as usize];
+        let data = Array1::from_vec(vec![p.x, p.y, p.z]);
+        Ok(data.into_pyarray_bound(py))
+    }
+
+    /// Concatenate two point clouds: `cloud_a + cloud_b`.
+    fn __add__(&self, other: &PyPointCloud) -> PyPointCloud {
+        let mut points = self.inner.points.clone();
+        points.extend_from_slice(&other.inner.points);
+        PyPointCloud { inner: PointCloud::from_points(points) }
+    }
+
+    /// Numpy array protocol — allows `numpy.asarray(cloud)` to return (N, 3) float32.
+    #[pyo3(signature = (dtype=None, copy=None))]
+    fn __array__<'py>(
+        &self,
+        py: Python<'py>,
+        dtype: Option<Bound<'py, PyAny>>,
+        copy: Option<Bound<'py, PyAny>>,
+    ) -> Bound<'py, PyArray2<f32>> {
+        let _ = (dtype, copy);
+        self.to_numpy(py)
     }
 
     fn __repr__(&self) -> String {
@@ -195,6 +332,31 @@ pub struct PyNormalPointCloud {
 
 #[pymethods]
 impl PyNormalPointCloud {
+    /// Construct a NormalPointCloud from separate position and normal arrays.
+    ///
+    /// Both arrays must have shape (N, 3) and dtype float32 or float64.
+    #[staticmethod]
+    fn from_numpy(positions: &Bound<'_, PyAny>, normals: &Bound<'_, PyAny>) -> PyResult<Self> {
+        let pos = read_nx3_points(positions)?;
+        let nrm = read_nx3_points(normals)?;
+        if pos.len() != nrm.len() {
+            return Err(PyValueError::new_err(format!(
+                "positions and normals must have the same length ({} vs {})",
+                pos.len(),
+                nrm.len()
+            )));
+        }
+        let points = pos
+            .into_iter()
+            .zip(nrm.into_iter())
+            .map(|(p, n)| NormalPoint3f {
+                position: p,
+                normal: Vector3f::new(n.x, n.y, n.z),
+            })
+            .collect();
+        Ok(Self { inner: PointCloud::from_points(points) })
+    }
+
     /// Return point positions as a numpy array of shape (N, 3) float32.
     fn positions<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f32>> {
         let n = self.inner.len();
@@ -217,6 +379,12 @@ impl PyNormalPointCloud {
             data[[i, 2]] = p.normal.z;
         }
         data.into_pyarray_bound(py)
+    }
+
+    /// True when the cloud contains no points.
+    #[getter]
+    fn is_empty(&self) -> bool {
+        self.inner.is_empty()
     }
 
     fn __len__(&self) -> usize {
@@ -249,6 +417,25 @@ impl PyTriangleMesh {
         }
     }
 
+    /// Construct a TriangleMesh from vertex and face numpy arrays.
+    ///
+    /// Parameters
+    /// ----------
+    /// vertices : ndarray of shape (N, 3), float32 or float64
+    /// faces : ndarray of shape (M, 3), int32, int64, uint32, or uint64
+    ///
+    /// Examples
+    /// --------
+    /// >>> mesh = threecrate.TriangleMesh.from_numpy(verts, faces)
+    #[staticmethod]
+    fn from_numpy(vertices: &Bound<'_, PyAny>, faces: &Bound<'_, PyAny>) -> PyResult<Self> {
+        let verts = read_nx3_points(vertices)?;
+        let face_indices = read_mx3_faces(faces)?;
+        Ok(Self {
+            inner: TriangleMesh::from_vertices_and_faces(verts, face_indices),
+        })
+    }
+
     #[getter]
     fn vertex_count(&self) -> usize {
         self.inner.vertex_count()
@@ -257,6 +444,12 @@ impl PyTriangleMesh {
     #[getter]
     fn face_count(&self) -> usize {
         self.inner.face_count()
+    }
+
+    /// True when the mesh contains no vertices.
+    #[getter]
+    fn is_empty(&self) -> bool {
+        self.inner.vertex_count() == 0
     }
 
     /// Return vertices as a numpy array of shape (N, 3) float32.
@@ -504,7 +697,7 @@ impl PyKdTree {
     ///
     /// Parameters
     /// ----------
-    /// query : ndarray of shape (3,) float32
+    /// query : ndarray of shape (3,) float32 or float64
     ///     The query position.
     /// k : int
     ///     Number of neighbours to return.
@@ -512,14 +705,13 @@ impl PyKdTree {
     /// Returns
     /// -------
     /// tuple[list[int], list[float]]
-    ///     ``(indices, distances)`` — point indices in the original cloud and
-    ///     their Euclidean distances from the query, ordered nearest first.
+    ///     ``(indices, distances)`` ordered nearest first.
     fn knn(
         &self,
-        query: PyReadonlyArray1<f32>,
+        query: &Bound<'_, PyAny>,
         k: usize,
     ) -> PyResult<(Vec<usize>, Vec<f32>)> {
-        let q = numpy1d_to_point(&query)?;
+        let q = numpy1d_to_point(query)?;
         let results = self.inner.find_k_nearest(&q, k);
         Ok((
             results.iter().map(|(i, _)| *i).collect(),
@@ -531,7 +723,7 @@ impl PyKdTree {
     ///
     /// Parameters
     /// ----------
-    /// query : ndarray of shape (3,) float32
+    /// query : ndarray of shape (3,) float32 or float64
     ///     The query position.
     /// radius : float
     ///     Search radius (same units as the point cloud).
@@ -539,14 +731,13 @@ impl PyKdTree {
     /// Returns
     /// -------
     /// tuple[list[int], list[float]]
-    ///     ``(indices, distances)`` — point indices and their Euclidean distances,
-    ///     unordered.
+    ///     ``(indices, distances)`` unordered.
     fn radius_search(
         &self,
-        query: PyReadonlyArray1<f32>,
+        query: &Bound<'_, PyAny>,
         radius: f32,
     ) -> PyResult<(Vec<usize>, Vec<f32>)> {
-        let q = numpy1d_to_point(&query)?;
+        let q = numpy1d_to_point(query)?;
         let results = self.inner.find_radius_neighbors(&q, radius);
         Ok((
             results.iter().map(|(i, _)| *i).collect(),
@@ -635,15 +826,15 @@ fn py_estimate_normals(
 ///     source: Source point cloud to align.
 ///     target: Target (reference) point cloud.
 ///     max_iterations: Maximum ICP iterations (default 50).
-///     init_transform: Optional 4×4 float32 numpy array for the initial pose
-///         estimate. Defaults to the identity transform.
+///     init_transform: Optional 4×4 float32 or float64 numpy array for the
+///         initial pose estimate. Defaults to the identity transform.
 #[pyfunction]
 #[pyo3(signature = (source, target, max_iterations = 50, init_transform = None))]
 fn icp(
     source: &PyPointCloud,
     target: &PyPointCloud,
     max_iterations: usize,
-    init_transform: Option<PyReadonlyArray2<f32>>,
+    init_transform: Option<Bound<'_, PyAny>>,
 ) -> PyResult<PyIcpResult> {
     let init = numpy_to_isometry(init_transform)?;
     icp_point_to_point_default(&source.inner, &target.inner, init, max_iterations)
@@ -664,7 +855,7 @@ fn icp(
 ///     max_correspondence_distance: Maximum distance for accepting a match (default 1.0).
 ///     convergence_threshold: Stop when |ΔMSE| is below this value (default 1e-6).
 ///     k_correspondences: Neighbours used to estimate per-point covariances (default 20).
-///     init_transform: Optional 4×4 float32 initial pose. Defaults to identity.
+///     init_transform: Optional 4×4 float32 or float64 initial pose. Defaults to identity.
 #[pyfunction]
 #[pyo3(signature = (
     source, target,
@@ -681,7 +872,7 @@ fn gicp(
     max_correspondence_distance: f32,
     convergence_threshold: f32,
     k_correspondences: usize,
-    init_transform: Option<PyReadonlyArray2<f32>>,
+    init_transform: Option<Bound<'_, PyAny>>,
 ) -> PyResult<PyIcpResult> {
     let init = numpy_to_isometry(init_transform)?;
     let config = GicpConfig {
@@ -708,7 +899,7 @@ fn gicp(
 ///     max_range: Discard points farther than this from the sensor (default 100.0 m).
 ///     min_range: Discard points closer than this (removes ego-vehicle noise, default 0.5 m).
 ///     max_iterations: Maximum ICP iterations (default 50).
-///     init_transform: Optional 4×4 float32 initial pose. Defaults to identity.
+///     init_transform: Optional 4×4 float32 or float64 initial pose. Defaults to identity.
 #[pyfunction]
 #[pyo3(signature = (
     source, target,
@@ -725,7 +916,7 @@ fn kiss_icp(
     max_range: f32,
     min_range: f32,
     max_iterations: usize,
-    init_transform: Option<PyReadonlyArray2<f32>>,
+    init_transform: Option<Bound<'_, PyAny>>,
 ) -> PyResult<PyIcpResult> {
     let init = numpy_to_isometry(init_transform)?;
     let config = KissIcpConfig {
@@ -749,14 +940,14 @@ fn kiss_icp(
 ///     source: Source point cloud (positions only).
 ///     target: Target NormalPointCloud (positions + normals).
 ///     max_iterations: Maximum ICP iterations (default 50).
-///     init_transform: Optional 4×4 float32 initial pose. Defaults to identity.
+///     init_transform: Optional 4×4 float32 or float64 initial pose. Defaults to identity.
 #[pyfunction]
 #[pyo3(signature = (source, target, max_iterations = 50, init_transform = None))]
 fn icp_point_to_plane(
     source: &PyPointCloud,
     target: &PyNormalPointCloud,
     max_iterations: usize,
-    init_transform: Option<PyReadonlyArray2<f32>>,
+    init_transform: Option<Bound<'_, PyAny>>,
 ) -> PyResult<PyIcpResult> {
     let init = numpy_to_isometry(init_transform)?;
     let source_cloud = PointCloud::from_points(
@@ -937,7 +1128,7 @@ fn global_registration_with_normals(
 /// Args:
 ///     source: Source point cloud to align.
 ///     target: Target (reference) point cloud.
-///     init_transform: Optional 4×4 float32 initial pose. Defaults to identity.
+///     init_transform: Optional 4×4 float32 or float64 initial pose. Defaults to identity.
 ///     resolution: Voxel cell side length (default 1.0).
 ///     step_size: Gradient-descent step size (default 0.1).
 ///     max_iterations: Maximum iterations (default 35).
@@ -956,7 +1147,7 @@ fn global_registration_with_normals(
 fn ndt_registration(
     source: &PyPointCloud,
     target: &PyPointCloud,
-    init_transform: Option<PyReadonlyArray2<f32>>,
+    init_transform: Option<Bound<'_, PyAny>>,
     resolution: f32,
     step_size: f32,
     max_iterations: usize,
@@ -1375,8 +1566,8 @@ fn moving_least_squares_reconstruct(cloud: &PyPointCloud) -> PyResult<PyTriangle
 ///     fy: Vertical focal length in pixels.
 ///     cx: Horizontal principal-point offset (pixels from left edge).
 ///     cy: Vertical principal-point offset (pixels from top edge).
-///     world_to_camera: 4×4 float32 rigid transform mapping world coordinates
-///         to the camera coordinate frame.
+///     world_to_camera: 4×4 float32 or float64 rigid transform mapping world
+///         coordinates to the camera coordinate frame.
 ///
 /// Returns
 /// -------
@@ -1391,7 +1582,7 @@ fn colorize_point_cloud(
     fy: f32,
     cx: f32,
     cy: f32,
-    world_to_camera: PyReadonlyArray2<f32>,
+    world_to_camera: Bound<'_, PyAny>,
 ) -> PyResult<PyColoredPointCloud> {
     let intrinsics = CameraIntrinsics { fx, fy, cx, cy };
     let image = RgbImageView::new(image_data, width, height).map_err(to_py_err)?;
@@ -1400,6 +1591,64 @@ fn colorize_point_cloud(
     tc_colorize_point_cloud(&cloud.inner, &image, &intrinsics, &pose, &config)
         .map(|r| PyColoredPointCloud { inner: r.cloud })
         .map_err(to_py_err)
+}
+
+// ---------------------------------------------------------------------------
+// Point cloud utilities
+// ---------------------------------------------------------------------------
+
+/// Concatenate a list of point clouds into one.
+///
+/// Parameters
+/// ----------
+/// clouds : list[PointCloud]
+///     One or more point clouds to merge.
+///
+/// Returns
+/// -------
+/// PointCloud
+///
+/// Examples
+/// --------
+/// >>> merged = threecrate.concatenate([cloud_a, cloud_b, cloud_c])
+#[pyfunction]
+fn concatenate(clouds: Vec<PyRef<PyPointCloud>>) -> PyPointCloud {
+    let points: Vec<Point3f> = clouds
+        .iter()
+        .flat_map(|c| c.inner.points.iter().copied())
+        .collect();
+    PyPointCloud { inner: PointCloud::from_points(points) }
+}
+
+/// Apply a 4×4 rigid transform to every point in a cloud.
+///
+/// Parameters
+/// ----------
+/// cloud : PointCloud
+///     Input point cloud.
+/// transform : ndarray of shape (4, 4), float32 or float64
+///     Rigid body transformation matrix.
+///
+/// Returns
+/// -------
+/// PointCloud
+///
+/// Examples
+/// --------
+/// >>> moved = threecrate.transform_point_cloud(cloud, result.transformation())
+#[pyfunction]
+fn transform_point_cloud(
+    cloud: &PyPointCloud,
+    transform: Bound<'_, PyAny>,
+) -> PyResult<PyPointCloud> {
+    let iso = numpy_to_isometry(Some(transform))?;
+    let points = cloud
+        .inner
+        .points
+        .iter()
+        .map(|p| iso.transform_point(p))
+        .collect();
+    Ok(PyPointCloud { inner: PointCloud::from_points(points) })
 }
 
 // ---------------------------------------------------------------------------
@@ -1456,6 +1705,45 @@ pub struct PyColoredPointCloud {
 
 #[pymethods]
 impl PyColoredPointCloud {
+    /// Construct a ColoredPointCloud from separate position and color arrays.
+    ///
+    /// Parameters
+    /// ----------
+    /// positions : ndarray of shape (N, 3), float32 or float64
+    /// colors : ndarray of shape (N, 3), uint8
+    #[staticmethod]
+    fn from_numpy(positions: &Bound<'_, PyAny>, colors: &Bound<'_, PyAny>) -> PyResult<Self> {
+        let pos = read_nx3_points(positions)?;
+
+        // colors must be uint8 (N, 3)
+        let colors_arr = colors
+            .downcast::<PyArray2<u8>>()
+            .map_err(|_| PyValueError::new_err("colors must be a (N, 3) uint8 numpy array"))?;
+        let c = colors_arr.readonly();
+        let c = c.as_array();
+        let shape = c.shape();
+        if shape.len() != 2 || shape[1] != 3 {
+            return Err(PyValueError::new_err(format!(
+                "colors must have shape (N, 3), got {:?}", shape
+            )));
+        }
+        if pos.len() != shape[0] {
+            return Err(PyValueError::new_err(format!(
+                "positions and colors must have the same length ({} vs {})",
+                pos.len(), shape[0]
+            )));
+        }
+        let points = pos
+            .into_iter()
+            .enumerate()
+            .map(|(i, p)| ColoredPoint3f {
+                position: p,
+                color: [c[[i, 0]], c[[i, 1]], c[[i, 2]]],
+            })
+            .collect();
+        Ok(Self { inner: PointCloud::from_points(points) })
+    }
+
     /// Point positions as a numpy array of shape (N, 3) float32.
     fn positions<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f32>> {
         let n = self.inner.len();
@@ -1481,6 +1769,12 @@ impl PyColoredPointCloud {
         data.into_pyarray_bound(py)
     }
 
+    /// True when the cloud contains no points.
+    #[getter]
+    fn is_empty(&self) -> bool {
+        self.inner.is_empty()
+    }
+
     fn __len__(&self) -> usize {
         self.inner.len()
     }
@@ -1499,6 +1793,50 @@ pub struct PyColoredNormalPointCloud {
 
 #[pymethods]
 impl PyColoredNormalPointCloud {
+    /// Construct a ColoredNormalPointCloud from separate arrays.
+    ///
+    /// Parameters
+    /// ----------
+    /// positions : ndarray of shape (N, 3), float32 or float64
+    /// normals : ndarray of shape (N, 3), float32 or float64
+    /// colors : ndarray of shape (N, 3), uint8
+    #[staticmethod]
+    fn from_numpy(
+        positions: &Bound<'_, PyAny>,
+        normals: &Bound<'_, PyAny>,
+        colors: &Bound<'_, PyAny>,
+    ) -> PyResult<Self> {
+        let pos = read_nx3_points(positions)?;
+        let nrm = read_nx3_points(normals)?;
+        let colors_arr = colors
+            .downcast::<PyArray2<u8>>()
+            .map_err(|_| PyValueError::new_err("colors must be a (N, 3) uint8 numpy array"))?;
+        let c = colors_arr.readonly();
+        let c = c.as_array();
+        let shape = c.shape();
+        if shape.len() != 2 || shape[1] != 3 {
+            return Err(PyValueError::new_err(format!(
+                "colors must have shape (N, 3), got {:?}", shape
+            )));
+        }
+        if pos.len() != nrm.len() || pos.len() != shape[0] {
+            return Err(PyValueError::new_err(
+                "positions, normals, and colors must all have the same length"
+            ));
+        }
+        let points = pos
+            .into_iter()
+            .zip(nrm.into_iter())
+            .enumerate()
+            .map(|(i, (p, n))| ColoredNormalPoint3f {
+                position: p,
+                normal: Vector3f::new(n.x, n.y, n.z),
+                color: [c[[i, 0]], c[[i, 1]], c[[i, 2]]],
+            })
+            .collect();
+        Ok(Self { inner: PointCloud::from_points(points) })
+    }
+
     /// Point positions as a numpy array of shape (N, 3) float32.
     fn positions<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f32>> {
         let n = self.inner.len();
@@ -1534,6 +1872,12 @@ impl PyColoredNormalPointCloud {
             data[[i, 2]] = p.color[2];
         }
         data.into_pyarray_bound(py)
+    }
+
+    /// True when the cloud contains no points.
+    #[getter]
+    fn is_empty(&self) -> bool {
+        self.inner.is_empty()
     }
 
     fn __len__(&self) -> usize {
@@ -1830,6 +2174,10 @@ fn threecrate(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Colorization
     m.add_function(wrap_pyfunction!(colorize_point_cloud, m)?)?;
+
+    // Point cloud utilities
+    m.add_function(wrap_pyfunction!(concatenate, m)?)?;
+    m.add_function(wrap_pyfunction!(transform_point_cloud, m)?)?;
 
     // I/O
     m.add_function(wrap_pyfunction!(read_point_cloud, m)?)?;
