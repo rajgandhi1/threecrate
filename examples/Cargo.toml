@@ -161,3 +161,7 @@ path = "streaming_pipeline.rs"
 [[bin]]
 name = "pbr_visualization"
 path = "pbr_visualization.rs"
+
+[[bin]]
+name = "realtime_pipeline"
+path = "realtime_pipeline.rs"

@@ -2109,6 +2109,299 @@ fn colored_normals_to_pointcloud2(cloud: &PyColoredNormalPointCloud) -> PyPointC
 }
 
 // ---------------------------------------------------------------------------
+// Real-time streaming pipeline with backpressure
+// ---------------------------------------------------------------------------
+
+use threecrate_algorithms::streaming::{
+    BackpressureConfig, RealtimePipeline, RealtimeMetrics,
+    StreamingCollector, StreamingVoxelFilter, StreamingVoxelFilterConfig,
+};
+
+/// Snapshot of real-time pipeline metrics.
+#[pyclass(name = "RealtimeMetrics")]
+#[derive(Clone)]
+pub struct PyRealtimeMetrics {
+    inner: RealtimeMetrics,
+}
+
+#[pymethods]
+impl PyRealtimeMetrics {
+    /// Total items successfully placed in the queue.
+    #[getter]
+    fn items_queued(&self) -> u64 { self.inner.items_queued }
+
+    /// Total items dequeued and processed by the background worker.
+    #[getter]
+    fn items_processed(&self) -> u64 { self.inner.items_processed }
+
+    /// Items dropped because the queue was full (via `try_send`).
+    #[getter]
+    fn items_dropped(&self) -> u64 { self.inner.items_dropped }
+
+    /// Estimated current queue depth (`items_queued − items_processed`).
+    #[getter]
+    fn estimated_queue_depth(&self) -> u64 { self.inner.estimated_queue_depth }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "RealtimeMetrics(queued={}, processed={}, dropped={}, queue_depth={})",
+            self.inner.items_queued,
+            self.inner.items_processed,
+            self.inner.items_dropped,
+            self.inner.estimated_queue_depth,
+        )
+    }
+}
+
+/// Real-time point-cloud collection pipeline with backpressure.
+///
+/// Accepts XYZ points on the calling thread and processes them in a background
+/// worker.  When the internal queue is full, `send` blocks (backpressure) and
+/// `try_send` drops the point and counts it in `metrics().items_dropped`.
+///
+/// Call `finish()` to drain remaining points and return the collected
+/// `PointCloud`.
+///
+/// Parameters
+/// ----------
+/// max_queue_depth : int
+///     Maximum items buffered before backpressure kicks in (default 1024).
+/// chunk_size : int
+///     Worker batch size (default 256).
+/// flush_timeout_ms : int or None
+///     If set, the worker flushes partial batches after this many milliseconds
+///     of inactivity.  ``None`` disables periodic flushing (default 10 ms).
+///
+/// Examples
+/// --------
+/// >>> import threecrate as tc, numpy as np
+/// >>> rt = tc.RealtimePipeline(max_queue_depth=512, chunk_size=64)
+/// >>> for i in range(1000):
+/// ...     rt.send(np.array([i * 0.01, 0.0, 0.0], dtype=np.float32))
+/// >>> cloud = rt.finish()
+/// >>> len(cloud)
+/// 1000
+#[pyclass(name = "RealtimePipeline")]
+pub struct PyRealtimePipeline {
+    inner: Option<RealtimePipeline<Point3f, PointCloud<Point3f>>>,
+}
+
+#[pymethods]
+impl PyRealtimePipeline {
+    #[new]
+    #[pyo3(signature = (max_queue_depth = 1024, chunk_size = 256, flush_timeout_ms = Some(10)))]
+    fn new(
+        max_queue_depth: usize,
+        chunk_size: usize,
+        flush_timeout_ms: Option<u64>,
+    ) -> PyResult<Self> {
+        if chunk_size == 0 {
+            return Err(PyValueError::new_err("chunk_size must be ≥ 1"));
+        }
+        if max_queue_depth == 0 {
+            return Err(PyValueError::new_err("max_queue_depth must be ≥ 1"));
+        }
+        let config = BackpressureConfig {
+            max_queue_depth,
+            chunk_size,
+            flush_timeout: flush_timeout_ms.map(std::time::Duration::from_millis),
+        };
+        Ok(Self {
+            inner: Some(RealtimePipeline::new(StreamingCollector::new(), config)),
+        })
+    }
+
+    /// Send a single XYZ point, blocking if the queue is full (backpressure).
+    ///
+    /// Parameters
+    /// ----------
+    /// point : array-like of shape (3,), float32 or float64
+    fn send(&self, arr: &Bound<'_, PyAny>) -> PyResult<()> {
+        let p = numpy1d_to_point(arr)?;
+        self.inner
+            .as_ref()
+            .ok_or_else(|| PyRuntimeError::new_err("pipeline already finished"))?
+            .send(p)
+            .map_err(to_py_err)
+    }
+
+    /// Send a batch of XYZ points, blocking per-point if the queue fills up.
+    ///
+    /// Parameters
+    /// ----------
+    /// points : array-like of shape (N, 3), float32 or float64
+    ///
+    /// Returns the number of points accepted.
+    fn send_batch(&self, arr: &Bound<'_, PyAny>) -> PyResult<usize> {
+        let points = read_nx3_points(arr)?;
+        let rt = self
+            .inner
+            .as_ref()
+            .ok_or_else(|| PyRuntimeError::new_err("pipeline already finished"))?;
+        for p in &points {
+            rt.send(*p).map_err(to_py_err)?;
+        }
+        Ok(points.len())
+    }
+
+    /// Try to send a single XYZ point without blocking.
+    ///
+    /// Returns ``True`` if the point was queued, ``False`` if the queue was
+    /// full and the point was dropped.
+    ///
+    /// Parameters
+    /// ----------
+    /// point : array-like of shape (3,), float32 or float64
+    fn try_send(&self, arr: &Bound<'_, PyAny>) -> PyResult<bool> {
+        let p = numpy1d_to_point(arr)?;
+        self.inner
+            .as_ref()
+            .ok_or_else(|| PyRuntimeError::new_err("pipeline already finished"))?
+            .try_send(p)
+            .map_err(to_py_err)
+    }
+
+    /// Return a snapshot of current pipeline metrics.
+    fn metrics(&self) -> PyResult<PyRealtimeMetrics> {
+        let m = self
+            .inner
+            .as_ref()
+            .ok_or_else(|| PyRuntimeError::new_err("pipeline already finished"))?
+            .metrics();
+        Ok(PyRealtimeMetrics { inner: m })
+    }
+
+    /// Close the input queue, wait for the worker to process all buffered
+    /// points, and return the collected ``PointCloud``.
+    fn finish(&mut self) -> PyResult<PyPointCloud> {
+        self.inner
+            .take()
+            .ok_or_else(|| PyRuntimeError::new_err("pipeline already finished"))?
+            .finish()
+            .map(|cloud| PyPointCloud { inner: cloud })
+            .map_err(to_py_err)
+    }
+}
+
+/// Real-time voxel-grid downsampling pipeline with backpressure.
+///
+/// Accepts XYZ points on the calling thread and voxel-filters them in a
+/// background worker.  When the internal queue is full, `send` blocks
+/// (backpressure) and `try_send` drops the point.
+///
+/// Call `finish()` to drain remaining points and return the downsampled
+/// `PointCloud`.
+///
+/// Parameters
+/// ----------
+/// voxel_size : float
+///     Side length of each cubic voxel (same units as coordinates).
+/// max_queue_depth : int
+///     Maximum items buffered before backpressure kicks in (default 1024).
+/// chunk_size : int
+///     Worker batch size (default 256).
+/// flush_timeout_ms : int or None
+///     If set, the worker flushes partial batches after this many milliseconds
+///     of inactivity (default 10 ms).
+///
+/// Examples
+/// --------
+/// >>> import threecrate as tc, numpy as np
+/// >>> rt = tc.RealtimeVoxelFilter(voxel_size=0.1, max_queue_depth=512)
+/// >>> for i in range(1000):
+/// ...     rt.send(np.array([i * 0.01, 0.0, 0.0], dtype=np.float32))
+/// >>> cloud = rt.finish()
+/// >>> len(cloud) <= 10
+/// True
+#[pyclass(name = "RealtimeVoxelFilter")]
+pub struct PyRealtimeVoxelFilter {
+    inner: Option<RealtimePipeline<Point3f, PointCloud<Point3f>>>,
+}
+
+#[pymethods]
+impl PyRealtimeVoxelFilter {
+    #[new]
+    #[pyo3(signature = (voxel_size, max_queue_depth = 1024, chunk_size = 256, flush_timeout_ms = Some(10)))]
+    fn new(
+        voxel_size: f32,
+        max_queue_depth: usize,
+        chunk_size: usize,
+        flush_timeout_ms: Option<u64>,
+    ) -> PyResult<Self> {
+        if voxel_size <= 0.0 {
+            return Err(PyValueError::new_err("voxel_size must be positive"));
+        }
+        if chunk_size == 0 {
+            return Err(PyValueError::new_err("chunk_size must be ≥ 1"));
+        }
+        if max_queue_depth == 0 {
+            return Err(PyValueError::new_err("max_queue_depth must be ≥ 1"));
+        }
+        let filter = StreamingVoxelFilter::new(StreamingVoxelFilterConfig { voxel_size });
+        let config = BackpressureConfig {
+            max_queue_depth,
+            chunk_size,
+            flush_timeout: flush_timeout_ms.map(std::time::Duration::from_millis),
+        };
+        Ok(Self { inner: Some(RealtimePipeline::new(filter, config)) })
+    }
+
+    /// Send a single XYZ point, blocking if the queue is full (backpressure).
+    fn send(&self, arr: &Bound<'_, PyAny>) -> PyResult<()> {
+        let p = numpy1d_to_point(arr)?;
+        self.inner
+            .as_ref()
+            .ok_or_else(|| PyRuntimeError::new_err("pipeline already finished"))?
+            .send(p)
+            .map_err(to_py_err)
+    }
+
+    /// Send a batch of XYZ points, blocking per-point if the queue fills up.
+    fn send_batch(&self, arr: &Bound<'_, PyAny>) -> PyResult<usize> {
+        let points = read_nx3_points(arr)?;
+        let rt = self
+            .inner
+            .as_ref()
+            .ok_or_else(|| PyRuntimeError::new_err("pipeline already finished"))?;
+        for p in &points {
+            rt.send(*p).map_err(to_py_err)?;
+        }
+        Ok(points.len())
+    }
+
+    /// Try to send a single XYZ point without blocking.
+    fn try_send(&self, arr: &Bound<'_, PyAny>) -> PyResult<bool> {
+        let p = numpy1d_to_point(arr)?;
+        self.inner
+            .as_ref()
+            .ok_or_else(|| PyRuntimeError::new_err("pipeline already finished"))?
+            .try_send(p)
+            .map_err(to_py_err)
+    }
+
+    /// Return a snapshot of current pipeline metrics.
+    fn metrics(&self) -> PyResult<PyRealtimeMetrics> {
+        let m = self
+            .inner
+            .as_ref()
+            .ok_or_else(|| PyRuntimeError::new_err("pipeline already finished"))?
+            .metrics();
+        Ok(PyRealtimeMetrics { inner: m })
+    }
+
+    /// Close the input queue, wait for the worker to process all buffered
+    /// points, and return the voxel-filtered ``PointCloud``.
+    fn finish(&mut self) -> PyResult<PyPointCloud> {
+        self.inner
+            .take()
+            .ok_or_else(|| PyRuntimeError::new_err("pipeline already finished"))?
+            .finish()
+            .map(|cloud| PyPointCloud { inner: cloud })
+            .map_err(to_py_err)
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Module registration
 // ---------------------------------------------------------------------------
 
@@ -2126,6 +2419,9 @@ fn threecrate(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyPlaneSegmentationResult>()?;
     m.add_class::<PyPointCloud2Data>()?;
     m.add_class::<PyKdTree>()?;
+    m.add_class::<PyRealtimeMetrics>()?;
+    m.add_class::<PyRealtimePipeline>()?;
+    m.add_class::<PyRealtimeVoxelFilter>()?;
 
     // Filtering
     m.add_function(wrap_pyfunction!(voxel_downsample, m)?)?;
