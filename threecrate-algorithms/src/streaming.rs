@@ -16,6 +16,12 @@
 //!      chunk N                  accumulate state
 //! ```
 //!
+//! For real-time sources (sensors, network streams), [`RealtimePipeline`] wraps
+//! any [`StreamingPipeline`] with a bounded input queue and a background worker
+//! thread.  When the queue is full the producer is automatically throttled
+//! (backpressure); [`RealtimePipeline::try_send`] provides a non-blocking
+//! variant that drops items instead of blocking.
+//!
 //! # Provided pipelines
 //!
 //! | Type | Description |
@@ -23,6 +29,7 @@
 //! | [`StreamingVoxelFilter`] | Downsamples via a voxel grid; O(voxels) memory |
 //! | [`StreamingStatistics`] | Accumulates bounding-box and point count |
 //! | [`StreamingCollector`] | Collects all points (useful for testing) |
+//! | [`RealtimePipeline`] | Drives any pipeline from a background thread with bounded-queue backpressure |
 //!
 //! # Example
 //!
@@ -44,6 +51,11 @@
 //! ```
 
 use std::collections::HashMap;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc::{sync_channel, SyncSender, TrySendError};
+use std::thread::{self, JoinHandle};
+use std::time::Duration;
 use threecrate_core::{Error, Point3f, PointCloud, Result};
 
 // ---------------------------------------------------------------------------
@@ -399,6 +411,263 @@ pub fn cloud_as_stream(
 }
 
 // ---------------------------------------------------------------------------
+// Real-time streaming pipeline with backpressure
+// ---------------------------------------------------------------------------
+
+/// Configuration for [`RealtimePipeline`].
+#[derive(Debug, Clone)]
+pub struct BackpressureConfig {
+    /// Maximum number of items buffered in the pipeline queue before backpressure
+    /// kicks in.  [`RealtimePipeline::send`] blocks; [`RealtimePipeline::try_send`]
+    /// drops the item and increments [`RealtimeMetrics::items_dropped`].
+    pub max_queue_depth: usize,
+    /// Number of items accumulated before calling [`StreamingPipeline::process_chunk`].
+    pub chunk_size: usize,
+    /// How long the worker waits for the next item before flushing a partial chunk.
+    ///
+    /// `Some(d)` bounds end-to-end latency at the cost of occasional small chunk
+    /// calls.  `None` flushes only when a full chunk is available or the input
+    /// is closed, which is more efficient for bulk/batch workloads.
+    pub flush_timeout: Option<Duration>,
+}
+
+impl Default for BackpressureConfig {
+    fn default() -> Self {
+        Self {
+            max_queue_depth: 1024,
+            chunk_size: 256,
+            flush_timeout: Some(Duration::from_millis(10)),
+        }
+    }
+}
+
+/// Real-time metrics snapshot from a [`RealtimePipeline`].
+#[derive(Debug, Clone, Default)]
+pub struct RealtimeMetrics {
+    /// Total items successfully placed in the queue (accepted by `send` or `try_send`).
+    pub items_queued: u64,
+    /// Total items dequeued and processed by the background worker.
+    pub items_processed: u64,
+    /// Items dropped because the queue was full (only incremented by `try_send`).
+    pub items_dropped: u64,
+    /// Estimated current queue depth (`items_queued − items_processed`).
+    pub estimated_queue_depth: u64,
+}
+
+struct SharedMetrics {
+    items_queued: AtomicU64,
+    items_processed: AtomicU64,
+    items_dropped: AtomicU64,
+}
+
+impl SharedMetrics {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            items_queued: AtomicU64::new(0),
+            items_processed: AtomicU64::new(0),
+            items_dropped: AtomicU64::new(0),
+        })
+    }
+
+    fn snapshot(&self) -> RealtimeMetrics {
+        let queued = self.items_queued.load(Ordering::Relaxed);
+        let processed = self.items_processed.load(Ordering::Relaxed);
+        let dropped = self.items_dropped.load(Ordering::Relaxed);
+        RealtimeMetrics {
+            items_queued: queued,
+            items_processed: processed,
+            items_dropped: dropped,
+            estimated_queue_depth: queued.saturating_sub(processed),
+        }
+    }
+}
+
+/// Real-time streaming pipeline with backpressure.
+///
+/// Wraps any [`StreamingPipeline`] with a bounded input queue and drives it
+/// from a background worker thread.  Flow control works as follows:
+///
+/// - **[`send`]** blocks the caller when the queue is full — the producer is
+///   naturally throttled without any explicit rate-limiter code.
+/// - **[`try_send`]** never blocks; it drops the item and increments
+///   [`RealtimeMetrics::items_dropped`] when the queue is full.
+/// - Call **[`finish`]** to close the input, drain remaining items, join the
+///   worker, and retrieve the pipeline's final output.
+/// - Dropping the pipeline without calling `finish` is safe: the channel is
+///   closed and the worker is joined in the `Drop` impl (result discarded).
+///
+/// [`send`]: RealtimePipeline::send
+/// [`try_send`]: RealtimePipeline::try_send
+/// [`finish`]: RealtimePipeline::finish
+///
+/// # Example
+///
+/// ```rust
+/// use threecrate_algorithms::streaming::{
+///     StreamingCollector, BackpressureConfig, RealtimePipeline,
+/// };
+/// use threecrate_core::Point3f;
+///
+/// let config = BackpressureConfig { max_queue_depth: 64, chunk_size: 16, ..Default::default() };
+/// let rt = RealtimePipeline::new(StreamingCollector::new(), config);
+/// for i in 0..50_u32 {
+///     rt.send(Point3f::new(i as f32, 0.0, 0.0)).unwrap();
+/// }
+/// let cloud = rt.finish().unwrap();
+/// assert_eq!(cloud.len(), 50);
+/// ```
+pub struct RealtimePipeline<T: Send + 'static, O: Send + 'static> {
+    sender: Option<SyncSender<T>>,
+    metrics: Arc<SharedMetrics>,
+    join_handle: Option<JoinHandle<Result<O>>>,
+}
+
+impl<T: Send + 'static, O: Send + 'static> RealtimePipeline<T, O> {
+    /// Create a new real-time pipeline backed by `pipeline`.
+    ///
+    /// The worker thread starts immediately and is ready to receive items.
+    pub fn new<P>(pipeline: P, config: BackpressureConfig) -> Self
+    where
+        P: StreamingPipeline<T, Output = O> + Send + 'static,
+    {
+        assert!(config.chunk_size >= 1, "chunk_size must be ≥ 1");
+        assert!(config.max_queue_depth >= 1, "max_queue_depth must be ≥ 1");
+
+        let (sender, receiver) = sync_channel::<T>(config.max_queue_depth);
+        let metrics = SharedMetrics::new();
+        let metrics_worker = Arc::clone(&metrics);
+        let chunk_size = config.chunk_size;
+        let flush_timeout = config.flush_timeout;
+
+        let join_handle = thread::spawn(move || {
+            realtime_worker(receiver, pipeline, chunk_size, flush_timeout, metrics_worker)
+        });
+
+        Self { sender: Some(sender), metrics, join_handle: Some(join_handle) }
+    }
+
+    /// Send an item, blocking until queue space is available (backpressure).
+    ///
+    /// Returns `Err` if the worker thread has unexpectedly terminated.
+    pub fn send(&self, item: T) -> Result<()> {
+        let sender = self
+            .sender
+            .as_ref()
+            .ok_or_else(|| Error::InvalidData("pipeline already finished".into()))?;
+        sender
+            .send(item)
+            .map_err(|_| Error::InvalidData("pipeline worker has terminated".into()))?;
+        self.metrics.items_queued.fetch_add(1, Ordering::Relaxed);
+        Ok(())
+    }
+
+    /// Try to send without blocking.
+    ///
+    /// Returns `Ok(true)` when the item was queued, `Ok(false)` when the queue
+    /// was full and the item was dropped (counted in
+    /// [`RealtimeMetrics::items_dropped`]).  Returns `Err` if the worker has
+    /// terminated unexpectedly.
+    pub fn try_send(&self, item: T) -> Result<bool> {
+        let sender = self
+            .sender
+            .as_ref()
+            .ok_or_else(|| Error::InvalidData("pipeline already finished".into()))?;
+        match sender.try_send(item) {
+            Ok(()) => {
+                self.metrics.items_queued.fetch_add(1, Ordering::Relaxed);
+                Ok(true)
+            }
+            Err(TrySendError::Full(_)) => {
+                self.metrics.items_dropped.fetch_add(1, Ordering::Relaxed);
+                Ok(false)
+            }
+            Err(TrySendError::Disconnected(_)) => {
+                Err(Error::InvalidData("pipeline worker has terminated".into()))
+            }
+        }
+    }
+
+    /// Snapshot current pipeline metrics.
+    pub fn metrics(&self) -> RealtimeMetrics {
+        self.metrics.snapshot()
+    }
+
+    /// Close the input queue, wait for the worker to drain all buffered items,
+    /// and return the pipeline's final output.
+    pub fn finish(mut self) -> Result<O> {
+        self.sender = None;
+        self.join_handle
+            .take()
+            .expect("pipeline already finished")
+            .join()
+            .map_err(|_| Error::InvalidData("pipeline worker panicked".into()))?
+    }
+}
+
+impl<T: Send + 'static, O: Send + 'static> Drop for RealtimePipeline<T, O> {
+    fn drop(&mut self) {
+        self.sender = None;
+        if let Some(handle) = self.join_handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+fn realtime_worker<T, P>(
+    receiver: std::sync::mpsc::Receiver<T>,
+    mut pipeline: P,
+    chunk_size: usize,
+    flush_timeout: Option<Duration>,
+    metrics: Arc<SharedMetrics>,
+) -> Result<P::Output>
+where
+    P: StreamingPipeline<T>,
+{
+    let mut chunk: Vec<T> = Vec::with_capacity(chunk_size);
+
+    match flush_timeout {
+        None => {
+            for item in receiver {
+                metrics.items_processed.fetch_add(1, Ordering::Relaxed);
+                chunk.push(item);
+                if chunk.len() >= chunk_size {
+                    pipeline.process_chunk(&chunk)?;
+                    chunk.clear();
+                }
+            }
+        }
+        Some(timeout) => {
+            use std::sync::mpsc::RecvTimeoutError;
+            loop {
+                match receiver.recv_timeout(timeout) {
+                    Ok(item) => {
+                        metrics.items_processed.fetch_add(1, Ordering::Relaxed);
+                        chunk.push(item);
+                        if chunk.len() >= chunk_size {
+                            pipeline.process_chunk(&chunk)?;
+                            chunk.clear();
+                        }
+                    }
+                    Err(RecvTimeoutError::Timeout) => {
+                        if !chunk.is_empty() {
+                            pipeline.process_chunk(&chunk)?;
+                            chunk.clear();
+                        }
+                    }
+                    Err(RecvTimeoutError::Disconnected) => break,
+                }
+            }
+        }
+    }
+
+    if !chunk.is_empty() {
+        pipeline.process_chunk(&chunk)?;
+    }
+
+    pipeline.finalize()
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -564,5 +833,168 @@ mod tests {
         run_pipeline(&mut filter, cloud_as_stream(&cloud), 5).unwrap();
         // At least some voxels should be occupied and memory should be > 0.
         assert!(filter.memory_bytes() > 0);
+    }
+
+    // ---- RealtimePipeline ---------------------------------------------------
+
+    #[test]
+    fn test_realtime_basic_round_trip() {
+        let config = BackpressureConfig { max_queue_depth: 32, chunk_size: 8, flush_timeout: None };
+        let rt = RealtimePipeline::new(StreamingCollector::new(), config);
+        for i in 0..50_u32 {
+            rt.send(Point3f::new(i as f32, 0.0, 0.0)).unwrap();
+        }
+        let cloud = rt.finish().unwrap();
+        assert_eq!(cloud.len(), 50);
+    }
+
+    #[test]
+    fn test_realtime_with_flush_timeout() {
+        let config = BackpressureConfig {
+            max_queue_depth: 64,
+            chunk_size: 100,
+            flush_timeout: Some(Duration::from_millis(5)),
+        };
+        let rt = RealtimePipeline::new(StreamingCollector::new(), config);
+        for i in 0..20_u32 {
+            rt.send(Point3f::new(i as f32, 0.0, 0.0)).unwrap();
+        }
+        // finish() waits for worker; flush_timeout ensures partial chunk is processed.
+        let cloud = rt.finish().unwrap();
+        assert_eq!(cloud.len(), 20);
+    }
+
+    #[test]
+    fn test_realtime_voxel_filter() {
+        let filter = StreamingVoxelFilter::new(StreamingVoxelFilterConfig { voxel_size: 1.0 });
+        let config = BackpressureConfig { max_queue_depth: 64, chunk_size: 16, flush_timeout: None };
+        let rt = RealtimePipeline::new(filter, config);
+        for i in 0..100_u32 {
+            rt.send(Point3f::new(i as f32 * 0.1, 0.0, 0.0)).unwrap();
+        }
+        let cloud = rt.finish().unwrap();
+        assert!(cloud.len() <= 10, "expected ≤10 voxels, got {}", cloud.len());
+        assert!(!cloud.is_empty());
+    }
+
+    #[test]
+    fn test_realtime_metrics_queued_count() {
+        let config = BackpressureConfig { max_queue_depth: 64, chunk_size: 32, flush_timeout: None };
+        let rt = RealtimePipeline::new(StreamingCollector::new(), config);
+        for i in 0..20_u32 {
+            rt.send(Point3f::new(i as f32, 0.0, 0.0)).unwrap();
+        }
+        let m = rt.metrics();
+        assert_eq!(m.items_queued, 20);
+        assert_eq!(m.items_dropped, 0);
+        rt.finish().unwrap();
+    }
+
+    #[test]
+    fn test_realtime_try_send_accepts_when_space() {
+        let config = BackpressureConfig { max_queue_depth: 16, chunk_size: 8, flush_timeout: None };
+        let rt = RealtimePipeline::new(StreamingCollector::new(), config);
+        let accepted = rt.try_send(Point3f::new(1.0, 0.0, 0.0)).unwrap();
+        assert!(accepted, "should accept item when queue has space");
+        let m = rt.metrics();
+        assert_eq!(m.items_queued, 1);
+        assert_eq!(m.items_dropped, 0);
+        let cloud = rt.finish().unwrap();
+        assert_eq!(cloud.len(), 1);
+    }
+
+    #[test]
+    fn test_realtime_try_send_drops_when_full() {
+        use std::sync::{Condvar, Mutex};
+
+        // A pipeline whose first process_chunk blocks until we release a latch,
+        // so we can fill the bounded channel before the worker drains it.
+        struct LatchedCollector {
+            latch: Arc<(Mutex<bool>, Condvar)>,
+            inner: StreamingCollector,
+            blocked: bool,
+        }
+        impl StreamingPipeline<Point3f> for LatchedCollector {
+            type Output = PointCloud<Point3f>;
+            fn process_chunk(&mut self, chunk: &[Point3f]) -> Result<()> {
+                if !self.blocked {
+                    self.blocked = true;
+                    let (lock, cv) = &*self.latch;
+                    let mut released = lock.lock().unwrap();
+                    while !*released {
+                        released = cv.wait(released).unwrap();
+                    }
+                }
+                self.inner.process_chunk(chunk)
+            }
+            fn finalize(self) -> Result<PointCloud<Point3f>> {
+                self.inner.finalize()
+            }
+        }
+
+        let latch = Arc::new((Mutex::new(false), Condvar::new()));
+        let latch_release = Arc::clone(&latch);
+
+        // chunk_size=1: every item triggers process_chunk → first one blocks.
+        let config = BackpressureConfig { max_queue_depth: 1, chunk_size: 1, flush_timeout: None };
+        let rt = RealtimePipeline::new(
+            LatchedCollector { latch, inner: StreamingCollector::new(), blocked: false },
+            config,
+        );
+
+        // First item: worker picks it up and blocks inside process_chunk.
+        rt.send(Point3f::new(0.0, 0.0, 0.0)).unwrap();
+        // Give worker time to dequeue and enter process_chunk.
+        std::thread::sleep(Duration::from_millis(20));
+
+        // Queue depth is 1; worker is blocked → channel is full.
+        let mut accepted = 0usize;
+        let mut dropped = 0usize;
+        for i in 1..=8_u32 {
+            if rt.try_send(Point3f::new(i as f32, 0.0, 0.0)).unwrap() {
+                accepted += 1;
+            } else {
+                dropped += 1;
+            }
+        }
+        assert!(dropped > 0, "expected at least one drop with max_queue_depth=1");
+
+        // Release the latch so the worker can finish processing.
+        let (lock, cv) = &*latch_release;
+        *lock.lock().unwrap() = true;
+        cv.notify_all();
+
+        // Capture drop count before consuming rt.
+        let total_dropped = rt.metrics().items_dropped;
+        let cloud = rt.finish().unwrap();
+        // Total accepted = 1 (from send) + accepted (from try_send).
+        assert_eq!(cloud.len(), 1 + accepted);
+        assert_eq!(total_dropped, dropped as u64);
+    }
+
+    #[test]
+    fn test_realtime_drop_without_finish() {
+        let config = BackpressureConfig { max_queue_depth: 16, chunk_size: 4, flush_timeout: None };
+        let rt = RealtimePipeline::new(StreamingCollector::new(), config);
+        for i in 0..10_u32 {
+            rt.send(Point3f::new(i as f32, 0.0, 0.0)).unwrap();
+        }
+        drop(rt); // Must not panic or deadlock.
+    }
+
+    #[test]
+    fn test_realtime_large_workload() {
+        let config = BackpressureConfig {
+            max_queue_depth: 512,
+            chunk_size: 128,
+            flush_timeout: None,
+        };
+        let rt = RealtimePipeline::new(StreamingCollector::new(), config);
+        const N: u32 = 10_000;
+        for i in 0..N {
+            rt.send(Point3f::new(i as f32, 0.0, 0.0)).unwrap();
+        }
+        let cloud = rt.finish().unwrap();
+        assert_eq!(cloud.len(), N as usize);
     }
 }
