@@ -16,6 +16,7 @@ pub mod e57;
 pub mod ros2;
 #[cfg(feature = "rosbag")]
 pub mod rosbag;
+pub mod lidar;
 pub mod error;
 pub mod registry;
 pub mod mesh_attributes;
@@ -45,6 +46,11 @@ pub use ros2::{
 pub use registry::{IoRegistry, FormatHandler};
 pub use mesh_attributes::{ExtendedTriangleMesh, MeshAttributeOptions, MeshMetadata, Tangent, UV};
 pub use serialization::{SerializationOptions, AttributePreservingReader, AttributePreservingWriter};
+pub use lidar::{
+    VelodyneModel, VelodyneKittiBinReader, VelodynePcapReader,
+    OusterPcapReader,
+    LivoxLvxReader, LivoxLvx2Reader,
+};
 
 use threecrate_core::{PointCloud, TriangleMesh, Result, Point3f};
 use std::path::Path;
@@ -107,6 +113,12 @@ lazy_static::lazy_static! {
         registry.register_point_cloud_writer("xyz", Box::new(xyz_csv::XyzCsvWriter));
         registry.register_point_cloud_writer("csv", Box::new(xyz_csv::XyzCsvWriter));
         registry.register_point_cloud_writer("txt", Box::new(xyz_csv::XyzCsvWriter));
+
+        // Register LiDAR sensor raw format handlers
+        registry.register_point_cloud_handler("bin", Box::new(lidar::VelodyneBinRegistryReader));
+        registry.register_point_cloud_handler("pcap", Box::new(lidar::VelodynePcapRegistryReader));
+        registry.register_point_cloud_handler("lvx", Box::new(lidar::LivoxLvxRegistryReader));
+        registry.register_point_cloud_handler("lvx2", Box::new(lidar::LivoxLvx2RegistryReader));
 
         // Register E57 format handlers (when feature is enabled)
         #[cfg(feature = "e57")]
