@@ -1691,6 +1691,55 @@ fn write_mesh(mesh: &PyTriangleMesh, path: &str) -> PyResult<()> {
     rs_write_mesh(&mesh.inner, path).map_err(to_py_err)
 }
 
+/// Compress a point cloud to Draco-encoded bytes.
+///
+/// Parameters
+/// ----------
+/// cloud : PointCloud
+///     The point cloud to compress.
+/// quantization_bits : int, optional
+///     Position precision (1–31).  Default: 14.
+/// level : int, optional
+///     Compression effort (0 = fastest, 10 = best).  Default: 7.
+///
+/// Returns
+/// -------
+/// bytes
+///     Draco-compressed payload.  Pass to :func:`decompress` to restore.
+#[pyfunction]
+#[pyo3(signature = (cloud, quantization_bits = 14, level = 7))]
+fn compress<'py>(
+    py: Python<'py>,
+    cloud: &PyPointCloud,
+    quantization_bits: u32,
+    level: u8,
+) -> PyResult<Bound<'py, pyo3::types::PyBytes>> {
+    let config = threecrate_io::DracoConfig {
+        quantization_bits,
+        compression_level: level,
+        encode_colors: false,
+    };
+    let bytes = threecrate_io::draco_encode(&cloud.inner, config).map_err(to_py_err)?;
+    Ok(pyo3::types::PyBytes::new_bound(py, &bytes))
+}
+
+/// Decompress a Draco-encoded byte string back into a point cloud.
+///
+/// Parameters
+/// ----------
+/// data : bytes
+///     Bytes produced by :func:`compress` or any Draco encoder.
+///
+/// Returns
+/// -------
+/// PointCloud
+#[pyfunction]
+fn decompress(data: &[u8]) -> PyResult<PyPointCloud> {
+    threecrate_io::draco_decode(data)
+        .map(|inner| PyPointCloud { inner })
+        .map_err(to_py_err)
+}
+
 // ---------------------------------------------------------------------------
 // PointCloud2 support
 // ---------------------------------------------------------------------------
@@ -2480,6 +2529,8 @@ fn threecrate(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(write_point_cloud, m)?)?;
     m.add_function(wrap_pyfunction!(read_mesh, m)?)?;
     m.add_function(wrap_pyfunction!(write_mesh, m)?)?;
+    m.add_function(wrap_pyfunction!(compress, m)?)?;
+    m.add_function(wrap_pyfunction!(decompress, m)?)?;
 
     // PointCloud2 (ROS 2)
     m.add_function(wrap_pyfunction!(pointcloud2_to_xyz, m)?)?;
