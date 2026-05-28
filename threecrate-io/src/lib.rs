@@ -23,6 +23,8 @@ pub mod mesh_attributes;
 pub mod serialization;
 #[cfg(feature = "io-mmap")]
 pub mod mmap;
+#[cfg(feature = "compression")]
+pub mod compression;
 
 #[cfg(test)]
 pub mod tests;
@@ -44,6 +46,8 @@ pub use ros2::{
     colored_normals_to_pointcloud2, organized_xyz_to_pointcloud2,
 };
 pub use registry::{IoRegistry, FormatHandler};
+#[cfg(feature = "compression")]
+pub use compression::{DracoConfig, DracoCompressorPipeline, draco_encode, draco_decode};
 pub use mesh_attributes::{ExtendedTriangleMesh, MeshAttributeOptions, MeshMetadata, Tangent, UV};
 pub use serialization::{SerializationOptions, AttributePreservingReader, AttributePreservingWriter};
 pub use lidar::{
@@ -127,6 +131,13 @@ lazy_static::lazy_static! {
             registry.register_mesh_handler("e57", Box::new(e57::E57Reader));
             registry.register_point_cloud_writer("e57", Box::new(e57::E57Writer));
             registry.register_mesh_writer("e57", Box::new(e57::E57Writer));
+        }
+
+        // Register Draco compression handlers (when feature is enabled)
+        #[cfg(feature = "compression")]
+        {
+            registry.register_point_cloud_handler("drc", Box::new(compression::DracoReader));
+            registry.register_point_cloud_writer("drc", Box::new(compression::DracoWriter));
         }
 
         registry
