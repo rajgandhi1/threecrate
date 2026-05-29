@@ -9,25 +9,15 @@
 fn main() {
     use bevy::prelude::*;
     use threecrate_core::Point3f;
-    use threecrate_reconstruction::marching_cubes::{create_cube_volume, marching_cubes};
 
     println!("===========================================");
     println!("  Bevy Mesh Conversion Demonstration");
     println!("===========================================\n");
 
-    // Step 1: Generate a mesh using marching cubes
-    println!("Step 1: Generating mesh with Marching Cubes...");
-    let cube_grid = create_cube_volume(
-        Point3f::new(0.0, 0.0, 0.0),
-        1.5,
-        [20, 20, 20],
-        [4.0, 4.0, 4.0],
-    );
-
-    let mut triangle_mesh = marching_cubes(&cube_grid, 0.0)
-        .expect("Failed to generate mesh");
-
-    println!("✓ Marching Cubes mesh generated");
+    // Step 1: Build a literal cube mesh with sharp edges.
+    println!("Step 1: Generating a cube mesh...");
+    let mut triangle_mesh = make_cube_mesh(Point3f::new(0.0, 0.0, 0.0), 1.5);
+    println!("✓ Cube mesh generated");
     println!();
 
     // Step 2: Show original TriangleMesh details
@@ -72,7 +62,7 @@ fn main() {
     println!("  The converted Bevy mesh will be displayed in the window");
     println!();
     println!("Controls:");
-    println!("  - Left mouse: Rotate camera");
+    println!("  - Left mouse: Rotate cube");
     println!("  - Scroll: Zoom in/out");
     println!("  - ESC: Exit");
     println!();
@@ -87,8 +77,9 @@ fn main() {
             ..default()
         }))
         .insert_resource(ConvertedMesh(bevy_mesh))
-        .add_systems(Startup, setup_demo_scene)
-        .add_systems(Update, (rotate_camera, handle_input))
+        .insert_resource(HelpOverlayVisible(true))
+        .add_systems(Startup, (setup_demo_scene, setup_help_overlay))
+        .add_systems(Update, (rotate_mesh, zoom_camera, handle_input))
         .run();
 }
 
@@ -101,22 +92,42 @@ mod demo {
     pub struct ConvertedMesh(pub Mesh);
 
     #[derive(Component)]
+    pub struct SceneMesh;
+
+    #[derive(Component)]
+    pub struct HelpOverlay;
+
+    #[derive(Resource)]
+    pub struct HelpOverlayVisible(pub bool);
+
+    #[derive(Component)]
     pub struct CameraController {
-        pub rotation_speed: f32,
         pub zoom_speed: f32,
         pub distance: f32,
-        pub rotation_x: f32,
-        pub rotation_y: f32,
+        pub target: Vec3,
+        pub direction: Vec3,
+    }
+
+    #[derive(Component)]
+    pub struct MeshController {
+        pub rotation_speed: f32,
     }
 
     impl Default for CameraController {
         fn default() -> Self {
             Self {
-                rotation_speed: 0.5,
-                zoom_speed: 0.5,
-                distance: 6.0,
-                rotation_x: 0.4,
-                rotation_y: 0.8,
+                zoom_speed: 0.35,
+                distance: 8.0,
+                target: Vec3::ZERO,
+                direction: Vec3::new(0.65, 0.45, 0.62).normalize(),
+            }
+        }
+    }
+
+    impl Default for MeshController {
+        fn default() -> Self {
+            Self {
+                rotation_speed: 0.01,
             }
         }
     }
@@ -140,6 +151,8 @@ mod demo {
             Mesh3d(mesh_handle),
             MeshMaterial3d(material_handle),
             Transform::from_xyz(0.0, 0.0, 0.0),
+            SceneMesh,
+            MeshController::default(),
         ));
 
         // Key light
@@ -175,11 +188,8 @@ mod demo {
         let controller = CameraController::default();
         commands.spawn((
             Camera3d::default(),
-            Transform::from_xyz(
-                controller.rotation_y.sin() * controller.rotation_x.cos() * controller.distance,
-                controller.rotation_x.sin() * controller.distance,
-                controller.rotation_y.cos() * controller.rotation_x.cos() * controller.distance,
-            ).looking_at(Vec3::ZERO, Vec3::Y),
+            Transform::from_translation(controller.direction * controller.distance)
+                .looking_at(controller.target, Vec3::Y),
             controller,
         ));
 
@@ -188,46 +198,154 @@ mod demo {
         println!("  with vertex colors from TriangleMesh");
     }
 
-    pub fn rotate_camera(
+    pub fn setup_help_overlay(mut commands: Commands) {
+        commands.spawn((
+            Text::new(
+                "Navigation\n\
+                 Left drag  Rotate cube\n\
+                 Scroll     Zoom camera\n\
+                 H          Hide help\n\
+                 Esc        Exit",
+            ),
+            TextFont {
+                font_size: 14.0,
+                ..default()
+            },
+            TextColor(Color::srgba(1.0, 1.0, 1.0, 0.92)),
+            BackgroundColor(Color::srgba(0.03, 0.03, 0.03, 0.55)),
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::Px(12.0),
+                bottom: Val::Px(12.0),
+                padding: UiRect::all(Val::Px(10.0)),
+                ..default()
+            },
+            HelpOverlay,
+        ));
+    }
+
+    pub fn rotate_mesh(
         mut mouse_motion: MessageReader<MouseMotion>,
-        mut mouse_wheel: MessageReader<MouseWheel>,
         mouse_button: Res<ButtonInput<MouseButton>>,
+        mut query: Query<(&mut Transform, &MeshController), With<SceneMesh>>,
+    ) {
+        let Ok((mut transform, controller)) = query.single_mut() else {
+            return;
+        };
+
+        if mouse_button.pressed(MouseButton::Left) {
+            for motion in mouse_motion.read() {
+                transform.rotate_y(-motion.delta.x * controller.rotation_speed);
+                transform.rotate_x(motion.delta.y * controller.rotation_speed);
+            }
+        } else {
+            mouse_motion.clear();
+        }
+    }
+
+    pub fn zoom_camera(
+        mut mouse_wheel: MessageReader<MouseWheel>,
         mut query: Query<(&mut Transform, &mut CameraController)>,
     ) {
         let Ok((mut transform, mut controller)) = query.single_mut() else {
             return;
         };
 
-        if mouse_button.pressed(MouseButton::Left) {
-            for motion in mouse_motion.read() {
-                controller.rotation_y -= motion.delta.x * 0.01 * controller.rotation_speed;
-                controller.rotation_x -= motion.delta.y * 0.01 * controller.rotation_speed;
-                controller.rotation_x = controller.rotation_x.clamp(-1.5, 1.5);
-            }
-        } else {
-            mouse_motion.clear();
-        }
-
         for wheel in mouse_wheel.read() {
             controller.distance -= wheel.y * controller.zoom_speed;
-            controller.distance = controller.distance.clamp(2.0, 15.0);
+            controller.distance = controller.distance.clamp(3.0, 20.0);
         }
 
-        let x = controller.rotation_y.sin() * controller.rotation_x.cos() * controller.distance;
-        let y = controller.rotation_x.sin() * controller.distance;
-        let z = controller.rotation_y.cos() * controller.rotation_x.cos() * controller.distance;
-
-        *transform = Transform::from_xyz(x, y, z).looking_at(Vec3::ZERO, Vec3::Y);
+        *transform = Transform::from_translation(controller.direction * controller.distance)
+            .looking_at(controller.target, Vec3::Y);
     }
 
     pub fn handle_input(
         keyboard: Res<ButtonInput<KeyCode>>,
         mut exit: MessageWriter<bevy::app::AppExit>,
+        mut help_visible: ResMut<HelpOverlayVisible>,
+        mut help_query: Query<&mut Visibility, With<HelpOverlay>>,
     ) {
         if keyboard.just_pressed(KeyCode::Escape) {
             exit.write(bevy::app::AppExit::Success);
         }
+        if keyboard.just_pressed(KeyCode::KeyH) {
+            help_visible.0 = !help_visible.0;
+            let visibility = if help_visible.0 {
+                Visibility::Visible
+            } else {
+                Visibility::Hidden
+            };
+            for mut v in help_query.iter_mut() {
+                *v = visibility;
+            }
+        }
     }
+}
+
+#[cfg(feature = "bevy_interop")]
+fn make_cube_mesh(center: threecrate_core::Point3f, half_size: f32) -> threecrate_core::TriangleMesh {
+    use threecrate_core::{Point3f, TriangleMesh, Vector3f};
+
+    let (cx, cy, cz) = (center.x, center.y, center.z);
+    let (x0, x1) = (cx - half_size, cx + half_size);
+    let (y0, y1) = (cy - half_size, cy + half_size);
+    let (z0, z1) = (cz - half_size, cz + half_size);
+
+    let mut vertices = Vec::with_capacity(24);
+    let mut normals = Vec::with_capacity(24);
+    let mut faces = Vec::with_capacity(12);
+
+    let mut add_face = |quad: [(Point3f, Vector3f); 4]| {
+        let start = vertices.len();
+        for (pos, normal) in quad {
+            vertices.push(pos);
+            normals.push(normal);
+        }
+        faces.push([start, start + 1, start + 2]);
+        faces.push([start, start + 2, start + 3]);
+    };
+
+    add_face([
+        (Point3f::new(x0, y0, z1), Vector3f::new(0.0, 0.0, 1.0)),
+        (Point3f::new(x1, y0, z1), Vector3f::new(0.0, 0.0, 1.0)),
+        (Point3f::new(x1, y1, z1), Vector3f::new(0.0, 0.0, 1.0)),
+        (Point3f::new(x0, y1, z1), Vector3f::new(0.0, 0.0, 1.0)),
+    ]);
+    add_face([
+        (Point3f::new(x1, y0, z0), Vector3f::new(0.0, 0.0, -1.0)),
+        (Point3f::new(x0, y0, z0), Vector3f::new(0.0, 0.0, -1.0)),
+        (Point3f::new(x0, y1, z0), Vector3f::new(0.0, 0.0, -1.0)),
+        (Point3f::new(x1, y1, z0), Vector3f::new(0.0, 0.0, -1.0)),
+    ]);
+    add_face([
+        (Point3f::new(x0, y0, z0), Vector3f::new(-1.0, 0.0, 0.0)),
+        (Point3f::new(x0, y0, z1), Vector3f::new(-1.0, 0.0, 0.0)),
+        (Point3f::new(x0, y1, z1), Vector3f::new(-1.0, 0.0, 0.0)),
+        (Point3f::new(x0, y1, z0), Vector3f::new(-1.0, 0.0, 0.0)),
+    ]);
+    add_face([
+        (Point3f::new(x1, y0, z1), Vector3f::new(1.0, 0.0, 0.0)),
+        (Point3f::new(x1, y0, z0), Vector3f::new(1.0, 0.0, 0.0)),
+        (Point3f::new(x1, y1, z0), Vector3f::new(1.0, 0.0, 0.0)),
+        (Point3f::new(x1, y1, z1), Vector3f::new(1.0, 0.0, 0.0)),
+    ]);
+    add_face([
+        (Point3f::new(x0, y1, z1), Vector3f::new(0.0, 1.0, 0.0)),
+        (Point3f::new(x1, y1, z1), Vector3f::new(0.0, 1.0, 0.0)),
+        (Point3f::new(x1, y1, z0), Vector3f::new(0.0, 1.0, 0.0)),
+        (Point3f::new(x0, y1, z0), Vector3f::new(0.0, 1.0, 0.0)),
+    ]);
+    add_face([
+        (Point3f::new(x0, y0, z0), Vector3f::new(0.0, -1.0, 0.0)),
+        (Point3f::new(x1, y0, z0), Vector3f::new(0.0, -1.0, 0.0)),
+        (Point3f::new(x1, y0, z1), Vector3f::new(0.0, -1.0, 0.0)),
+        (Point3f::new(x0, y0, z1), Vector3f::new(0.0, -1.0, 0.0)),
+    ]);
+
+    let mut mesh = TriangleMesh::from_vertices_and_faces(vertices, faces);
+    mesh.set_normals(normals);
+    mesh
 }
 
 #[cfg(feature = "bevy_interop")]
