@@ -40,6 +40,7 @@ GPU-accelerated computing via wgpu (Vulkan, Metal, DirectX 12).
 - GPU filtering: statistical outlier removal, radius filtering, voxel grid
 - GPU normal estimation
 - GPU nearest neighbor search (K-nearest and radius)
+- GPU segmentation: RANSAC plane detection and Euclidean cluster extraction
 - GPU ICP registration
 - TSDF volume integration and surface extraction
 - Real-time point cloud and mesh rendering with PBR material support

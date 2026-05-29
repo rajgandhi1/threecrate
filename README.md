@@ -17,7 +17,7 @@ A high-performance 3D point cloud and mesh processing library for Rust, with Pyt
 |---|---|
 | `threecrate-core` | Point, PointCloud, TriangleMesh, Transform3D |
 | `threecrate-algorithms` | Filtering, ICP, NDT, global registration, segmentation, normals, FPFH/SHOT, mesh boolean, smoothing |
-| `threecrate-gpu` | GPU filtering, ICP, normals, nearest-neighbor, TSDF, real-time rendering (wgpu) |
+| `threecrate-gpu` | GPU filtering, segmentation, ICP, normals, nearest-neighbor, TSDF, real-time rendering (wgpu) |
 | `threecrate-io` | PLY, OBJ, PCD, XYZ/CSV, LAS/LAZ\*, E57\* — streaming and memory-mapped |
 | `threecrate-reconstruction` | Poisson, BPA, alpha shapes, Delaunay, Marching Cubes, MLS, auto-select |
 | `threecrate-simplification` | Quadric error, edge collapse, clustering, progressive mesh |
