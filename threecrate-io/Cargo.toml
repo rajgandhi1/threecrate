@@ -32,7 +32,7 @@ lazy_static = "1.4"
 memmap2 = { version = "0.9", optional = true }
 e57 = { workspace = true, optional = true }
 mcap = { version = "0.24", optional = true }
-rusqlite = { version = "0.39", features = ["bundled"], optional = true }
+rusqlite = { version = "0.40", features = ["bundled"], optional = true }
 memchr = { version = "2.7", optional = true }
 spatial_codec_draco = { version = "0.2.5", optional = true }
 
