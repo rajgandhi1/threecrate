@@ -11,6 +11,7 @@ GPU-accelerated algorithms for 3D point cloud processing using wgpu.
 - **Filtering**: GPU statistical outlier removal, radius filtering, voxel grid downsampling
 - **Normal Estimation**: Parallel GPU-based surface normal computation
 - **Nearest Neighbor Search**: GPU K-nearest and radius neighbor search
+- **Segmentation**: GPU-scored RANSAC plane segmentation and GPU-accelerated Euclidean clustering
 - **ICP Registration**: GPU-accelerated Iterative Closest Point
 - **TSDF**: Truncated Signed Distance Function volume integration and surface extraction
 - **Rendering**: Real-time point cloud and mesh rendering with PBR material support
@@ -37,6 +38,18 @@ let gpu_context = GpuContext::new().await?;
 
 // GPU-accelerated filtering
 let filtered = gpu_voxel_grid_filter(&gpu_context, &cloud, 0.05).await?;
+
+// GPU RANSAC plane segmentation
+let plane_config = GpuPlaneSegmentationConfig {
+    max_iterations: 1000,
+    distance_threshold: 0.01,
+    min_inliers: 100,
+};
+let plane = gpu_segment_plane(&gpu_context, &cloud, plane_config).await?;
+
+// GPU-accelerated Euclidean clustering
+let cluster_config = GpuClusterConfig::new(0.02, 100, 25000);
+let clusters = gpu_extract_clusters(&gpu_context, &cloud, cluster_config).await?;
 
 // GPU ICP registration
 let result = gpu_icp(&gpu_context, &source, &target).await?;

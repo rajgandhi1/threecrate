@@ -66,6 +66,10 @@ name = "gpu_filtering_example"
 path = "gpu_filtering_example.rs" 
 
 [[bin]]
+name = "gpu_segmentation_example"
+path = "gpu_segmentation_example.rs"
+
+[[bin]]
 name = "gpu_mesh_render_example"
 path = "gpu_mesh_render_example.rs"
 required-features = ["bevy_interop"]
