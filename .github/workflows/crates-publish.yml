@@ -40,6 +40,12 @@ jobs:
       - name: Wait for indexing
         run: sleep 30
 
+      - name: Publish threecrate-simplification
+        run: cargo publish -p threecrate-simplification
+
+      - name: Wait for indexing
+        run: sleep 90
+
       - name: Publish threecrate-gpu
         run: cargo publish -p threecrate-gpu
 
@@ -48,12 +54,6 @@ jobs:
 
       - name: Publish threecrate-reconstruction
         run: cargo publish -p threecrate-reconstruction
-
-      - name: Wait for indexing
-        run: sleep 30
-
-      - name: Publish threecrate-simplification
-        run: cargo publish -p threecrate-simplification
 
       - name: Wait for indexing
         run: sleep 30
