@@ -19,6 +19,9 @@ jobs:
       - name: Authenticate to crates.io
         run: cargo login ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
+      - name: Clean Cargo artifacts
+        run: cargo clean
+
       - name: Publish threecrate-core
         run: cargo publish -p threecrate-core
 
