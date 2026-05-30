@@ -8,7 +8,7 @@ Includes core, algorithms, I/O, and simplification by default:
 
 ```toml
 [dependencies]
-threecrate = "0.7.1"
+threecrate = "0.8.0"
 ```
 
 ### Individual crates (minimal dependencies)
@@ -17,20 +17,20 @@ Pick only what you need:
 
 ```toml
 [dependencies]
-threecrate-core = "0.7.1"
-threecrate-algorithms = "0.7.1"
-threecrate-io = "0.7.1"
-threecrate-reconstruction = "0.7.1"
-threecrate-simplification = "0.7.1"
-threecrate-gpu = "0.7.1"
-threecrate-visualization = "0.7.1"
+threecrate-core = "0.8.0"
+threecrate-algorithms = "0.8.0"
+threecrate-io = "0.8.0"
+threecrate-reconstruction = "0.8.0"
+threecrate-simplification = "0.8.0"
+threecrate-gpu = "0.8.0"
+threecrate-visualization = "0.8.0"
 ```
 
 ### Feature flags
 
 ```toml
 [dependencies]
-threecrate = { version = "0.7.1", features = ["all"] }
+threecrate = { version = "0.8.0", features = ["all"] }
 ```
 
 | Feature | Description | Default |
@@ -49,7 +49,7 @@ threecrate = { version = "0.7.1", features = ["all"] }
 These formats require extra dependencies and must be enabled explicitly:
 
 ```toml
-threecrate-io = { version = "0.7.1", features = ["las_laz", "e57", "io-mmap"] }
+threecrate-io = { version = "0.8.0", features = ["las_laz", "e57", "io-mmap"] }
 ```
 
 | Feature | Formats | Notes |

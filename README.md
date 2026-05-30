@@ -35,7 +35,7 @@ A high-performance 3D point cloud and mesh processing library for Rust, with Pyt
 
 ```toml
 [dependencies]
-threecrate = "0.7.1"
+threecrate = "0.8.0"
 ```
 
 ```rust

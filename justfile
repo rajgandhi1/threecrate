@@ -109,6 +109,10 @@ dev: fmt check test
 # Full quality check before PR
 pr-ready: clean fmt clippy test doc
 
+# Bump the workspace for a release and scaffold release notes
+release-prep version:
+    powershell -NoProfile -ExecutionPolicy Bypass -File scripts/release.ps1 {{version}}
+
 # Help for contributors
 help:
     @echo "Common development workflows:"
