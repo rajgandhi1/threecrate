@@ -23,46 +23,46 @@ jobs:
         run: cargo clean
 
       - name: Publish threecrate-core
-        run: cargo publish -p threecrate-core
+        run: bash scripts/publish-if-needed.sh threecrate-core
 
       - name: Wait for indexing
         run: sleep 30
 
       - name: Publish threecrate-algorithms
-        run: cargo publish -p threecrate-algorithms
+        run: bash scripts/publish-if-needed.sh threecrate-algorithms
 
       - name: Wait for indexing
         run: sleep 30
 
       - name: Publish threecrate-io
-        run: cargo publish -p threecrate-io
+        run: bash scripts/publish-if-needed.sh threecrate-io
 
       - name: Wait for indexing
         run: sleep 30
 
       - name: Publish threecrate-simplification
-        run: cargo publish -p threecrate-simplification
+        run: bash scripts/publish-if-needed.sh threecrate-simplification
 
       - name: Wait for indexing
         run: sleep 90
 
       - name: Publish threecrate-gpu
-        run: cargo publish -p threecrate-gpu
+        run: bash scripts/publish-if-needed.sh threecrate-gpu
 
       - name: Wait for indexing
         run: sleep 90
 
       - name: Publish threecrate-reconstruction
-        run: cargo publish -p threecrate-reconstruction
+        run: bash scripts/publish-if-needed.sh threecrate-reconstruction
 
       - name: Wait for indexing
         run: sleep 30
 
       - name: Publish threecrate-visualization
-        run: cargo publish -p threecrate-visualization
+        run: bash scripts/publish-if-needed.sh threecrate-visualization
 
       - name: Wait for indexing
         run: sleep 30
 
       - name: Publish threecrate (umbrella)
-        run: cargo publish --manifest-path threecrate-umbrella/Cargo.toml
+        run: bash scripts/publish-if-needed.sh threecrate threecrate-umbrella/Cargo.toml
