@@ -37,7 +37,7 @@ What actually happened (include any error messages or panics in full).
 **Environment**
 - OS: [e.g. macOS 14, Ubuntu 22.04, Windows 11]
 - Rust version: [output of `rustc --version`]
-- threecrate version: [e.g. 0.7.1, or git SHA]
+- threecrate version: [e.g. 0.8.0, or git SHA]
 - Python version (if using Python bindings): [e.g. 3.11]
 - GPU (if using `threecrate-gpu`): [e.g. Apple M3, NVIDIA RTX 4090]
 
