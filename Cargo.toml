@@ -49,7 +49,7 @@ itertools = "0.14"
 rand = "0.9"
 
 # Additional spatial data structures
-rstar = "0.12"  # R*-tree for spatial indexing
+rstar = "0.13"  # R*-tree for spatial indexing
 spade = "2.13"   # Delaunay triangulation and Voronoi diagrams
 
 # Surface reconstruction
