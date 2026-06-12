@@ -111,7 +111,7 @@ fn create_sample_point_cloud(num_points: usize, offset: f32) -> PointCloud<Point
 /// Add random outliers to a point cloud for testing filtering
 fn add_outliers(cloud: &mut PointCloud<Point3f>, num_outliers: usize) {
     use rand::Rng;
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
 
     for _ in 0..num_outliers {
         // Add points far from the main cluster

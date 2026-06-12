@@ -26,7 +26,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Created point cloud with {} points", cloud.len());
 
     // Add some random points for more interesting results
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     for _ in 0..20 {
         cloud.push(Point3f::new(
             rng.random_range(-2.0..7.0),

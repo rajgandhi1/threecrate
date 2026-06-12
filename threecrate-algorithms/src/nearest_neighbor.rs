@@ -549,15 +549,15 @@ mod tests {
 
     #[test]
     fn test_random_points() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let mut points = Vec::new();
 
         // Generate 100 random points
         for _ in 0..100 {
             points.push(Point3f::new(
-                rng.gen_range(-10.0..10.0),
-                rng.gen_range(-10.0..10.0),
-                rng.gen_range(-10.0..10.0),
+                rng.random_range(-10.0..10.0),
+                rng.random_range(-10.0..10.0),
+                rng.random_range(-10.0..10.0),
             ));
         }
 
@@ -567,13 +567,13 @@ mod tests {
         // Test multiple random queries
         for _ in 0..10 {
             let query = Point3f::new(
-                rng.gen_range(-5.0..5.0),
-                rng.gen_range(-5.0..5.0),
-                rng.gen_range(-5.0..5.0),
+                rng.random_range(-5.0..5.0),
+                rng.random_range(-5.0..5.0),
+                rng.random_range(-5.0..5.0),
             );
 
-            let k = rng.gen_range(1..=10);
-            let radius = rng.gen_range(1.0..5.0);
+            let k = rng.random_range(1..=10);
+            let radius = rng.random_range(1.0..5.0);
 
             let mut kdtree_knn = kdtree.find_k_nearest(&query, k);
             let mut brute_knn = brute_force.find_k_nearest(&query, k);
@@ -627,15 +627,15 @@ mod tests {
 
     #[test]
     fn test_performance_comparison() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let mut points = Vec::new();
 
         // Generate 1000 random points for performance test
         for _ in 0..1000 {
             points.push(Point3f::new(
-                rng.gen_range(-10.0..10.0),
-                rng.gen_range(-10.0..10.0),
-                rng.gen_range(-10.0..10.0),
+                rng.random_range(-10.0..10.0),
+                rng.random_range(-10.0..10.0),
+                rng.random_range(-10.0..10.0),
             ));
         }
 

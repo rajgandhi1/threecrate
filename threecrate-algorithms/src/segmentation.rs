@@ -3,8 +3,8 @@
 use crate::KdTree;
 use nalgebra::Vector4;
 use rand::prelude::*;
-use rand::thread_rng;
 use rayon::prelude::*;
+use rand::rng;
 use std::collections::{HashSet, VecDeque};
 use threecrate_core::NearestNeighborSearch;
 use threecrate_core::{Error, Point3f, PointCloud, Result, Vector3f};
@@ -136,7 +136,7 @@ pub fn segment_plane(
     }
 
     let points = &cloud.points;
-    let mut rng = thread_rng();
+    let mut rng = rng();
     let mut best_model: Option<PlaneModel> = None;
     let mut best_inliers = Vec::new();
     let mut best_score = 0;
@@ -145,7 +145,7 @@ pub fn segment_plane(
         // Randomly sample 3 points
         let mut indices = HashSet::new();
         while indices.len() < 3 {
-            indices.insert(rng.gen_range(0..points.len()));
+            indices.insert(rng.random_range(0..points.len()));
         }
         let indices: Vec<usize> = indices.into_iter().collect();
 
@@ -218,12 +218,12 @@ pub fn segment_plane_parallel(
     let results: Vec<_> = (0..max_iters)
         .into_par_iter()
         .filter_map(|_| {
-            let mut rng = thread_rng();
+            let mut rng = rng();
 
             // Randomly sample 3 points
             let mut indices = HashSet::new();
             while indices.len() < 3 {
-                indices.insert(rng.gen_range(0..points.len()));
+                indices.insert(rng.random_range(0..points.len()));
             }
             let indices: Vec<usize> = indices.into_iter().collect();
 
@@ -711,23 +711,23 @@ mod tests {
     fn test_segment_plane_ransac_noisy() {
         // Create a point cloud with noisy planar points
         let mut cloud = PointCloud::new();
-        let mut rng = thread_rng();
+        let mut rng = rng();
 
         // Add points on XY plane (z=0) with noise
         for i in 0..20 {
             for j in 0..20 {
                 let x = i as f32;
                 let y = j as f32;
-                let z = rng.gen_range(-0.05..0.05); // Add noise to z coordinate
+                let z = rng.random_range(-0.05..0.05); // Add noise to z coordinate
                 cloud.push(Point3f::new(x, y, z));
             }
         }
 
         // Add some outliers
         for _ in 0..20 {
-            let x = rng.gen_range(0.0..20.0);
-            let y = rng.gen_range(0.0..20.0);
-            let z = rng.gen_range(1.0..5.0); // Outliers above the plane
+            let x = rng.random_range(0.0..20.0);
+            let y = rng.random_range(0.0..20.0);
+            let z = rng.random_range(1.0..5.0); // Outliers above the plane
             cloud.push(Point3f::new(x, y, z));
         }
 
@@ -764,7 +764,7 @@ mod tests {
     fn test_segment_plane_ransac_tilted_plane() {
         // Create a tilted plane (not aligned with coordinate axes)
         let mut cloud = PointCloud::new();
-        let mut rng = thread_rng();
+        let mut rng = rng();
 
         // Create a tilted plane: x + y + z = 0
         for i in 0..15 {
@@ -774,9 +774,9 @@ mod tests {
                 let z = -(x + y); // Points on the plane x + y + z = 0
 
                 // Add some noise
-                let noise_x = rng.gen_range(-0.02..0.02);
-                let noise_y = rng.gen_range(-0.02..0.02);
-                let noise_z = rng.gen_range(-0.02..0.02);
+                let noise_x = rng.random_range(-0.02..0.02);
+                let noise_y = rng.random_range(-0.02..0.02);
+                let noise_z = rng.random_range(-0.02..0.02);
 
                 cloud.push(Point3f::new(x + noise_x, y + noise_y, z + noise_z));
             }
@@ -784,9 +784,9 @@ mod tests {
 
         // Add outliers
         for _ in 0..30 {
-            let x = rng.gen_range(0.0..15.0);
-            let y = rng.gen_range(0.0..15.0);
-            let z = rng.gen_range(5.0..10.0); // Outliers above the plane
+            let x = rng.random_range(0.0..15.0);
+            let y = rng.random_range(0.0..15.0);
+            let z = rng.random_range(5.0..10.0); // Outliers above the plane
             cloud.push(Point3f::new(x, y, z));
         }
 
@@ -873,12 +873,12 @@ mod tests {
     // ---- Euclidean cluster extraction tests ----
 
     fn make_sphere_cloud(center: Point3f, radius: f32, count: usize) -> Vec<Point3f> {
-        let mut rng = thread_rng();
+        let mut rng = rng();
         let mut pts = Vec::with_capacity(count);
         while pts.len() < count {
-            let x: f32 = rng.gen_range(-radius..radius);
-            let y: f32 = rng.gen_range(-radius..radius);
-            let z: f32 = rng.gen_range(-radius..radius);
+            let x: f32 = rng.random_range(-radius..radius);
+            let y: f32 = rng.random_range(-radius..radius);
+            let z: f32 = rng.random_range(-radius..radius);
             if x * x + y * y + z * z <= radius * radius {
                 pts.push(Point3f::new(center.x + x, center.y + y, center.z + z));
             }
