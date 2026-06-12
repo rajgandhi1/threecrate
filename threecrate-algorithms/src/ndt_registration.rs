@@ -6,9 +6,9 @@
 //!
 //! Reference: Biber & Straßer (2003), "The Normal Distributions Transform: A New Approach to Laser Scan Matching"
 
-use threecrate_core::{PointCloud, Result, Point3f, Error, Isometry3};
-use nalgebra::{Matrix3, Vector3, UnitQuaternion, Translation3};
+use nalgebra::{Matrix3, Translation3, UnitQuaternion, Vector3};
 use std::collections::HashMap;
+use threecrate_core::{Error, Isometry3, Point3f, PointCloud, Result};
 
 /// Configuration for NDT registration
 #[derive(Debug, Clone)]
@@ -76,7 +76,10 @@ fn build_voxel_grid(
     let mut cells: HashMap<(i32, i32, i32), Vec<Vector3<f32>>> = HashMap::new();
     for p in &target.points {
         let key = voxel_key(p, resolution);
-        cells.entry(key).or_default().push(Vector3::new(p.x, p.y, p.z));
+        cells
+            .entry(key)
+            .or_default()
+            .push(Vector3::new(p.x, p.y, p.z));
     }
 
     let mut grid = HashMap::new();
@@ -149,9 +152,9 @@ fn compute_score_and_derivatives(
         // Rotation part: ∂(R*s)/∂angle via skew-symmetric
         // ∂(R*s)/∂rx = R * skew([1,0,0]) * s_body (approximated as skew * R^T * p)
         let rs = rot_mat * src_vec;
-        let dp_drx = Vector3::new(0.0, -rs[2], rs[1]);   // skew([1,0,0]) * rs
-        let dp_dry = Vector3::new(rs[2], 0.0, -rs[0]);    // skew([0,1,0]) * rs
-        let dp_drz = Vector3::new(-rs[1], rs[0], 0.0);    // skew([0,0,1]) * rs
+        let dp_drx = Vector3::new(0.0, -rs[2], rs[1]); // skew([1,0,0]) * rs
+        let dp_dry = Vector3::new(rs[2], 0.0, -rs[0]); // skew([0,1,0]) * rs
+        let dp_drz = Vector3::new(-rs[1], rs[0], 0.0); // skew([0,0,1]) * rs
 
         // Full jacobian: 3x6 matrix (rows=xyz, cols=6dof)
         let mut jac = nalgebra::Matrix3x6::<f32>::zeros();
@@ -200,7 +203,8 @@ pub fn ndt_registration(
     let grid = build_voxel_grid(target, config.resolution, config.min_points_per_voxel);
     if grid.is_empty() {
         return Err(Error::Algorithm(
-            "NDT voxel grid is empty — try a larger resolution or lower min_points_per_voxel".into(),
+            "NDT voxel grid is empty — try a larger resolution or lower min_points_per_voxel"
+                .into(),
         ));
     }
 
@@ -212,12 +216,8 @@ pub fn ndt_registration(
     for iter in 0..config.max_iterations {
         iterations = iter + 1;
 
-        let (s, grad, hess) = compute_score_and_derivatives(
-            &source.points,
-            &grid,
-            &transform,
-            config.resolution,
-        );
+        let (s, grad, hess) =
+            compute_score_and_derivatives(&source.points, &grid, &transform, config.resolution);
         score = s;
 
         // Regularize hessian
@@ -271,8 +271,8 @@ pub fn ndt_registration_default(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use threecrate_core::PointCloud;
     use nalgebra::{Translation3, UnitQuaternion};
+    use threecrate_core::PointCloud;
 
     fn make_grid_cloud(nx: usize, ny: usize, nz: usize, scale: f32) -> PointCloud<Point3f> {
         let mut points = Vec::new();
@@ -314,10 +314,8 @@ mod tests {
     #[test]
     fn test_ndt_small_translation() {
         let target = make_grid_cloud(6, 6, 6, 1.0);
-        let translation = Isometry3::from_parts(
-            Translation3::new(0.3, 0.2, 0.1),
-            UnitQuaternion::identity(),
-        );
+        let translation =
+            Isometry3::from_parts(Translation3::new(0.3, 0.2, 0.1), UnitQuaternion::identity());
         let source = apply_transform(&target, &translation);
 
         let config = NdtConfig {

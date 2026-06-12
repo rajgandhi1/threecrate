@@ -4,12 +4,11 @@
 //! the consumer falls behind and tracks dropped items when using the
 //! non-blocking `try_send` path.
 
-use std::time::{Duration, Instant};
 use std::thread;
+use std::time::{Duration, Instant};
 
 use threecrate_algorithms::streaming::{
-    BackpressureConfig, RealtimePipeline,
-    StreamingCollector, StreamingStatistics,
+    BackpressureConfig, RealtimePipeline, StreamingCollector, StreamingStatistics,
     StreamingVoxelFilter, StreamingVoxelFilterConfig,
 };
 use threecrate_core::{Point3f, PointCloud};
@@ -34,7 +33,7 @@ fn demo_blocking_backpressure() {
 
     const N: usize = 100_000;
     let config = BackpressureConfig {
-        max_queue_depth: 512,  // bounded queue — producer blocks when full
+        max_queue_depth: 512, // bounded queue — producer blocks when full
         chunk_size: 256,
         flush_timeout: None,
     };
@@ -114,7 +113,10 @@ fn demo_try_send_with_drops() {
     println!("  try_send attempts : 20");
     println!("  Accepted          : {}", accepted);
     println!("  Dropped (full)    : {}", dropped);
-    println!("  items_dropped metric: {}", pre_finish_metrics.items_dropped);
+    println!(
+        "  items_dropped metric: {}",
+        pre_finish_metrics.items_dropped
+    );
     println!("  Output cloud size : {}\n", cloud.len());
 
     assert_eq!(pre_finish_metrics.items_dropped, dropped as u64);
@@ -181,7 +183,10 @@ fn demo_flush_timeout_latency() {
     println!("  Items sent       : 50  (chunk_size=1000)");
     println!("  Items processed  : {}", stats.point_count);
     println!("  Elapsed          : {:.2} ms", elapsed_ms);
-    println!("  Bounding box X   : [{:.0}, {:.0}]\n", stats.min.x, stats.max.x);
+    println!(
+        "  Bounding box X   : [{:.0}, {:.0}]\n",
+        stats.min.x, stats.max.x
+    );
 
     assert_eq!(stats.point_count, 50);
 }

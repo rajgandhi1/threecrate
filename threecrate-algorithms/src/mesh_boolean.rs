@@ -11,7 +11,7 @@
 //! - Shared planar faces are handled via coplanar classification but exact
 //!   floating-point coincidence can produce small artefacts at seam edges.
 
-use threecrate_core::{TriangleMesh, Result, Point3f, Vector3f};
+use threecrate_core::{Point3f, Result, TriangleMesh, Vector3f};
 
 /// Numeric tolerance used for plane-side classification and degenerate checks.
 const EPSILON: f32 = 1e-5;
@@ -174,7 +174,12 @@ struct BspNode {
 
 impl BspNode {
     fn new() -> Self {
-        BspNode { plane: None, front: None, back: None, polygons: Vec::new() }
+        BspNode {
+            plane: None,
+            front: None,
+            back: None,
+            polygons: Vec::new(),
+        }
     }
 
     fn invert(&mut self) {
@@ -311,7 +316,10 @@ fn mesh_to_polygons(mesh: &TriangleMesh) -> Vec<Polygon> {
 fn polygons_to_mesh(polygons: Vec<Polygon>) -> TriangleMesh {
     // Each Polygon is already a triangle (fan-triangulation keeps them as triangles),
     // so we can flatten directly.
-    let capacity = polygons.iter().map(|p| p.vertices.len().saturating_sub(2)).sum::<usize>();
+    let capacity = polygons
+        .iter()
+        .map(|p| p.vertices.len().saturating_sub(2))
+        .sum::<usize>();
     let mut vertices = Vec::with_capacity(capacity * 3);
     let mut faces = Vec::with_capacity(capacity);
 
@@ -363,11 +371,7 @@ pub enum BooleanOp {
 ///
 /// # Returns
 /// A new `TriangleMesh` representing the result of the operation.
-pub fn mesh_boolean(
-    a: &TriangleMesh,
-    b: &TriangleMesh,
-    op: BooleanOp,
-) -> Result<TriangleMesh> {
+pub fn mesh_boolean(a: &TriangleMesh, b: &TriangleMesh, op: BooleanOp) -> Result<TriangleMesh> {
     match op {
         BooleanOp::Union => mesh_union(a, b),
         BooleanOp::Intersection => mesh_intersection(a, b),
@@ -512,17 +516,23 @@ mod tests {
         // Each face is CCW when viewed from outside → outward normal
         let faces = vec![
             // Bottom (z-): normal (0,0,-1)
-            [0, 2, 1], [0, 3, 2],
+            [0, 2, 1],
+            [0, 3, 2],
             // Top (z+): normal (0,0,+1)
-            [4, 5, 6], [4, 6, 7],
+            [4, 5, 6],
+            [4, 6, 7],
             // Front (y-): normal (0,-1,0)
-            [0, 1, 5], [0, 5, 4],
+            [0, 1, 5],
+            [0, 5, 4],
             // Back (y+): normal (0,+1,0)
-            [3, 7, 6], [3, 6, 2],
+            [3, 7, 6],
+            [3, 6, 2],
             // Left (x-): normal (-1,0,0)
-            [0, 4, 7], [0, 7, 3],
+            [0, 4, 7],
+            [0, 7, 3],
             // Right (x+): normal (+1,0,0)
-            [1, 2, 6], [1, 6, 5],
+            [1, 2, 6],
+            [1, 6, 5],
         ];
         TriangleMesh::from_vertices_and_faces(verts, faces)
     }
@@ -579,7 +589,11 @@ mod tests {
         let result = mesh_union(&a, &b).unwrap();
         // Both boxes should be fully preserved
         assert!(!result.is_empty());
-        assert!(result.face_count() >= 24, "expected ≥24 faces, got {}", result.face_count());
+        assert!(
+            result.face_count() >= 24,
+            "expected ≥24 faces, got {}",
+            result.face_count()
+        );
     }
 
     #[test]
@@ -588,7 +602,11 @@ mod tests {
         let b = make_box(Point3f::new(5.0, 0.0, 0.0), Point3f::new(6.0, 1.0, 1.0));
         let result = mesh_intersection(&a, &b).unwrap();
         // No overlap → empty result
-        assert!(result.is_empty(), "non-overlapping intersection should be empty, got {} faces", result.face_count());
+        assert!(
+            result.is_empty(),
+            "non-overlapping intersection should be empty, got {} faces",
+            result.face_count()
+        );
     }
 
     #[test]
@@ -598,7 +616,11 @@ mod tests {
         let result = mesh_difference(&a, &b).unwrap();
         // B doesn't touch A → result should be A unchanged
         assert!(!result.is_empty());
-        assert!(result.face_count() >= 12, "expected ≥12 faces, got {}", result.face_count());
+        assert!(
+            result.face_count() >= 12,
+            "expected ≥12 faces, got {}",
+            result.face_count()
+        );
     }
 
     // ---- overlapping meshes ----
@@ -609,7 +631,10 @@ mod tests {
         let a = make_box(Point3f::new(0.0, 0.0, 0.0), Point3f::new(2.0, 2.0, 2.0));
         let b = make_box(Point3f::new(1.0, 1.0, 1.0), Point3f::new(3.0, 3.0, 3.0));
         let result = mesh_union(&a, &b).unwrap();
-        assert!(!result.is_empty(), "union of overlapping boxes must not be empty");
+        assert!(
+            !result.is_empty(),
+            "union of overlapping boxes must not be empty"
+        );
     }
 
     #[test]
@@ -617,7 +642,10 @@ mod tests {
         let a = make_box(Point3f::new(0.0, 0.0, 0.0), Point3f::new(2.0, 2.0, 2.0));
         let b = make_box(Point3f::new(1.0, 1.0, 1.0), Point3f::new(3.0, 3.0, 3.0));
         let result = mesh_intersection(&a, &b).unwrap();
-        assert!(!result.is_empty(), "intersection of overlapping boxes must not be empty");
+        assert!(
+            !result.is_empty(),
+            "intersection of overlapping boxes must not be empty"
+        );
         // The intersection is the unit cube [1,2]^3 → should have at most as many faces as either input
         assert!(result.face_count() <= a.face_count() + b.face_count() + 50);
     }
@@ -627,7 +655,10 @@ mod tests {
         let a = make_box(Point3f::new(0.0, 0.0, 0.0), Point3f::new(2.0, 2.0, 2.0));
         let b = make_box(Point3f::new(1.0, 1.0, 1.0), Point3f::new(3.0, 3.0, 3.0));
         let result = mesh_difference(&a, &b).unwrap();
-        assert!(!result.is_empty(), "A minus partially-overlapping B must not be empty");
+        assert!(
+            !result.is_empty(),
+            "A minus partially-overlapping B must not be empty"
+        );
     }
 
     #[test]
@@ -636,7 +667,10 @@ mod tests {
         let a = make_box(Point3f::new(0.0, 0.0, 0.0), Point3f::new(4.0, 4.0, 4.0));
         let b = make_box(Point3f::new(1.0, 1.0, 1.0), Point3f::new(2.0, 2.0, 2.0));
         let result = mesh_difference(&a, &b).unwrap();
-        assert!(!result.is_empty(), "difference with interior hole must not be empty");
+        assert!(
+            !result.is_empty(),
+            "difference with interior hole must not be empty"
+        );
     }
 
     #[test]
@@ -645,7 +679,10 @@ mod tests {
         let a = make_box(Point3f::new(0.0, 0.0, 0.0), Point3f::new(4.0, 4.0, 4.0));
         let b = make_box(Point3f::new(1.0, 1.0, 1.0), Point3f::new(2.0, 2.0, 2.0));
         let result = mesh_intersection(&a, &b).unwrap();
-        assert!(!result.is_empty(), "intersection when B inside A must not be empty");
+        assert!(
+            !result.is_empty(),
+            "intersection when B inside A must not be empty"
+        );
     }
 
     // ---- BooleanOp dispatch ----

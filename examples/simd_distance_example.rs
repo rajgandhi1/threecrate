@@ -83,7 +83,10 @@ fn main() {
         simd_radius.len(),
         scalar_radius.len()
     );
-    println!("Counts match: {}\n", simd_radius.len() == scalar_radius.len());
+    println!(
+        "Counts match: {}\n",
+        simd_radius.len() == scalar_radius.len()
+    );
 
     // ------------------------------------------------------------------
     // 4. Throughput benchmark (N = 100 000)

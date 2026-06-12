@@ -12,8 +12,8 @@
 //! the mesh faces, then iteratively update vertex positions while keeping the
 //! face connectivity unchanged.
 
-use threecrate_core::{TriangleMesh, Result, Point3f, Vector3f, Error};
 use std::collections::HashSet;
+use threecrate_core::{Error, Point3f, Result, TriangleMesh, Vector3f};
 
 // ---------------------------------------------------------------------------
 // Shared helpers
@@ -73,7 +73,10 @@ pub struct LaplacianSmoothingConfig {
 
 impl Default for LaplacianSmoothingConfig {
     fn default() -> Self {
-        Self { iterations: 10, lambda: 0.5 }
+        Self {
+            iterations: 10,
+            lambda: 0.5,
+        }
     }
 }
 
@@ -108,7 +111,10 @@ pub fn smooth_laplacian(
     for _ in 0..config.iterations {
         verts = laplacian_step(&verts, &adj, config.lambda);
     }
-    Ok(TriangleMesh::from_vertices_and_faces(verts, mesh.faces.clone()))
+    Ok(TriangleMesh::from_vertices_and_faces(
+        verts,
+        mesh.faces.clone(),
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -129,7 +135,11 @@ pub struct TaubinSmoothingConfig {
 
 impl Default for TaubinSmoothingConfig {
     fn default() -> Self {
-        Self { iterations: 10, lambda: 0.5, mu: -0.53 }
+        Self {
+            iterations: 10,
+            lambda: 0.5,
+            mu: -0.53,
+        }
     }
 }
 
@@ -145,10 +155,7 @@ impl Default for TaubinSmoothingConfig {
 /// # Arguments
 /// * `mesh`   - Input triangle mesh
 /// * `config` - Smoothing parameters (λ > 0, μ < 0, |μ| > λ recommended)
-pub fn smooth_taubin(
-    mesh: &TriangleMesh,
-    config: &TaubinSmoothingConfig,
-) -> Result<TriangleMesh> {
+pub fn smooth_taubin(mesh: &TriangleMesh, config: &TaubinSmoothingConfig) -> Result<TriangleMesh> {
     if mesh.is_empty() {
         return Err(Error::InvalidData("Mesh is empty".to_string()));
     }
@@ -168,7 +175,10 @@ pub fn smooth_taubin(
         verts = laplacian_step(&verts, &adj, config.lambda);
         verts = laplacian_step(&verts, &adj, config.mu);
     }
-    Ok(TriangleMesh::from_vertices_and_faces(verts, mesh.faces.clone()))
+    Ok(TriangleMesh::from_vertices_and_faces(
+        verts,
+        mesh.faces.clone(),
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -191,7 +201,11 @@ pub struct HcSmoothingConfig {
 
 impl Default for HcSmoothingConfig {
     fn default() -> Self {
-        Self { iterations: 10, alpha: 0.0, beta: 0.5 }
+        Self {
+            iterations: 10,
+            alpha: 0.0,
+            beta: 0.5,
+        }
     }
 }
 
@@ -208,10 +222,7 @@ impl Default for HcSmoothingConfig {
 /// # Arguments
 /// * `mesh`   - Input triangle mesh
 /// * `config` - Smoothing parameters (α, β both in [0, 1])
-pub fn smooth_hc(
-    mesh: &TriangleMesh,
-    config: &HcSmoothingConfig,
-) -> Result<TriangleMesh> {
+pub fn smooth_hc(mesh: &TriangleMesh, config: &HcSmoothingConfig) -> Result<TriangleMesh> {
     if mesh.is_empty() {
         return Err(Error::InvalidData("Mesh is empty".to_string()));
     }
@@ -239,7 +250,9 @@ pub fn smooth_hc(
                 if nbrs.is_empty() {
                     return v;
                 }
-                let sum = nbrs.iter().fold(Vector3f::zeros(), |acc, &j| acc + q[j].coords);
+                let sum = nbrs
+                    .iter()
+                    .fold(Vector3f::zeros(), |acc, &j| acc + q[j].coords);
                 Point3f::from(sum / nbrs.len() as f32)
             })
             .collect();
@@ -248,8 +261,7 @@ pub fn smooth_hc(
         // b[i] = q_bar[i] − (α·p[i] + (1−α)·q[i])
         let b: Vec<Vector3f> = (0..q.len())
             .map(|i| {
-                let blend =
-                    original[i].coords * config.alpha + q[i].coords * (1.0 - config.alpha);
+                let blend = original[i].coords * config.alpha + q[i].coords * (1.0 - config.alpha);
                 q_bar[i].coords - blend
             })
             .collect();
@@ -262,8 +274,7 @@ pub fn smooth_hc(
                 let avg_b = if nbrs.is_empty() {
                     Vector3f::zeros()
                 } else {
-                    nbrs.iter().fold(Vector3f::zeros(), |acc, &j| acc + b[j])
-                        / nbrs.len() as f32
+                    nbrs.iter().fold(Vector3f::zeros(), |acc, &j| acc + b[j]) / nbrs.len() as f32
                 };
                 let correction = b[i] * config.beta + avg_b * (1.0 - config.beta);
                 Point3f::from(q_bar[i].coords - correction)
@@ -297,10 +308,14 @@ mod tests {
             Point3f::new(2.0, 2.0, 0.0), // 8
         ];
         let faces = vec![
-            [0, 1, 3], [1, 4, 3],
-            [1, 2, 4], [2, 5, 4],
-            [3, 4, 6], [4, 7, 6],
-            [4, 5, 7], [5, 8, 7],
+            [0, 1, 3],
+            [1, 4, 3],
+            [1, 2, 4],
+            [2, 5, 4],
+            [3, 4, 6],
+            [4, 7, 6],
+            [4, 5, 7],
+            [5, 8, 7],
         ];
         TriangleMesh::from_vertices_and_faces(verts, faces)
     }
@@ -355,7 +370,10 @@ mod tests {
         let before_z = mesh.vertices[4].z;
         let result = smooth_taubin(&mesh, &TaubinSmoothingConfig::default()).unwrap();
         let after_z = result.vertices[4].z;
-        assert!(after_z < before_z, "Taubin should reduce spike: {before_z} → {after_z}");
+        assert!(
+            after_z < before_z,
+            "Taubin should reduce spike: {before_z} → {after_z}"
+        );
     }
 
     #[test]
@@ -364,7 +382,10 @@ mod tests {
         let before_z = mesh.vertices[4].z;
         let result = smooth_hc(&mesh, &HcSmoothingConfig::default()).unwrap();
         let after_z = result.vertices[4].z;
-        assert!(after_z < before_z, "HC should reduce spike: {before_z} → {after_z}");
+        assert!(
+            after_z < before_z,
+            "HC should reduce spike: {before_z} → {after_z}"
+        );
     }
 
     // ---- Taubin shrinks less than pure Laplacian ----
@@ -375,23 +396,42 @@ mod tests {
         // well-defined and the boundary effects of the small spike mesh do not
         // dominate the result.
         let verts = vec![
-            Point3f::new(0.0, 0.0, 0.0), Point3f::new(1.0, 0.0, 0.0),
-            Point3f::new(1.0, 1.0, 0.0), Point3f::new(0.0, 1.0, 0.0),
-            Point3f::new(0.0, 0.0, 1.0), Point3f::new(1.0, 0.0, 1.0),
-            Point3f::new(1.0, 1.0, 1.0), Point3f::new(0.0, 1.0, 1.0),
+            Point3f::new(0.0, 0.0, 0.0),
+            Point3f::new(1.0, 0.0, 0.0),
+            Point3f::new(1.0, 1.0, 0.0),
+            Point3f::new(0.0, 1.0, 0.0),
+            Point3f::new(0.0, 0.0, 1.0),
+            Point3f::new(1.0, 0.0, 1.0),
+            Point3f::new(1.0, 1.0, 1.0),
+            Point3f::new(0.0, 1.0, 1.0),
         ];
         let faces = vec![
-            [0,2,1],[0,3,2], [4,5,6],[4,6,7],
-            [0,1,5],[0,5,4], [3,7,6],[3,6,2],
-            [0,4,7],[0,7,3], [1,2,6],[1,6,5],
+            [0, 2, 1],
+            [0, 3, 2],
+            [4, 5, 6],
+            [4, 6, 7],
+            [0, 1, 5],
+            [0, 5, 4],
+            [3, 7, 6],
+            [3, 6, 2],
+            [0, 4, 7],
+            [0, 7, 3],
+            [1, 2, 6],
+            [1, 6, 5],
         ];
         let mesh = TriangleMesh::from_vertices_and_faces(verts, faces);
 
         // Compute average distance of vertices from their centroid (proxy for "size")
         let avg_dist = |m: &TriangleMesh| {
-            let c: Vector3f = m.vertices.iter().fold(Vector3f::zeros(), |acc, v| acc + v.coords)
+            let c: Vector3f = m
+                .vertices
+                .iter()
+                .fold(Vector3f::zeros(), |acc, v| acc + v.coords)
                 / m.vertices.len() as f32;
-            m.vertices.iter().map(|v| (v.coords - c).magnitude()).sum::<f32>()
+            m.vertices
+                .iter()
+                .map(|v| (v.coords - c).magnitude())
+                .sum::<f32>()
                 / m.vertices.len() as f32
         };
 
@@ -399,12 +439,21 @@ mod tests {
 
         let lap = smooth_laplacian(
             &mesh,
-            &LaplacianSmoothingConfig { iterations: 50, lambda: 0.5 },
-        ).unwrap();
+            &LaplacianSmoothingConfig {
+                iterations: 50,
+                lambda: 0.5,
+            },
+        )
+        .unwrap();
         let tau = smooth_taubin(
             &mesh,
-            &TaubinSmoothingConfig { iterations: 50, lambda: 0.5, mu: -0.53 },
-        ).unwrap();
+            &TaubinSmoothingConfig {
+                iterations: 50,
+                lambda: 0.5,
+                mu: -0.53,
+            },
+        )
+        .unwrap();
 
         let lap_spread = avg_dist(&lap);
         let tau_spread = avg_dist(&tau);
@@ -424,7 +473,10 @@ mod tests {
         let mesh = make_spike_mesh();
         let result = smooth_laplacian(
             &mesh,
-            &LaplacianSmoothingConfig { iterations: 0, lambda: 0.5 },
+            &LaplacianSmoothingConfig {
+                iterations: 0,
+                lambda: 0.5,
+            },
         )
         .unwrap();
         for (a, b) in mesh.vertices.iter().zip(result.vertices.iter()) {
@@ -437,7 +489,11 @@ mod tests {
         let mesh = make_spike_mesh();
         let result = smooth_taubin(
             &mesh,
-            &TaubinSmoothingConfig { iterations: 0, lambda: 0.5, mu: -0.53 },
+            &TaubinSmoothingConfig {
+                iterations: 0,
+                lambda: 0.5,
+                mu: -0.53,
+            },
         )
         .unwrap();
         for (a, b) in mesh.vertices.iter().zip(result.vertices.iter()) {
@@ -448,9 +504,15 @@ mod tests {
     #[test]
     fn test_hc_zero_iterations() {
         let mesh = make_spike_mesh();
-        let result =
-            smooth_hc(&mesh, &HcSmoothingConfig { iterations: 0, alpha: 0.0, beta: 0.5 })
-                .unwrap();
+        let result = smooth_hc(
+            &mesh,
+            &HcSmoothingConfig {
+                iterations: 0,
+                alpha: 0.0,
+                beta: 0.5,
+            },
+        )
+        .unwrap();
         for (a, b) in mesh.vertices.iter().zip(result.vertices.iter()) {
             assert!((a - b).magnitude() < 1e-6);
         }
@@ -467,24 +529,70 @@ mod tests {
     #[test]
     fn test_laplacian_invalid_lambda() {
         let mesh = make_spike_mesh();
-        assert!(smooth_laplacian(&mesh, &LaplacianSmoothingConfig { iterations: 1, lambda: 0.0 }).is_err());
-        assert!(smooth_laplacian(&mesh, &LaplacianSmoothingConfig { iterations: 1, lambda: 1.5 }).is_err());
+        assert!(smooth_laplacian(
+            &mesh,
+            &LaplacianSmoothingConfig {
+                iterations: 1,
+                lambda: 0.0
+            }
+        )
+        .is_err());
+        assert!(smooth_laplacian(
+            &mesh,
+            &LaplacianSmoothingConfig {
+                iterations: 1,
+                lambda: 1.5
+            }
+        )
+        .is_err());
     }
 
     #[test]
     fn test_taubin_invalid_params() {
         let mesh = make_spike_mesh();
         // lambda out of range
-        assert!(smooth_taubin(&mesh, &TaubinSmoothingConfig { iterations: 1, lambda: 0.0, mu: -0.53 }).is_err());
+        assert!(smooth_taubin(
+            &mesh,
+            &TaubinSmoothingConfig {
+                iterations: 1,
+                lambda: 0.0,
+                mu: -0.53
+            }
+        )
+        .is_err());
         // mu non-negative
-        assert!(smooth_taubin(&mesh, &TaubinSmoothingConfig { iterations: 1, lambda: 0.5, mu: 0.1 }).is_err());
+        assert!(smooth_taubin(
+            &mesh,
+            &TaubinSmoothingConfig {
+                iterations: 1,
+                lambda: 0.5,
+                mu: 0.1
+            }
+        )
+        .is_err());
     }
 
     #[test]
     fn test_hc_invalid_params() {
         let mesh = make_spike_mesh();
-        assert!(smooth_hc(&mesh, &HcSmoothingConfig { iterations: 1, alpha: -0.1, beta: 0.5 }).is_err());
-        assert!(smooth_hc(&mesh, &HcSmoothingConfig { iterations: 1, alpha: 0.5, beta: 1.5 }).is_err());
+        assert!(smooth_hc(
+            &mesh,
+            &HcSmoothingConfig {
+                iterations: 1,
+                alpha: -0.1,
+                beta: 0.5
+            }
+        )
+        .is_err());
+        assert!(smooth_hc(
+            &mesh,
+            &HcSmoothingConfig {
+                iterations: 1,
+                alpha: 0.5,
+                beta: 1.5
+            }
+        )
+        .is_err());
     }
 
     #[test]
@@ -504,8 +612,22 @@ mod tests {
     #[test]
     fn test_laplacian_more_iterations_smoother() {
         let mesh = make_spike_mesh();
-        let r1 = smooth_laplacian(&mesh, &LaplacianSmoothingConfig { iterations: 1, lambda: 0.5 }).unwrap();
-        let r5 = smooth_laplacian(&mesh, &LaplacianSmoothingConfig { iterations: 5, lambda: 0.5 }).unwrap();
+        let r1 = smooth_laplacian(
+            &mesh,
+            &LaplacianSmoothingConfig {
+                iterations: 1,
+                lambda: 0.5,
+            },
+        )
+        .unwrap();
+        let r5 = smooth_laplacian(
+            &mesh,
+            &LaplacianSmoothingConfig {
+                iterations: 5,
+                lambda: 0.5,
+            },
+        )
+        .unwrap();
         // More iterations → spike vertex should be lower
         assert!(r5.vertices[4].z < r1.vertices[4].z);
     }

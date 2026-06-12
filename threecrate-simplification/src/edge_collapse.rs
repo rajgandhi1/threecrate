@@ -119,10 +119,22 @@ impl HalfEdgeMesh {
     pub(crate) fn plane_to_quadric(p: &Vector4<f64>) -> Matrix4<f64> {
         let (a, b, c, d) = (p[0], p[1], p[2], p[3]);
         Matrix4::new(
-            a * a, a * b, a * c, a * d,
-            a * b, b * b, b * c, b * d,
-            a * c, b * c, c * c, c * d,
-            a * d, b * d, c * d, d * d,
+            a * a,
+            a * b,
+            a * c,
+            a * d,
+            a * b,
+            b * b,
+            b * c,
+            b * d,
+            a * c,
+            b * c,
+            c * c,
+            c * d,
+            a * d,
+            b * d,
+            c * d,
+            d * d,
         )
     }
 
@@ -136,8 +148,11 @@ impl HalfEdgeMesh {
             let v0 = self.source(he0);
             let v1 = self.half_edges[he0].target;
             let v2 = self.half_edges[he1].target;
-            let plane =
-                Self::compute_plane(&self.positions[v0], &self.positions[v1], &self.positions[v2]);
+            let plane = Self::compute_plane(
+                &self.positions[v0],
+                &self.positions[v1],
+                &self.positions[v2],
+            );
             let q = Self::plane_to_quadric(&plane);
             self.quadrics[v0] += q;
             self.quadrics[v1] += q;
@@ -242,12 +257,7 @@ impl HalfEdgeMesh {
             Point3f::from((self.positions[v1].coords + self.positions[v2].coords) * 0.5)
         };
 
-        let vh = Vector4::new(
-            optimal.x as f64,
-            optimal.y as f64,
-            optimal.z as f64,
-            1.0,
-        );
+        let vh = Vector4::new(optimal.x as f64, optimal.y as f64, optimal.z as f64, 1.0);
         let cost = (vh.transpose() * q * vh)[0].max(0.0);
         (optimal, cost)
     }
@@ -434,9 +444,11 @@ impl HalfEdgeMesh {
             let v1 = self.half_edges[he0].target;
             let v2 = self.half_edges[he1].target;
 
-            if let (Some(&nv0), Some(&nv1), Some(&nv2)) =
-                (old_to_new.get(&v0), old_to_new.get(&v1), old_to_new.get(&v2))
-            {
+            if let (Some(&nv0), Some(&nv1), Some(&nv2)) = (
+                old_to_new.get(&v0),
+                old_to_new.get(&v1),
+                old_to_new.get(&v2),
+            ) {
                 if nv0 != nv1 && nv1 != nv2 && nv2 != nv0 {
                     new_faces.push([nv0, nv1, nv2]);
                 }
@@ -582,7 +594,11 @@ impl EdgeCollapseSimplifier {
     }
 
     /// Rebuild the queue after many collapses to maintain accuracy.
-    fn rebuild_queue(&self, hem: &HalfEdgeMesh, id_offset: usize) -> PriorityQueue<usize, EdgeCost> {
+    fn rebuild_queue(
+        &self,
+        hem: &HalfEdgeMesh,
+        id_offset: usize,
+    ) -> PriorityQueue<usize, EdgeCost> {
         let mut queue = PriorityQueue::new();
         let mut seen_edges: HashSet<(usize, usize)> = HashSet::new();
         let mut edge_id = id_offset;
@@ -757,11 +773,7 @@ mod tests {
             for x in 0..size {
                 let fx = x as f32 / (size - 1) as f32 * std::f32::consts::PI;
                 let fy = y as f32 / (size - 1) as f32 * std::f32::consts::PI;
-                vertices.push(Point3::new(
-                    x as f32,
-                    y as f32,
-                    (fx.sin() * fy.sin()) * 2.0,
-                ));
+                vertices.push(Point3::new(x as f32, y as f32, (fx.sin() * fy.sin()) * 2.0));
             }
         }
         let mut faces = Vec::new();
@@ -949,7 +961,11 @@ mod tests {
                     if i == 0 || i == size - 1 || j == 0 || j == size - 1 {
                         let idx = i * size + j;
                         let p = mesh.vertices[idx];
-                        set.insert(((p.x * 100.0) as i32, (p.y * 100.0) as i32, (p.z * 100.0) as i32));
+                        set.insert((
+                            (p.x * 100.0) as i32,
+                            (p.y * 100.0) as i32,
+                            (p.z * 100.0) as i32,
+                        ));
                     }
                 }
             }
@@ -960,7 +976,13 @@ mod tests {
         let result_positions: HashSet<(i32, i32, i32)> = result
             .vertices
             .iter()
-            .map(|p| ((p.x * 100.0) as i32, (p.y * 100.0) as i32, (p.z * 100.0) as i32))
+            .map(|p| {
+                (
+                    (p.x * 100.0) as i32,
+                    (p.y * 100.0) as i32,
+                    (p.z * 100.0) as i32,
+                )
+            })
             .collect();
 
         let preserved = original_boundary.intersection(&result_positions).count();

@@ -1,5 +1,5 @@
 //! Robust PLY format support
-//! 
+//!
 //! This module provides comprehensive PLY (Polygon File Format) reading and writing
 //! capabilities including:
 //! - ASCII and binary (little/big endian) format support
@@ -8,15 +8,15 @@
 //! - Streaming support for large files
 //! - Structured error handling
 
-use crate::{PointCloudReader, PointCloudWriter, MeshReader, MeshWriter};
-use threecrate_core::{PointCloud, TriangleMesh, Result, Point3f, Vector3f, Error};
-use std::path::Path;
-use std::fs::File;
-use std::io::{BufRead, BufReader, BufWriter, Read};
-use std::collections::HashMap;
-use byteorder::{LittleEndian, BigEndian, ReadBytesExt};
 #[cfg(feature = "io-mmap")]
 use crate::mmap::MmapReader;
+use crate::{MeshReader, MeshWriter, PointCloudReader, PointCloudWriter};
+use byteorder::{BigEndian, LittleEndian, ReadBytesExt};
+use std::collections::HashMap;
+use std::fs::File;
+use std::io::{BufRead, BufReader, BufWriter, Read};
+use std::path::Path;
+use threecrate_core::{Error, Point3f, PointCloud, Result, TriangleMesh, Vector3f};
 
 /// PLY file format variants
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -133,7 +133,7 @@ impl PlyWriteOptions {
             ..Default::default()
         }
     }
-    
+
     /// Create new options with binary little endian format
     pub fn binary_little_endian() -> Self {
         Self {
@@ -141,7 +141,7 @@ impl PlyWriteOptions {
             ..Default::default()
         }
     }
-    
+
     /// Create new options with binary big endian format
     pub fn binary_big_endian() -> Self {
         Self {
@@ -149,39 +149,43 @@ impl PlyWriteOptions {
             ..Default::default()
         }
     }
-    
+
     /// Add a comment to the header
     pub fn with_comment<S: Into<String>>(mut self, comment: S) -> Self {
         self.comments.push(comment.into());
         self
     }
-    
+
     /// Add object info to the header
     pub fn with_obj_info<S: Into<String>>(mut self, info: S) -> Self {
         self.obj_info.push(info.into());
         self
     }
-    
+
     /// Include normals in output
     pub fn with_normals(mut self, include: bool) -> Self {
         self.include_normals = include;
         self
     }
-    
+
     /// Include colors in output
     pub fn with_colors(mut self, include: bool) -> Self {
         self.include_colors = include;
         self
     }
-    
+
     /// Set custom vertex property ordering
     pub fn with_vertex_property_order(mut self, order: Vec<String>) -> Self {
         self.vertex_property_order = Some(order);
         self
     }
-    
+
     /// Add custom vertex property
-    pub fn with_custom_vertex_property<S: Into<String>>(mut self, name: S, values: Vec<PlyValue>) -> Self {
+    pub fn with_custom_vertex_property<S: Into<String>>(
+        mut self,
+        name: S,
+        values: Vec<PlyValue>,
+    ) -> Self {
         self.custom_vertex_properties.push((name.into(), values));
         self
     }
@@ -193,15 +197,15 @@ pub struct RobustPlyWriter;
 impl RobustPlyWriter {
     /// Write point cloud to PLY file with options
     pub fn write_point_cloud<P: AsRef<Path>>(
-        cloud: &PointCloud<Point3f>, 
-        path: P, 
-        options: &PlyWriteOptions
+        cloud: &PointCloud<Point3f>,
+        path: P,
+        options: &PlyWriteOptions,
     ) -> Result<()> {
         let file = File::create(path)?;
         let mut writer = BufWriter::new(file);
         Self::write_point_cloud_to_writer(cloud, &mut writer, options)
     }
-    
+
     /// Write point cloud to writer with options
     pub fn write_point_cloud_to_writer<W: std::io::Write>(
         cloud: &PointCloud<Point3f>,
@@ -219,11 +223,11 @@ impl RobustPlyWriter {
             },
             elements: HashMap::new(),
         };
-        
+
         // Build vertex element definition
         let mut vertex_properties = Vec::new();
         let mut vertex_data = Vec::new();
-        
+
         // Always include x, y, z
         vertex_properties.push(PlyProperty {
             name: "x".to_string(),
@@ -237,11 +241,13 @@ impl RobustPlyWriter {
             name: "z".to_string(),
             property_type: PlyPropertyType::Float,
         });
-        
+
         // Add custom properties if specified
         for (prop_name, _) in &options.custom_vertex_properties {
             // Determine property type from first value
-            if let Some(first_values) = options.custom_vertex_properties.iter()
+            if let Some(first_values) = options
+                .custom_vertex_properties
+                .iter()
                 .find(|(name, _)| name == prop_name)
                 .map(|(_, values)| values)
             {
@@ -254,32 +260,34 @@ impl RobustPlyWriter {
                 }
             }
         }
-        
+
         // Reorder properties if custom order is specified
         if let Some(order) = &options.vertex_property_order {
             vertex_properties.sort_by_key(|prop| {
-                order.iter().position(|name| name == &prop.name)
+                order
+                    .iter()
+                    .position(|name| name == &prop.name)
                     .unwrap_or(order.len())
             });
         }
-        
+
         // Build vertex data
         for (i, point) in cloud.iter().enumerate() {
             let mut vertex_instance = HashMap::new();
             vertex_instance.insert("x".to_string(), PlyValue::Float(point.x));
             vertex_instance.insert("y".to_string(), PlyValue::Float(point.y));
             vertex_instance.insert("z".to_string(), PlyValue::Float(point.z));
-            
+
             // Add custom properties
             for (prop_name, values) in &options.custom_vertex_properties {
                 if i < values.len() {
                     vertex_instance.insert(prop_name.clone(), values[i].clone());
                 }
             }
-            
+
             vertex_data.push(vertex_instance);
         }
-        
+
         // Add vertex element
         ply_data.header.elements.push(PlyElement {
             name: "vertex".to_string(),
@@ -287,11 +295,11 @@ impl RobustPlyWriter {
             properties: vertex_properties,
         });
         ply_data.elements.insert("vertex".to_string(), vertex_data);
-        
+
         // Write PLY data
         Self::write_ply_data(writer, &ply_data)
     }
-    
+
     /// Write triangle mesh to PLY file with options
     pub fn write_mesh<P: AsRef<Path>>(
         mesh: &TriangleMesh,
@@ -302,7 +310,7 @@ impl RobustPlyWriter {
         let mut writer = BufWriter::new(file);
         Self::write_mesh_to_writer(mesh, &mut writer, options)
     }
-    
+
     /// Write triangle mesh to writer with options
     pub fn write_mesh_to_writer<W: std::io::Write>(
         mesh: &TriangleMesh,
@@ -320,11 +328,11 @@ impl RobustPlyWriter {
             },
             elements: HashMap::new(),
         };
-        
+
         // Build vertex element
         let mut vertex_properties = Vec::new();
         let mut vertex_data = Vec::new();
-        
+
         // Always include x, y, z
         vertex_properties.push(PlyProperty {
             name: "x".to_string(),
@@ -338,7 +346,7 @@ impl RobustPlyWriter {
             name: "z".to_string(),
             property_type: PlyPropertyType::Float,
         });
-        
+
         // Add normals if requested and available
         if options.include_normals && mesh.normals.is_some() {
             vertex_properties.push(PlyProperty {
@@ -354,10 +362,12 @@ impl RobustPlyWriter {
                 property_type: PlyPropertyType::Float,
             });
         }
-        
+
         // Add custom vertex properties
         for (prop_name, _) in &options.custom_vertex_properties {
-            if let Some(first_values) = options.custom_vertex_properties.iter()
+            if let Some(first_values) = options
+                .custom_vertex_properties
+                .iter()
                 .find(|(name, _)| name == prop_name)
                 .map(|(_, values)| values)
             {
@@ -370,22 +380,24 @@ impl RobustPlyWriter {
                 }
             }
         }
-        
+
         // Reorder properties if specified
         if let Some(order) = &options.vertex_property_order {
             vertex_properties.sort_by_key(|prop| {
-                order.iter().position(|name| name == &prop.name)
+                order
+                    .iter()
+                    .position(|name| name == &prop.name)
                     .unwrap_or(order.len())
             });
         }
-        
+
         // Build vertex data
         for (i, vertex) in mesh.vertices.iter().enumerate() {
             let mut vertex_instance = HashMap::new();
             vertex_instance.insert("x".to_string(), PlyValue::Float(vertex.x));
             vertex_instance.insert("y".to_string(), PlyValue::Float(vertex.y));
             vertex_instance.insert("z".to_string(), PlyValue::Float(vertex.z));
-            
+
             // Add normals if available and requested
             if options.include_normals {
                 if let Some(normals) = &mesh.normals {
@@ -396,17 +408,17 @@ impl RobustPlyWriter {
                     }
                 }
             }
-            
+
             // Add custom properties
             for (prop_name, values) in &options.custom_vertex_properties {
                 if i < values.len() {
                     vertex_instance.insert(prop_name.clone(), values[i].clone());
                 }
             }
-            
+
             vertex_data.push(vertex_instance);
         }
-        
+
         // Add vertex element
         ply_data.header.elements.push(PlyElement {
             name: "vertex".to_string(),
@@ -414,19 +426,17 @@ impl RobustPlyWriter {
             properties: vertex_properties,
         });
         ply_data.elements.insert("vertex".to_string(), vertex_data);
-        
+
         // Build face element
         if !mesh.faces.is_empty() {
-            let face_properties = vec![
-                PlyProperty {
-                    name: "vertex_indices".to_string(),
-                    property_type: PlyPropertyType::List(
-                        Box::new(PlyPropertyType::UChar),
-                        Box::new(PlyPropertyType::Int),
-                    ),
-                },
-            ];
-            
+            let face_properties = vec![PlyProperty {
+                name: "vertex_indices".to_string(),
+                property_type: PlyPropertyType::List(
+                    Box::new(PlyPropertyType::UChar),
+                    Box::new(PlyPropertyType::Int),
+                ),
+            }];
+
             let mut face_data = Vec::new();
             for face in &mesh.faces {
                 let mut face_instance = HashMap::new();
@@ -438,7 +448,7 @@ impl RobustPlyWriter {
                 face_instance.insert("vertex_indices".to_string(), PlyValue::List(indices));
                 face_data.push(face_instance);
             }
-            
+
             ply_data.header.elements.push(PlyElement {
                 name: "face".to_string(),
                 count: mesh.faces.len(),
@@ -446,47 +456,51 @@ impl RobustPlyWriter {
             });
             ply_data.elements.insert("face".to_string(), face_data);
         }
-        
+
         // Write PLY data
         Self::write_ply_data(writer, &ply_data)
     }
-    
+
     /// Write PLY data to writer
     fn write_ply_data<W: std::io::Write>(writer: &mut W, ply_data: &PlyData) -> Result<()> {
         // Write header
         Self::write_header(writer, &ply_data.header)?;
-        
+
         // Write element data
         match ply_data.header.format {
             PlyFormat::Ascii => Self::write_ascii_data(writer, ply_data)?,
-            PlyFormat::BinaryLittleEndian => Self::write_binary_data::<LittleEndian, _>(writer, ply_data)?,
-            PlyFormat::BinaryBigEndian => Self::write_binary_data::<BigEndian, _>(writer, ply_data)?,
+            PlyFormat::BinaryLittleEndian => {
+                Self::write_binary_data::<LittleEndian, _>(writer, ply_data)?
+            }
+            PlyFormat::BinaryBigEndian => {
+                Self::write_binary_data::<BigEndian, _>(writer, ply_data)?
+            }
         }
-        
+
         Ok(())
     }
-    
+
     /// Write PLY header
     fn write_header<W: std::io::Write>(writer: &mut W, header: &PlyHeader) -> Result<()> {
         writeln!(writer, "ply")?;
-        
+
         let format_str = match header.format {
             PlyFormat::Ascii => "ascii",
             PlyFormat::BinaryLittleEndian => "binary_little_endian",
             PlyFormat::BinaryBigEndian => "binary_big_endian",
         };
         writeln!(writer, "format {} {}", format_str, header.version)?;
-        
+
         // Write comments
         for comment in &header.comments {
             writeln!(writer, "comment {}", comment)?;
         }
-        
+
         // Write obj_info
         for info in &header.obj_info {
             writeln!(writer, "obj_info {}", info)?;
         }
-        
+
         // Write elements and properties
         for element in &header.elements {
             writeln!(writer, "element {} {}", element.name, element.count)?;
@@ -494,18 +508,25 @@ impl RobustPlyWriter {
                 Self::write_property_definition(writer, property)?;
             }
         }
-        
+
         writeln!(writer, "end_header")?;
         Ok(())
     }
-    
+
     /// Write property definition
-    fn write_property_definition<W: std::io::Write>(writer: &mut W, property: &PlyProperty) -> Result<()> {
+    fn write_property_definition<W: std::io::Write>(
+        writer: &mut W,
+        property: &PlyProperty,
+    ) -> Result<()> {
         match &property.property_type {
             PlyPropertyType::List(count_type, item_type) => {
                 let count_str = Self::property_type_to_string(count_type);
                 let item_str = Self::property_type_to_string(item_type);
-                writeln!(writer, "property list {} {} {}", count_str, item_str, property.name)?;
+                writeln!(
+                    writer,
+                    "property list {} {} {}",
+                    count_str, item_str, property.name
+                )?;
             }
             _ => {
                 let type_str = Self::property_type_to_string(&property.property_type);
@@ -514,7 +535,7 @@ impl RobustPlyWriter {
         }
         Ok(())
     }
-    
+
     /// Convert property type to string
     fn property_type_to_string(prop_type: &PlyPropertyType) -> &'static str {
         match prop_type {
@@ -529,27 +550,27 @@ impl RobustPlyWriter {
             PlyPropertyType::List(_, _) => "list", // Should not be called directly for lists
         }
     }
-    
+
     /// Write ASCII format data
     fn write_ascii_data<W: std::io::Write>(writer: &mut W, ply_data: &PlyData) -> Result<()> {
         for element_def in &ply_data.header.elements {
             if let Some(element_data) = ply_data.elements.get(&element_def.name) {
                 for instance in element_data {
                     let mut values = Vec::new();
-                    
+
                     for property in &element_def.properties {
                         if let Some(value) = instance.get(&property.name) {
                             Self::format_ascii_value(value, &mut values)?;
                         }
                     }
-                    
+
                     writeln!(writer, "{}", values.join(" "))?;
                 }
             }
         }
         Ok(())
     }
-    
+
     /// Format a value for ASCII output
     fn format_ascii_value(value: &PlyValue, output: &mut Vec<String>) -> Result<()> {
         match value {
@@ -570,13 +591,12 @@ impl RobustPlyWriter {
         }
         Ok(())
     }
-    
+
     /// Write binary format data
     fn write_binary_data<E: byteorder::ByteOrder, W: std::io::Write>(
         writer: &mut W,
         ply_data: &PlyData,
     ) -> Result<()> {
-        
         for element_def in &ply_data.header.elements {
             if let Some(element_data) = ply_data.elements.get(&element_def.name) {
                 for instance in element_data {
@@ -590,14 +610,14 @@ impl RobustPlyWriter {
         }
         Ok(())
     }
-    
+
     /// Write a binary value
     fn write_binary_value<E: byteorder::ByteOrder, W: std::io::Write>(
         writer: &mut W,
         value: &PlyValue,
     ) -> Result<()> {
         use byteorder::WriteBytesExt;
-        
+
         match value {
             PlyValue::Char(v) => writer.write_i8(*v)?,
             PlyValue::UChar(v) => writer.write_u8(*v)?,
@@ -617,7 +637,7 @@ impl RobustPlyWriter {
         }
         Ok(())
     }
-    
+
     /// Determine property type from PLY value
     fn value_to_property_type(value: &PlyValue) -> PlyPropertyType {
         match value {
@@ -646,14 +666,14 @@ impl RobustPlyReader {
     pub fn read_ply_data<R: BufRead>(reader: &mut R) -> Result<PlyData> {
         let header = Self::read_header(reader)?;
         let elements = Self::read_elements(reader, &header)?;
-        
+
         Ok(PlyData { header, elements })
     }
-    
+
     /// Read PLY file from path
     pub fn read_ply_file<P: AsRef<Path>>(path: P) -> Result<PlyData> {
         let path = path.as_ref();
-        
+
         // Try memory-mapped reading for binary files if feature is enabled
         #[cfg(feature = "io-mmap")]
         {
@@ -661,7 +681,7 @@ impl RobustPlyReader {
                 return Ok(ply_data);
             }
         }
-        
+
         // Fall back to standard buffered reading
         let file = File::open(path)?;
         let mut reader = BufReader::new(file);
@@ -672,17 +692,17 @@ impl RobustPlyReader {
     #[cfg(feature = "io-mmap")]
     fn try_read_ply_mmap<P: AsRef<Path>>(path: P) -> Result<Option<PlyData>> {
         let path = path.as_ref();
-        
+
         // Check if we should use memory mapping
         if !crate::mmap::should_use_mmap(path) {
             return Ok(None);
         }
-        
+
         // First, read the header using standard I/O to determine format
         let file = File::open(path)?;
         let mut reader = BufReader::new(file);
         let header = Self::read_header(&mut reader)?;
-        
+
         // Only use mmap for binary formats
         match header.format {
             PlyFormat::BinaryLittleEndian | PlyFormat::BinaryBigEndian => {
@@ -691,29 +711,31 @@ impl RobustPlyReader {
                 let mut reader = BufReader::new(file);
                 let mut header_size = 0;
                 let mut line = String::new();
-                
+
                 loop {
                     let line_start = header_size;
                     line.clear();
                     let bytes_read = reader.read_line(&mut line)?;
                     if bytes_read == 0 {
-                        return Err(Error::InvalidData("Unexpected end of file in header".to_string()));
+                        return Err(Error::InvalidData(
+                            "Unexpected end of file in header".to_string(),
+                        ));
                     }
                     header_size += bytes_read;
-                    
+
                     if line.trim() == "end_header" {
                         break;
                     }
                 }
-                
+
                 // Now use memory mapping for the data section
                 if let Some(mut mmap_reader) = MmapReader::new(path)? {
                     // Skip to the data section
                     mmap_reader.seek(header_size)?;
-                    
+
                     // Read elements using memory mapping
                     let elements = Self::read_elements_mmap(&mut mmap_reader, &header)?;
-                    
+
                     return Ok(Some(PlyData { header, elements }));
                 }
             }
@@ -722,54 +744,65 @@ impl RobustPlyReader {
                 return Ok(None);
             }
         }
-        
+
         Ok(None)
     }
 
     /// Read elements using memory mapping
     #[cfg(feature = "io-mmap")]
     fn read_elements_mmap(
-        reader: &mut MmapReader, 
-        header: &PlyHeader
+        reader: &mut MmapReader,
+        header: &PlyHeader,
     ) -> Result<HashMap<String, Vec<HashMap<String, PlyValue>>>> {
         let mut elements = HashMap::new();
-        
+
         for element_def in &header.elements {
             let mut element_data = Vec::with_capacity(element_def.count);
-            
+
             for _ in 0..element_def.count {
                 let mut instance = HashMap::new();
-                
+
                 match header.format {
                     PlyFormat::BinaryLittleEndian => {
                         for property in &element_def.properties {
-                            let value = Self::read_binary_property_value_mmap_le(reader, &property.property_type)?;
+                            let value = Self::read_binary_property_value_mmap_le(
+                                reader,
+                                &property.property_type,
+                            )?;
                             instance.insert(property.name.clone(), value);
                         }
                     }
                     PlyFormat::BinaryBigEndian => {
                         for property in &element_def.properties {
-                            let value = Self::read_binary_property_value_mmap_be(reader, &property.property_type)?;
+                            let value = Self::read_binary_property_value_mmap_be(
+                                reader,
+                                &property.property_type,
+                            )?;
                             instance.insert(property.name.clone(), value);
                         }
                     }
                     PlyFormat::Ascii => {
-                        return Err(Error::InvalidData("ASCII format should not use mmap reader".to_string()));
+                        return Err(Error::InvalidData(
+                            "ASCII format should not use mmap reader".to_string(),
+                        ));
                     }
                 }
-                
+
                 element_data.push(instance);
             }
-            
+
             elements.insert(element_def.name.clone(), element_data);
         }
-        
+
         Ok(elements)
     }
 
     /// Read binary property value using memory mapping (little endian)
     #[cfg(feature = "io-mmap")]
-    fn read_binary_property_value_mmap_le(reader: &mut MmapReader, property_type: &PlyPropertyType) -> Result<PlyValue> {
+    fn read_binary_property_value_mmap_le(
+        reader: &mut MmapReader,
+        property_type: &PlyPropertyType,
+    ) -> Result<PlyValue> {
         match property_type {
             PlyPropertyType::Char => Ok(PlyValue::Char(reader.read_u8()? as i8)),
             PlyPropertyType::UChar => Ok(PlyValue::UChar(reader.read_u8()?)),
@@ -782,13 +815,13 @@ impl RobustPlyReader {
             PlyPropertyType::List(count_type, item_type) => {
                 let count_value = Self::read_binary_property_value_mmap_le(reader, count_type)?;
                 let count = count_value.as_usize()?;
-                
+
                 let mut list = Vec::with_capacity(count);
                 for _ in 0..count {
                     let item = Self::read_binary_property_value_mmap_le(reader, item_type)?;
                     list.push(item);
                 }
-                
+
                 Ok(PlyValue::List(list))
             }
         }
@@ -796,7 +829,10 @@ impl RobustPlyReader {
 
     /// Read binary property value using memory mapping (big endian)
     #[cfg(feature = "io-mmap")]
-    fn read_binary_property_value_mmap_be(reader: &mut MmapReader, property_type: &PlyPropertyType) -> Result<PlyValue> {
+    fn read_binary_property_value_mmap_be(
+        reader: &mut MmapReader,
+        property_type: &PlyPropertyType,
+    ) -> Result<PlyValue> {
         match property_type {
             PlyPropertyType::Char => Ok(PlyValue::Char(reader.read_u8()? as i8)),
             PlyPropertyType::UChar => Ok(PlyValue::UChar(reader.read_u8()?)),
@@ -809,18 +845,18 @@ impl RobustPlyReader {
             PlyPropertyType::List(count_type, item_type) => {
                 let count_value = Self::read_binary_property_value_mmap_be(reader, count_type)?;
                 let count = count_value.as_usize()?;
-                
+
                 let mut list = Vec::with_capacity(count);
                 for _ in 0..count {
                     let item = Self::read_binary_property_value_mmap_be(reader, item_type)?;
                     list.push(item);
                 }
-                
+
                 Ok(PlyValue::List(list))
             }
         }
     }
-    
+
     /// Read and parse PLY header
     fn read_header<R: BufRead>(reader: &mut R) -> Result<PlyHeader> {
         let mut format = None;
@@ -828,32 +864,36 @@ impl RobustPlyReader {
         let mut elements = Vec::new();
         let mut comments = Vec::new();
         let mut obj_info = Vec::new();
-        
+
         let mut line = String::new();
-        
+
         // Read magic number
         reader.read_line(&mut line)?;
         if line.trim() != "ply" {
-            return Err(Error::InvalidData("Not a PLY file - missing magic number".to_string()));
+            return Err(Error::InvalidData(
+                "Not a PLY file - missing magic number".to_string(),
+            ));
         }
-        
+
         // Parse header lines
         loop {
             line.clear();
             if reader.read_line(&mut line)? == 0 {
-                return Err(Error::InvalidData("Unexpected end of file in header".to_string()));
+                return Err(Error::InvalidData(
+                    "Unexpected end of file in header".to_string(),
+                ));
             }
-            
+
             let line = line.trim();
             if line == "end_header" {
                 break;
             }
-            
+
             let parts: Vec<&str> = line.split_whitespace().collect();
             if parts.is_empty() {
                 continue;
             }
-            
+
             match parts[0] {
                 "format" => {
                     if parts.len() < 3 {
@@ -863,7 +903,9 @@ impl RobustPlyReader {
                         "ascii" => PlyFormat::Ascii,
                         "binary_little_endian" => PlyFormat::BinaryLittleEndian,
                         "binary_big_endian" => PlyFormat::BinaryBigEndian,
-                        _ => return Err(Error::InvalidData(format!("Unknown format: {}", parts[1]))),
+                        _ => {
+                            return Err(Error::InvalidData(format!("Unknown format: {}", parts[1])))
+                        }
                     });
                     version = parts[2].to_string();
                 }
@@ -882,7 +924,8 @@ impl RobustPlyReader {
                         return Err(Error::InvalidData("Invalid element line".to_string()));
                     }
                     let name = parts[1].to_string();
-                    let count: usize = parts[2].parse()
+                    let count: usize = parts[2]
+                        .parse()
                         .map_err(|_| Error::InvalidData("Invalid element count".to_string()))?;
                     elements.push(PlyElement {
                         name,
@@ -902,9 +945,10 @@ impl RobustPlyReader {
                 }
             }
         }
-        
-        let format = format.ok_or_else(|| Error::InvalidData("Missing format specification".to_string()))?;
-        
+
+        let format =
+            format.ok_or_else(|| Error::InvalidData("Missing format specification".to_string()))?;
+
         Ok(PlyHeader {
             format,
             version,
@@ -913,32 +957,39 @@ impl RobustPlyReader {
             obj_info,
         })
     }
-    
+
     /// Parse a property definition
     fn parse_property(parts: &[&str]) -> Result<PlyProperty> {
         if parts.is_empty() {
             return Err(Error::InvalidData("Empty property definition".to_string()));
         }
-        
+
         let property_type = if parts[0] == "list" {
             if parts.len() < 4 {
-                return Err(Error::InvalidData("Invalid list property definition".to_string()));
+                return Err(Error::InvalidData(
+                    "Invalid list property definition".to_string(),
+                ));
             }
             let count_type = Self::parse_scalar_type(parts[1])?;
             let item_type = Self::parse_scalar_type(parts[2])?;
             PlyPropertyType::List(Box::new(count_type), Box::new(item_type))
         } else {
             if parts.len() < 2 {
-                return Err(Error::InvalidData("Invalid property definition".to_string()));
+                return Err(Error::InvalidData(
+                    "Invalid property definition".to_string(),
+                ));
             }
             Self::parse_scalar_type(parts[0])?
         };
-        
+
         let name = parts.last().unwrap().to_string();
-        
-        Ok(PlyProperty { name, property_type })
+
+        Ok(PlyProperty {
+            name,
+            property_type,
+        })
     }
-    
+
     /// Parse a scalar type
     fn parse_scalar_type(type_str: &str) -> Result<PlyPropertyType> {
         match type_str {
@@ -950,106 +1001,134 @@ impl RobustPlyReader {
             "uint" | "uint32" => Ok(PlyPropertyType::UInt),
             "float" | "float32" => Ok(PlyPropertyType::Float),
             "double" | "float64" => Ok(PlyPropertyType::Double),
-            _ => Err(Error::InvalidData(format!("Unknown property type: {}", type_str))),
+            _ => Err(Error::InvalidData(format!(
+                "Unknown property type: {}",
+                type_str
+            ))),
         }
     }
-    
+
     /// Read all elements according to header specification
-    fn read_elements<R: BufRead>(reader: &mut R, header: &PlyHeader) -> Result<HashMap<String, Vec<HashMap<String, PlyValue>>>> {
+    fn read_elements<R: BufRead>(
+        reader: &mut R,
+        header: &PlyHeader,
+    ) -> Result<HashMap<String, Vec<HashMap<String, PlyValue>>>> {
         let mut elements = HashMap::new();
-        
+
         for element_def in &header.elements {
             let mut element_data = Vec::with_capacity(element_def.count);
-            
+
             for _ in 0..element_def.count {
                 let mut instance = HashMap::new();
-                
+
                 match header.format {
                     PlyFormat::Ascii => {
                         let mut line = String::new();
                         reader.read_line(&mut line)?;
                         let values = line.trim().split_whitespace().collect::<Vec<_>>();
                         let mut value_idx = 0;
-                        
+
                         for property in &element_def.properties {
-                            let value = Self::read_ascii_property_value(&values, &mut value_idx, &property.property_type)?;
+                            let value = Self::read_ascii_property_value(
+                                &values,
+                                &mut value_idx,
+                                &property.property_type,
+                            )?;
                             instance.insert(property.name.clone(), value);
                         }
                     }
                     PlyFormat::BinaryLittleEndian => {
                         for property in &element_def.properties {
-                            let value = Self::read_binary_property_value::<LittleEndian, _>(reader, &property.property_type)?;
+                            let value = Self::read_binary_property_value::<LittleEndian, _>(
+                                reader,
+                                &property.property_type,
+                            )?;
                             instance.insert(property.name.clone(), value);
                         }
                     }
                     PlyFormat::BinaryBigEndian => {
                         for property in &element_def.properties {
-                            let value = Self::read_binary_property_value::<BigEndian, _>(reader, &property.property_type)?;
+                            let value = Self::read_binary_property_value::<BigEndian, _>(
+                                reader,
+                                &property.property_type,
+                            )?;
                             instance.insert(property.name.clone(), value);
                         }
                     }
                 }
-                
+
                 element_data.push(instance);
             }
-            
+
             elements.insert(element_def.name.clone(), element_data);
         }
-        
+
         Ok(elements)
     }
-    
+
     /// Read ASCII property value
-    fn read_ascii_property_value(values: &[&str], value_idx: &mut usize, property_type: &PlyPropertyType) -> Result<PlyValue> {
+    fn read_ascii_property_value(
+        values: &[&str],
+        value_idx: &mut usize,
+        property_type: &PlyPropertyType,
+    ) -> Result<PlyValue> {
         if *value_idx >= values.len() {
             return Err(Error::InvalidData("Not enough values in line".to_string()));
         }
-        
+
         match property_type {
             PlyPropertyType::Char => {
-                let val = values[*value_idx].parse::<i8>()
+                let val = values[*value_idx]
+                    .parse::<i8>()
                     .map_err(|_| Error::InvalidData("Invalid char value".to_string()))?;
                 *value_idx += 1;
                 Ok(PlyValue::Char(val))
             }
             PlyPropertyType::UChar => {
-                let val = values[*value_idx].parse::<u8>()
+                let val = values[*value_idx]
+                    .parse::<u8>()
                     .map_err(|_| Error::InvalidData("Invalid uchar value".to_string()))?;
                 *value_idx += 1;
                 Ok(PlyValue::UChar(val))
             }
             PlyPropertyType::Short => {
-                let val = values[*value_idx].parse::<i16>()
+                let val = values[*value_idx]
+                    .parse::<i16>()
                     .map_err(|_| Error::InvalidData("Invalid short value".to_string()))?;
                 *value_idx += 1;
                 Ok(PlyValue::Short(val))
             }
             PlyPropertyType::UShort => {
-                let val = values[*value_idx].parse::<u16>()
+                let val = values[*value_idx]
+                    .parse::<u16>()
                     .map_err(|_| Error::InvalidData("Invalid ushort value".to_string()))?;
                 *value_idx += 1;
                 Ok(PlyValue::UShort(val))
             }
             PlyPropertyType::Int => {
-                let val = values[*value_idx].parse::<i32>()
+                let val = values[*value_idx]
+                    .parse::<i32>()
                     .map_err(|_| Error::InvalidData("Invalid int value".to_string()))?;
                 *value_idx += 1;
                 Ok(PlyValue::Int(val))
             }
             PlyPropertyType::UInt => {
-                let val = values[*value_idx].parse::<u32>()
+                let val = values[*value_idx]
+                    .parse::<u32>()
                     .map_err(|_| Error::InvalidData("Invalid uint value".to_string()))?;
                 *value_idx += 1;
                 Ok(PlyValue::UInt(val))
             }
             PlyPropertyType::Float => {
-                let val = values[*value_idx].parse::<f32>()
+                let val = values[*value_idx]
+                    .parse::<f32>()
                     .map_err(|_| Error::InvalidData("Invalid float value".to_string()))?;
                 *value_idx += 1;
                 Ok(PlyValue::Float(val))
             }
             PlyPropertyType::Double => {
-                let val = values[*value_idx].parse::<f64>()
+                let val = values[*value_idx]
+                    .parse::<f64>()
                     .map_err(|_| Error::InvalidData("Invalid double value".to_string()))?;
                 *value_idx += 1;
                 Ok(PlyValue::Double(val))
@@ -1057,20 +1136,23 @@ impl RobustPlyReader {
             PlyPropertyType::List(count_type, item_type) => {
                 let count_value = Self::read_ascii_property_value(values, value_idx, count_type)?;
                 let count = count_value.as_usize()?;
-                
+
                 let mut list = Vec::with_capacity(count);
                 for _ in 0..count {
                     let item = Self::read_ascii_property_value(values, value_idx, item_type)?;
                     list.push(item);
                 }
-                
+
                 Ok(PlyValue::List(list))
             }
         }
     }
-    
+
     /// Read binary property value
-    fn read_binary_property_value<E: byteorder::ByteOrder, R: Read>(reader: &mut R, property_type: &PlyPropertyType) -> Result<PlyValue> {
+    fn read_binary_property_value<E: byteorder::ByteOrder, R: Read>(
+        reader: &mut R,
+        property_type: &PlyPropertyType,
+    ) -> Result<PlyValue> {
         match property_type {
             PlyPropertyType::Char => Ok(PlyValue::Char(reader.read_i8()?)),
             PlyPropertyType::UChar => Ok(PlyValue::UChar(reader.read_u8()?)),
@@ -1083,13 +1165,13 @@ impl RobustPlyReader {
             PlyPropertyType::List(count_type, item_type) => {
                 let count_value = Self::read_binary_property_value::<E, _>(reader, count_type)?;
                 let count = count_value.as_usize()?;
-                
+
                 let mut list = Vec::with_capacity(count);
                 for _ in 0..count {
                     let item = Self::read_binary_property_value::<E, _>(reader, item_type)?;
                     list.push(item);
                 }
-                
+
                 Ok(PlyValue::List(list))
             }
         }
@@ -1111,7 +1193,7 @@ impl PlyValue {
             _ => Err(Error::InvalidData("Cannot convert list to f32".to_string())),
         }
     }
-    
+
     /// Convert PLY value to usize
     pub fn as_usize(&self) -> Result<usize> {
         match self {
@@ -1119,16 +1201,16 @@ impl PlyValue {
             PlyValue::UShort(v) => Ok(*v as usize),
             PlyValue::UInt(v) => Ok(*v as usize),
             PlyValue::Int(v) if *v >= 0 => Ok(*v as usize),
-            _ => Err(Error::InvalidData("Cannot convert value to usize".to_string())),
+            _ => Err(Error::InvalidData(
+                "Cannot convert value to usize".to_string(),
+            )),
         }
     }
-    
+
     /// Convert PLY value to Vec<usize> (for face indices)
     pub fn as_usize_list(&self) -> Result<Vec<usize>> {
         match self {
-            PlyValue::List(values) => {
-                values.iter().map(|v| v.as_usize()).collect()
-            }
+            PlyValue::List(values) => values.iter().map(|v| v.as_usize()).collect(),
             _ => Err(Error::InvalidData("Value is not a list".to_string())),
         }
     }
@@ -1143,28 +1225,31 @@ impl crate::registry::PointCloudReader for PlyReader {
     fn read_point_cloud(&self, path: &Path) -> Result<PointCloud<Point3f>> {
         // Use the robust reader for better format support
         let ply_data = RobustPlyReader::read_ply_file(path)?;
-        
+
         let mut points = Vec::new();
-        
+
         if let Some(vertex_elements) = ply_data.elements.get("vertex") {
             for vertex in vertex_elements {
-                let x = vertex.get("x")
+                let x = vertex
+                    .get("x")
                     .ok_or_else(|| Error::InvalidData("Missing x coordinate".to_string()))?
                     .as_f32()?;
-                let y = vertex.get("y")
+                let y = vertex
+                    .get("y")
                     .ok_or_else(|| Error::InvalidData("Missing y coordinate".to_string()))?
                     .as_f32()?;
-                let z = vertex.get("z")
+                let z = vertex
+                    .get("z")
                     .ok_or_else(|| Error::InvalidData("Missing z coordinate".to_string()))?
                     .as_f32()?;
-                
+
                 points.push(Point3f::new(x, y, z));
             }
         }
-        
+
         Ok(PointCloud::from_points(points))
     }
-    
+
     fn can_read(&self, path: &Path) -> bool {
         // Check if file starts with "ply"
         if let Ok(mut file) = File::open(path) {
@@ -1175,7 +1260,7 @@ impl crate::registry::PointCloudReader for PlyReader {
         }
         false
     }
-    
+
     fn format_name(&self) -> &'static str {
         "ply"
     }
@@ -1184,25 +1269,28 @@ impl crate::registry::PointCloudReader for PlyReader {
 impl crate::registry::MeshReader for PlyReader {
     fn read_mesh(&self, path: &Path) -> Result<TriangleMesh> {
         let ply_data = RobustPlyReader::read_ply_file(path)?;
-        
+
         // Extract vertices
         let mut vertices = Vec::new();
         if let Some(vertex_elements) = ply_data.elements.get("vertex") {
             for vertex in vertex_elements {
-                let x = vertex.get("x")
+                let x = vertex
+                    .get("x")
                     .ok_or_else(|| Error::InvalidData("Missing x coordinate".to_string()))?
                     .as_f32()?;
-                let y = vertex.get("y")
+                let y = vertex
+                    .get("y")
                     .ok_or_else(|| Error::InvalidData("Missing y coordinate".to_string()))?
                     .as_f32()?;
-                let z = vertex.get("z")
+                let z = vertex
+                    .get("z")
                     .ok_or_else(|| Error::InvalidData("Missing z coordinate".to_string()))?
                     .as_f32()?;
-                
+
                 vertices.push(Point3f::new(x, y, z));
             }
         }
-        
+
         // Extract faces
         let mut faces = Vec::new();
         if let Some(face_elements) = ply_data.elements.get("face") {
@@ -1213,9 +1301,11 @@ impl crate::registry::MeshReader for PlyReader {
                 } else if let Some(vertex_index) = face.get("vertex_index") {
                     vertex_index.as_usize_list()?
                 } else {
-                    return Err(Error::InvalidData("Face missing vertex indices".to_string()));
+                    return Err(Error::InvalidData(
+                        "Face missing vertex indices".to_string(),
+                    ));
                 };
-                
+
                 // Convert to triangles (assuming triangular faces or taking first 3 vertices)
                 if indices.len() >= 3 {
                     faces.push([indices[0], indices[1], indices[2]]);
@@ -1226,29 +1316,23 @@ impl crate::registry::MeshReader for PlyReader {
                 }
             }
         }
-        
+
         // Extract normals if available
         let normals = if let Some(vertex_elements) = ply_data.elements.get("vertex") {
             let mut normals = Vec::new();
             let mut has_normals = true;
-            
+
             for vertex in vertex_elements {
-                if let (Some(nx), Some(ny), Some(nz)) = (
-                    vertex.get("nx"),
-                    vertex.get("ny"), 
-                    vertex.get("nz"),
-                ) {
-                    normals.push(Vector3f::new(
-                        nx.as_f32()?,
-                        ny.as_f32()?,
-                        nz.as_f32()?,
-                    ));
+                if let (Some(nx), Some(ny), Some(nz)) =
+                    (vertex.get("nx"), vertex.get("ny"), vertex.get("nz"))
+                {
+                    normals.push(Vector3f::new(nx.as_f32()?, ny.as_f32()?, nz.as_f32()?));
                 } else {
                     has_normals = false;
                     break;
                 }
             }
-            
+
             if has_normals {
                 Some(normals)
             } else {
@@ -1257,15 +1341,15 @@ impl crate::registry::MeshReader for PlyReader {
         } else {
             None
         };
-        
+
         let mut mesh = TriangleMesh::from_vertices_and_faces(vertices, faces);
         if let Some(normals) = normals {
             mesh.set_normals(normals);
         }
-        
+
         Ok(mesh)
     }
-    
+
     fn can_read(&self, path: &Path) -> bool {
         // Check if file starts with "ply"
         if let Ok(mut file) = File::open(path) {
@@ -1276,7 +1360,7 @@ impl crate::registry::MeshReader for PlyReader {
         }
         false
     }
-    
+
     fn format_name(&self) -> &'static str {
         "ply"
     }
@@ -1286,16 +1370,19 @@ impl crate::registry::PointCloudWriter for PlyWriter {
     fn write_point_cloud(&self, cloud: &PointCloud<Point3f>, path: &Path) -> Result<()> {
         // Use the legacy ply-rs for writing for now
         use ply_rs::{
+            ply::{
+                Addable, DefaultElement, ElementDef, Ply, Property, PropertyDef, PropertyType,
+                ScalarType,
+            },
             writer::Writer,
-            ply::{Property, PropertyDef, PropertyType, ScalarType, ElementDef, Ply, Addable, DefaultElement},
         };
-        
+
         let file = File::create(path)?;
         let mut writer = BufWriter::new(file);
-        
+
         // Create PLY structure
         let mut ply = Ply::<DefaultElement>::new();
-        
+
         // Define vertex element
         let mut vertex_element = ElementDef::new("vertex".to_string());
         vertex_element.count = cloud.len();
@@ -1311,9 +1398,9 @@ impl crate::registry::PointCloudWriter for PlyWriter {
             "z".to_string(),
             PropertyType::Scalar(ScalarType::Float),
         ));
-        
+
         ply.header.elements.add(vertex_element);
-        
+
         // Add vertex data
         let mut vertices = Vec::new();
         for point in &cloud.points {
@@ -1324,14 +1411,14 @@ impl crate::registry::PointCloudWriter for PlyWriter {
             vertices.push(vertex);
         }
         ply.payload.insert("vertex".to_string(), vertices);
-        
+
         // Write PLY file
         let writer_instance = Writer::new();
         writer_instance.write_ply(&mut writer, &mut ply)?;
-        
+
         Ok(())
     }
-    
+
     fn format_name(&self) -> &'static str {
         "ply"
     }
@@ -1341,16 +1428,19 @@ impl crate::registry::MeshWriter for PlyWriter {
     fn write_mesh(&self, mesh: &TriangleMesh, path: &Path) -> Result<()> {
         // Use the legacy ply-rs for writing for now
         use ply_rs::{
+            ply::{
+                Addable, DefaultElement, ElementDef, Ply, Property, PropertyDef, PropertyType,
+                ScalarType,
+            },
             writer::Writer,
-            ply::{Property, PropertyDef, PropertyType, ScalarType, ElementDef, Ply, Addable, DefaultElement},
         };
-        
+
         let file = File::create(path)?;
         let mut writer = BufWriter::new(file);
-        
+
         // Create PLY structure
         let mut ply = Ply::<DefaultElement>::new();
-        
+
         // Define vertex element
         let mut vertex_element = ElementDef::new("vertex".to_string());
         vertex_element.count = mesh.vertices.len();
@@ -1366,7 +1456,7 @@ impl crate::registry::MeshWriter for PlyWriter {
             "z".to_string(),
             PropertyType::Scalar(ScalarType::Float),
         ));
-        
+
         // Add normal properties if available
         if mesh.normals.is_some() {
             vertex_element.properties.add(PropertyDef::new(
@@ -1382,9 +1472,9 @@ impl crate::registry::MeshWriter for PlyWriter {
                 PropertyType::Scalar(ScalarType::Float),
             ));
         }
-        
+
         ply.header.elements.add(vertex_element);
-        
+
         // Add vertex data
         let mut vertices = Vec::new();
         for (i, point) in mesh.vertices.iter().enumerate() {
@@ -1392,7 +1482,7 @@ impl crate::registry::MeshWriter for PlyWriter {
             vertex.insert("x".to_string(), Property::Float(point.x));
             vertex.insert("y".to_string(), Property::Float(point.y));
             vertex.insert("z".to_string(), Property::Float(point.z));
-            
+
             // Add normals if available
             if let Some(ref normals) = mesh.normals {
                 if i < normals.len() {
@@ -1401,11 +1491,11 @@ impl crate::registry::MeshWriter for PlyWriter {
                     vertex.insert("nz".to_string(), Property::Float(normals[i].z));
                 }
             }
-            
+
             vertices.push(vertex);
         }
         ply.payload.insert("vertex".to_string(), vertices);
-        
+
         // Define face element if we have faces
         if !mesh.faces.is_empty() {
             let mut face_element = ElementDef::new("face".to_string());
@@ -1414,31 +1504,27 @@ impl crate::registry::MeshWriter for PlyWriter {
                 "vertex_indices".to_string(),
                 PropertyType::List(ScalarType::UChar, ScalarType::Int),
             ));
-            
+
             ply.header.elements.add(face_element);
-            
+
             // Add face data
             let mut faces = Vec::new();
             for face in &mesh.faces {
                 let mut face_data = DefaultElement::new();
-                let indices = vec![
-                    face[0] as i32,
-                    face[1] as i32,
-                    face[2] as i32,
-                ];
+                let indices = vec![face[0] as i32, face[1] as i32, face[2] as i32];
                 face_data.insert("vertex_indices".to_string(), Property::ListInt(indices));
                 faces.push(face_data);
             }
             ply.payload.insert("face".to_string(), faces);
         }
-        
+
         // Write PLY file
         let writer_instance = Writer::new();
         writer_instance.write_ply(&mut writer, &mut ply)?;
-        
+
         Ok(())
     }
-    
+
     fn format_name(&self) -> &'static str {
         "ply"
     }
@@ -1489,12 +1575,14 @@ impl PlyStreamingReader {
         let file = File::open(path)?;
         let mut reader = BufReader::new(file);
         let header = RobustPlyReader::read_header(&mut reader)?;
-        
+
         // Find vertex element
-        let vertex_element = header.elements.iter()
+        let vertex_element = header
+            .elements
+            .iter()
             .find(|e| e.name == "vertex")
             .ok_or_else(|| Error::InvalidData("No vertex element found in PLY file".to_string()))?;
-        
+
         Ok(Self {
             reader,
             current_count: vertex_element.count,
@@ -1508,17 +1596,17 @@ impl PlyStreamingReader {
 
 impl Iterator for PlyStreamingReader {
     type Item = Result<Point3f>;
-    
+
     fn next(&mut self) -> Option<Self::Item> {
         if self.current_index >= self.current_count {
             return None;
         }
-        
+
         // Read a chunk if buffer is empty
         if self.buffer.is_empty() {
             let remaining = self.current_count - self.current_index;
             let to_read = std::cmp::min(remaining, self.chunk_size);
-            
+
             match self.format {
                 PlyFormat::Ascii => {
                     // For ASCII, we need to read line by line
@@ -1526,25 +1614,39 @@ impl Iterator for PlyStreamingReader {
                     if let Err(e) = self.reader.read_line(&mut line) {
                         return Some(Err(Error::Io(e)));
                     }
-                    
+
                     let values: Vec<&str> = line.trim().split_whitespace().collect();
                     if values.len() < 3 {
-                        return Some(Err(Error::InvalidData("Not enough coordinates in vertex line".to_string())));
+                        return Some(Err(Error::InvalidData(
+                            "Not enough coordinates in vertex line".to_string(),
+                        )));
                     }
-                    
+
                     let x = match values[0].parse::<f32>() {
                         Ok(v) => v,
-                        Err(_) => return Some(Err(Error::InvalidData("Invalid x coordinate".to_string()))),
+                        Err(_) => {
+                            return Some(Err(Error::InvalidData(
+                                "Invalid x coordinate".to_string(),
+                            )))
+                        }
                     };
                     let y = match values[1].parse::<f32>() {
                         Ok(v) => v,
-                        Err(_) => return Some(Err(Error::InvalidData("Invalid y coordinate".to_string()))),
+                        Err(_) => {
+                            return Some(Err(Error::InvalidData(
+                                "Invalid y coordinate".to_string(),
+                            )))
+                        }
                     };
                     let z = match values[2].parse::<f32>() {
                         Ok(v) => v,
-                        Err(_) => return Some(Err(Error::InvalidData("Invalid z coordinate".to_string()))),
+                        Err(_) => {
+                            return Some(Err(Error::InvalidData(
+                                "Invalid z coordinate".to_string(),
+                            )))
+                        }
                     };
-                    
+
                     self.current_index += 1;
                     return Some(Ok(Point3f::new(x, y, z)));
                 }
@@ -1553,7 +1655,7 @@ impl Iterator for PlyStreamingReader {
                     let bytes_per_vertex = 12; // 3 * f32
                     let chunk_bytes = to_read * bytes_per_vertex;
                     self.buffer.resize(chunk_bytes, 0);
-                    
+
                     if let Err(e) = self.reader.read_exact(&mut self.buffer[..chunk_bytes]) {
                         return Some(Err(Error::Io(e)));
                     }
@@ -1563,14 +1665,14 @@ impl Iterator for PlyStreamingReader {
                     let bytes_per_vertex = 12; // 3 * f32
                     let chunk_bytes = to_read * bytes_per_vertex;
                     self.buffer.resize(chunk_bytes, 0);
-                    
+
                     if let Err(e) = self.reader.read_exact(&mut self.buffer[..chunk_bytes]) {
                         return Some(Err(Error::Io(e)));
                     }
                 }
             }
         }
-        
+
         // Extract point from buffer
         match self.format {
             PlyFormat::Ascii => {
@@ -1579,44 +1681,66 @@ impl Iterator for PlyStreamingReader {
             }
             PlyFormat::BinaryLittleEndian => {
                 if self.buffer.len() < 12 {
-                    return Some(Err(Error::InvalidData("Insufficient data in buffer".to_string())));
+                    return Some(Err(Error::InvalidData(
+                        "Insufficient data in buffer".to_string(),
+                    )));
                 }
-                
+
                 let x = f32::from_le_bytes([
-                    self.buffer[0], self.buffer[1], self.buffer[2], self.buffer[3]
+                    self.buffer[0],
+                    self.buffer[1],
+                    self.buffer[2],
+                    self.buffer[3],
                 ]);
                 let y = f32::from_le_bytes([
-                    self.buffer[4], self.buffer[5], self.buffer[6], self.buffer[7]
+                    self.buffer[4],
+                    self.buffer[5],
+                    self.buffer[6],
+                    self.buffer[7],
                 ]);
                 let z = f32::from_le_bytes([
-                    self.buffer[8], self.buffer[9], self.buffer[10], self.buffer[11]
+                    self.buffer[8],
+                    self.buffer[9],
+                    self.buffer[10],
+                    self.buffer[11],
                 ]);
-                
+
                 // Remove processed data from buffer
                 self.buffer.drain(0..12);
                 self.current_index += 1;
-                
+
                 Some(Ok(Point3f::new(x, y, z)))
             }
             PlyFormat::BinaryBigEndian => {
                 if self.buffer.len() < 12 {
-                    return Some(Err(Error::InvalidData("Insufficient data in buffer".to_string())));
+                    return Some(Err(Error::InvalidData(
+                        "Insufficient data in buffer".to_string(),
+                    )));
                 }
-                
+
                 let x = f32::from_be_bytes([
-                    self.buffer[0], self.buffer[1], self.buffer[2], self.buffer[3]
+                    self.buffer[0],
+                    self.buffer[1],
+                    self.buffer[2],
+                    self.buffer[3],
                 ]);
                 let y = f32::from_be_bytes([
-                    self.buffer[4], self.buffer[5], self.buffer[6], self.buffer[7]
+                    self.buffer[4],
+                    self.buffer[5],
+                    self.buffer[6],
+                    self.buffer[7],
                 ]);
                 let z = f32::from_be_bytes([
-                    self.buffer[8], self.buffer[9], self.buffer[10], self.buffer[11]
+                    self.buffer[8],
+                    self.buffer[9],
+                    self.buffer[10],
+                    self.buffer[11],
                 ]);
-                
+
                 // Remove processed data from buffer
                 self.buffer.drain(0..12);
                 self.current_index += 1;
-                
+
                 Some(Ok(Point3f::new(x, y, z)))
             }
         }
@@ -1640,35 +1764,42 @@ impl PlyMeshStreamingReader {
         let file = File::open(path)?;
         let mut reader = BufReader::new(file);
         let header = RobustPlyReader::read_header(&mut reader)?;
-        
+
         // Find face element
-        let face_element = header.elements.iter()
+        let face_element = header
+            .elements
+            .iter()
             .find(|e| e.name == "face")
             .ok_or_else(|| Error::InvalidData("No face element found in PLY file".to_string()))?;
-        
+
         // First, we need to read all vertices to convert face indices
-        let vertex_element = header.elements.iter()
+        let vertex_element = header
+            .elements
+            .iter()
             .find(|e| e.name == "vertex")
             .ok_or_else(|| Error::InvalidData("No vertex element found in PLY file".to_string()))?;
-        
+
         let mut vertices = Vec::with_capacity(vertex_element.count);
-        
+
         // Read vertices first
         for _ in 0..vertex_element.count {
             let mut line = String::new();
             reader.read_line(&mut line)?;
             let values: Vec<&str> = line.trim().split_whitespace().collect();
             if values.len() >= 3 {
-                let x = values[0].parse::<f32>()
+                let x = values[0]
+                    .parse::<f32>()
                     .map_err(|_| Error::InvalidData("Invalid x coordinate".to_string()))?;
-                let y = values[1].parse::<f32>()
+                let y = values[1]
+                    .parse::<f32>()
                     .map_err(|_| Error::InvalidData("Invalid y coordinate".to_string()))?;
-                let z = values[2].parse::<f32>()
+                let z = values[2]
+                    .parse::<f32>()
                     .map_err(|_| Error::InvalidData("Invalid z coordinate".to_string()))?;
                 vertices.push(Point3f::new(x, y, z));
             }
         }
-        
+
         Ok(Self {
             reader,
             current_count: face_element.count,
@@ -1683,17 +1814,17 @@ impl PlyMeshStreamingReader {
 
 impl Iterator for PlyMeshStreamingReader {
     type Item = Result<[usize; 3]>;
-    
+
     fn next(&mut self) -> Option<Self::Item> {
         if self.current_index >= self.current_count {
             return None;
         }
-        
+
         // Read a chunk if buffer is empty
         if self.buffer.is_empty() {
             let remaining = self.current_count - self.current_index;
             let to_read = std::cmp::min(remaining, self.chunk_size);
-            
+
             match self.format {
                 PlyFormat::Ascii => {
                     // For ASCII, we need to read line by line
@@ -1701,39 +1832,57 @@ impl Iterator for PlyMeshStreamingReader {
                     if let Err(e) = self.reader.read_line(&mut line) {
                         return Some(Err(Error::Io(e)));
                     }
-                    
+
                     let values: Vec<&str> = line.trim().split_whitespace().collect();
-                    if values.len() < 4 { // count + 3 indices
-                        return Some(Err(Error::InvalidData("Not enough values in face line".to_string())));
+                    if values.len() < 4 {
+                        // count + 3 indices
+                        return Some(Err(Error::InvalidData(
+                            "Not enough values in face line".to_string(),
+                        )));
                     }
-                    
+
                     let count = match values[0].parse::<usize>() {
                         Ok(v) => v,
-                        Err(_) => return Some(Err(Error::InvalidData("Invalid face count".to_string()))),
+                        Err(_) => {
+                            return Some(Err(Error::InvalidData("Invalid face count".to_string())))
+                        }
                     };
-                    
+
                     if count != 3 {
-                        return Some(Err(Error::InvalidData("Only triangular faces supported".to_string())));
+                        return Some(Err(Error::InvalidData(
+                            "Only triangular faces supported".to_string(),
+                        )));
                     }
-                    
+
                     let i1 = match values[1].parse::<usize>() {
                         Ok(v) => v,
-                        Err(_) => return Some(Err(Error::InvalidData("Invalid face index".to_string()))),
+                        Err(_) => {
+                            return Some(Err(Error::InvalidData("Invalid face index".to_string())))
+                        }
                     };
                     let i2 = match values[2].parse::<usize>() {
                         Ok(v) => v,
-                        Err(_) => return Some(Err(Error::InvalidData("Invalid face index".to_string()))),
+                        Err(_) => {
+                            return Some(Err(Error::InvalidData("Invalid face index".to_string())))
+                        }
                     };
                     let i3 = match values[3].parse::<usize>() {
                         Ok(v) => v,
-                        Err(_) => return Some(Err(Error::InvalidData("Invalid face index".to_string()))),
+                        Err(_) => {
+                            return Some(Err(Error::InvalidData("Invalid face index".to_string())))
+                        }
                     };
-                    
+
                     // Validate indices
-                    if i1 >= self.vertices.len() || i2 >= self.vertices.len() || i3 >= self.vertices.len() {
-                        return Some(Err(Error::InvalidData("Face index out of range".to_string())));
+                    if i1 >= self.vertices.len()
+                        || i2 >= self.vertices.len()
+                        || i3 >= self.vertices.len()
+                    {
+                        return Some(Err(Error::InvalidData(
+                            "Face index out of range".to_string(),
+                        )));
                     }
-                    
+
                     self.current_index += 1;
                     return Some(Ok([i1, i2, i3]));
                 }
@@ -1742,14 +1891,14 @@ impl Iterator for PlyMeshStreamingReader {
                     let bytes_per_face = 16; // 1 uchar count + 3 * u32 indices
                     let chunk_bytes = to_read * bytes_per_face;
                     self.buffer.resize(chunk_bytes, 0);
-                    
+
                     if let Err(e) = self.reader.read_exact(&mut self.buffer[..chunk_bytes]) {
                         return Some(Err(Error::Io(e)));
                     }
                 }
             }
         }
-        
+
         // Extract face from buffer
         match self.format {
             PlyFormat::Ascii => {
@@ -1758,64 +1907,100 @@ impl Iterator for PlyMeshStreamingReader {
             }
             PlyFormat::BinaryLittleEndian => {
                 if self.buffer.len() < 16 {
-                    return Some(Err(Error::InvalidData("Insufficient data in buffer".to_string())));
+                    return Some(Err(Error::InvalidData(
+                        "Insufficient data in buffer".to_string(),
+                    )));
                 }
-                
+
                 let count = self.buffer[0] as usize;
                 if count != 3 {
-                    return Some(Err(Error::InvalidData("Only triangular faces supported".to_string())));
+                    return Some(Err(Error::InvalidData(
+                        "Only triangular faces supported".to_string(),
+                    )));
                 }
-                
+
                 let i1 = u32::from_le_bytes([
-                    self.buffer[1], self.buffer[2], self.buffer[3], self.buffer[4]
+                    self.buffer[1],
+                    self.buffer[2],
+                    self.buffer[3],
+                    self.buffer[4],
                 ]) as usize;
                 let i2 = u32::from_le_bytes([
-                    self.buffer[5], self.buffer[6], self.buffer[7], self.buffer[8]
+                    self.buffer[5],
+                    self.buffer[6],
+                    self.buffer[7],
+                    self.buffer[8],
                 ]) as usize;
                 let i3 = u32::from_le_bytes([
-                    self.buffer[9], self.buffer[10], self.buffer[11], self.buffer[12]
+                    self.buffer[9],
+                    self.buffer[10],
+                    self.buffer[11],
+                    self.buffer[12],
                 ]) as usize;
-                
+
                 // Validate indices
-                if i1 >= self.vertices.len() || i2 >= self.vertices.len() || i3 >= self.vertices.len() {
-                    return Some(Err(Error::InvalidData("Face index out of range".to_string())));
+                if i1 >= self.vertices.len()
+                    || i2 >= self.vertices.len()
+                    || i3 >= self.vertices.len()
+                {
+                    return Some(Err(Error::InvalidData(
+                        "Face index out of range".to_string(),
+                    )));
                 }
-                
+
                 // Remove processed data from buffer
                 self.buffer.drain(0..16);
                 self.current_index += 1;
-                
+
                 Some(Ok([i1, i2, i3]))
             }
             PlyFormat::BinaryBigEndian => {
                 if self.buffer.len() < 16 {
-                    return Some(Err(Error::InvalidData("Insufficient data in buffer".to_string())));
+                    return Some(Err(Error::InvalidData(
+                        "Insufficient data in buffer".to_string(),
+                    )));
                 }
-                
+
                 let count = self.buffer[0] as usize;
                 if count != 3 {
-                    return Some(Err(Error::InvalidData("Only triangular faces supported".to_string())));
+                    return Some(Err(Error::InvalidData(
+                        "Only triangular faces supported".to_string(),
+                    )));
                 }
-                
+
                 let i1 = u32::from_be_bytes([
-                    self.buffer[1], self.buffer[2], self.buffer[3], self.buffer[4]
+                    self.buffer[1],
+                    self.buffer[2],
+                    self.buffer[3],
+                    self.buffer[4],
                 ]) as usize;
                 let i2 = u32::from_be_bytes([
-                    self.buffer[5], self.buffer[6], self.buffer[7], self.buffer[8]
+                    self.buffer[5],
+                    self.buffer[6],
+                    self.buffer[7],
+                    self.buffer[8],
                 ]) as usize;
                 let i3 = u32::from_be_bytes([
-                    self.buffer[9], self.buffer[10], self.buffer[11], self.buffer[12]
+                    self.buffer[9],
+                    self.buffer[10],
+                    self.buffer[11],
+                    self.buffer[12],
                 ]) as usize;
-                
+
                 // Validate indices
-                if i1 >= self.vertices.len() || i2 >= self.vertices.len() || i3 >= self.vertices.len() {
-                    return Some(Err(Error::InvalidData("Face index out of range".to_string())));
+                if i1 >= self.vertices.len()
+                    || i2 >= self.vertices.len()
+                    || i3 >= self.vertices.len()
+                {
+                    return Some(Err(Error::InvalidData(
+                        "Face index out of range".to_string(),
+                    )));
                 }
-                
+
                 // Remove processed data from buffer
                 self.buffer.drain(0..16);
                 self.current_index += 1;
-                
+
                 Some(Ok([i1, i2, i3]))
             }
         }

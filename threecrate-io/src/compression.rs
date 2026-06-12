@@ -88,8 +88,13 @@ pub fn draco_encode(cloud: &PointCloud<Point3f>, config: DracoConfig) -> Result<
 
     // KdTree gives ~5% better compression but reorders points; Sequential
     // preserves insertion order, which callers generally expect.
-    encode_draco_with_config(&coords, &colors, PointCloudEncodingMethod::Sequential, &encode_config)
-        .map_err(|e| Error::InvalidData(format!("Draco encode failed: {e}")))
+    encode_draco_with_config(
+        &coords,
+        &colors,
+        PointCloudEncodingMethod::Sequential,
+        &encode_config,
+    )
+    .map_err(|e| Error::InvalidData(format!("Draco encode failed: {e}")))
 }
 
 /// Decompress Draco-encoded bytes back into a point cloud.
@@ -97,9 +102,7 @@ pub fn draco_encode(cloud: &PointCloud<Point3f>, config: DracoConfig) -> Result<
 /// Returns `Err` if the buffer is empty or the decoder fails.
 pub fn draco_decode(compressed: &[u8]) -> Result<PointCloud<Point3f>> {
     if compressed.is_empty() {
-        return Err(Error::InvalidData(
-            "cannot decode an empty buffer".into(),
-        ));
+        return Err(Error::InvalidData("cannot decode an empty buffer".into()));
     }
 
     let (coords, _colors) = decode_draco(compressed)
@@ -108,9 +111,10 @@ pub fn draco_decode(compressed: &[u8]) -> Result<PointCloud<Point3f>> {
     // spatial_codec_draco returns a flat interleaved Vec<f32>:
     // [x0, y0, z0, x1, y1, z1, …]
     if coords.len() % 3 != 0 || coords.is_empty() {
-        return Err(Error::InvalidData(
-            format!("Draco decode returned {} floats, expected a multiple of 3", coords.len()),
-        ));
+        return Err(Error::InvalidData(format!(
+            "Draco decode returned {} floats, expected a multiple of 3",
+            coords.len()
+        )));
     }
     let points = coords
         .chunks(3)
@@ -259,7 +263,9 @@ mod tests {
     fn streaming_compressor_roundtrip() {
         let cloud = sample_cloud(50);
         let mut compressor = DracoCompressorPipeline::new(DracoConfig::default());
-        compressor.process_chunk(&cloud.points).expect("process_chunk failed");
+        compressor
+            .process_chunk(&cloud.points)
+            .expect("process_chunk failed");
         let bytes = compressor.finalize().expect("finalize failed");
         let decoded = draco_decode(&bytes).expect("decode failed");
         assert_eq!(decoded.len(), cloud.len());

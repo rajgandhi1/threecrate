@@ -24,8 +24,7 @@ fn main() {
         [3.0, 3.0, 3.0],
     );
 
-    let triangle_mesh = marching_cubes(&sphere_grid, 0.0)
-        .expect("Failed to generate mesh");
+    let triangle_mesh = marching_cubes(&sphere_grid, 0.0).expect("Failed to generate mesh");
 
     println!("   Original TriangleMesh:");
     println!("   - Vertices: {}", triangle_mesh.vertex_count());
@@ -35,12 +34,23 @@ fn main() {
 
     // Step 2: Convert to Bevy mesh
     println!("2. Converting to Bevy Mesh...");
-    let bevy_mesh = triangle_mesh.to_bevy_mesh()
+    let bevy_mesh = triangle_mesh
+        .to_bevy_mesh()
         .expect("Failed to convert to Bevy mesh");
 
     println!("   Bevy Mesh created successfully!");
-    println!("   - Has positions: {}", bevy_mesh.attribute(bevy::prelude::Mesh::ATTRIBUTE_POSITION).is_some());
-    println!("   - Has normals: {}", bevy_mesh.attribute(bevy::prelude::Mesh::ATTRIBUTE_NORMAL).is_some());
+    println!(
+        "   - Has positions: {}",
+        bevy_mesh
+            .attribute(bevy::prelude::Mesh::ATTRIBUTE_POSITION)
+            .is_some()
+    );
+    println!(
+        "   - Has normals: {}",
+        bevy_mesh
+            .attribute(bevy::prelude::Mesh::ATTRIBUTE_NORMAL)
+            .is_some()
+    );
     println!("   - Has indices: {}", bevy_mesh.indices().is_some());
     println!();
 
@@ -57,8 +67,9 @@ fn main() {
 
     // Verify round-trip conversion
     println!("4. Verifying round-trip conversion...");
-    if triangle_mesh.vertex_count() == reconstructed_mesh.vertex_count() &&
-       triangle_mesh.face_count() == reconstructed_mesh.face_count() {
+    if triangle_mesh.vertex_count() == reconstructed_mesh.vertex_count()
+        && triangle_mesh.face_count() == reconstructed_mesh.face_count()
+    {
         println!("   ✓ Round-trip conversion successful!");
         println!("   Vertex and face counts match.");
     } else {
@@ -73,10 +84,16 @@ fn main() {
     let colors = vec![[255u8, 0, 0]; colored_mesh.vertex_count()]; // Red vertices
     colored_mesh.set_colors(colors);
 
-    let bevy_colored = colored_mesh.to_bevy_mesh()
+    let bevy_colored = colored_mesh
+        .to_bevy_mesh()
         .expect("Failed to convert colored mesh");
 
-    println!("   - Has colors: {}", bevy_colored.attribute(bevy::prelude::Mesh::ATTRIBUTE_COLOR).is_some());
+    println!(
+        "   - Has colors: {}",
+        bevy_colored
+            .attribute(bevy::prelude::Mesh::ATTRIBUTE_COLOR)
+            .is_some()
+    );
     println!();
 
     println!("============================");

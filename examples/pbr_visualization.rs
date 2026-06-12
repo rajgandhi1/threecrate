@@ -14,17 +14,21 @@
 //!   O / P / Z  — Orbit / Pan / Zoom camera
 //!   R          — reset camera
 
-use threecrate_core::{TriangleMesh, Point3f};
-use threecrate_gpu::{PbrMaterial, MeshLightingParams};
-use threecrate_visualization::InteractiveViewer;
 use nalgebra::Point3;
+use threecrate_core::{Point3f, TriangleMesh};
+use threecrate_gpu::{MeshLightingParams, PbrMaterial};
+use threecrate_visualization::InteractiveViewer;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== PBR Visualization Example (issue #98) ===\n");
 
     // Build a simple sphere-like mesh so the PBR shading is clearly visible
     let mesh = build_uv_sphere(32, 16);
-    println!("Mesh: {} vertices, {} faces", mesh.vertices.len(), mesh.faces.len());
+    println!(
+        "Mesh: {} vertices, {} faces",
+        mesh.vertices.len(),
+        mesh.faces.len()
+    );
 
     let mut viewer = InteractiveViewer::new()?;
 

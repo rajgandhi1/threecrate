@@ -9,11 +9,11 @@
 //! - Robust error handling and streaming read capabilities
 
 use crate::{MeshReader, MeshWriter};
-use threecrate_core::{TriangleMesh, Result, Point3f, Vector3f, Error};
-use std::path::{Path, PathBuf};
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter, Write};
-use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use threecrate_core::{Error, Point3f, Result, TriangleMesh, Vector3f};
 
 /// Material properties from MTL files
 #[derive(Debug, Clone)]
@@ -133,49 +133,49 @@ impl ObjWriteOptions {
     pub fn new() -> Self {
         Self::default()
     }
-    
+
     /// Enable/disable normal writing
     pub fn with_normals(mut self, write_normals: bool) -> Self {
         self.write_normals = write_normals;
         self
     }
-    
+
     /// Enable/disable texture coordinate writing
     pub fn with_texcoords(mut self, write_texcoords: bool) -> Self {
         self.write_texcoords = write_texcoords;
         self
     }
-    
+
     /// Enable/disable material file generation
     pub fn with_materials(mut self, write_materials: bool) -> Self {
         self.write_materials = write_materials;
         self
     }
-    
+
     /// Add a comment to the header
     pub fn with_comment<S: Into<String>>(mut self, comment: S) -> Self {
         self.comments.push(comment.into());
         self
     }
-    
+
     /// Set object name
     pub fn with_object_name<S: Into<String>>(mut self, name: S) -> Self {
         self.object_name = Some(name.into());
         self
     }
-    
+
     /// Set group name
     pub fn with_group_name<S: Into<String>>(mut self, name: S) -> Self {
         self.group_name = Some(name.into());
         self
     }
-    
+
     /// Set material name
     pub fn with_material_name<S: Into<String>>(mut self, name: S) -> Self {
         self.material_name = Some(name.into());
         self
     }
-    
+
     /// Set MTL filename
     pub fn with_mtl_filename<S: Into<String>>(mut self, filename: S) -> Self {
         self.mtl_filename = Some(filename.into());
@@ -217,37 +217,51 @@ impl FaceVertex {
     /// Parse face vertex from OBJ format string (e.g., "1", "1/2", "1/2/3", "1//3")
     fn parse(s: &str) -> Result<Self> {
         let parts: Vec<&str> = s.split('/').collect();
-        
+
         if parts.is_empty() {
             return Err(Error::InvalidData("Empty face vertex".to_string()));
         }
-        
-        let vertex = parts[0].parse::<usize>()
+
+        let vertex = parts[0]
+            .parse::<usize>()
             .map_err(|_| Error::InvalidData(format!("Invalid vertex index: {}", parts[0])))?;
-        
+
         // OBJ uses 1-based indexing, convert to 0-based
-        let vertex = vertex.checked_sub(1)
+        let vertex = vertex
+            .checked_sub(1)
             .ok_or_else(|| Error::InvalidData("Vertex index cannot be 0".to_string()))?;
-        
+
         let texture = if parts.len() > 1 && !parts[1].is_empty() {
-            let tex_idx = parts[1].parse::<usize>()
+            let tex_idx = parts[1]
+                .parse::<usize>()
                 .map_err(|_| Error::InvalidData(format!("Invalid texture index: {}", parts[1])))?;
-            Some(tex_idx.checked_sub(1)
-                .ok_or_else(|| Error::InvalidData("Texture index cannot be 0".to_string()))?)
+            Some(
+                tex_idx
+                    .checked_sub(1)
+                    .ok_or_else(|| Error::InvalidData("Texture index cannot be 0".to_string()))?,
+            )
         } else {
             None
         };
-        
+
         let normal = if parts.len() > 2 && !parts[2].is_empty() {
-            let norm_idx = parts[2].parse::<usize>()
+            let norm_idx = parts[2]
+                .parse::<usize>()
                 .map_err(|_| Error::InvalidData(format!("Invalid normal index: {}", parts[2])))?;
-            Some(norm_idx.checked_sub(1)
-                .ok_or_else(|| Error::InvalidData("Normal index cannot be 0".to_string()))?)
+            Some(
+                norm_idx
+                    .checked_sub(1)
+                    .ok_or_else(|| Error::InvalidData("Normal index cannot be 0".to_string()))?,
+            )
         } else {
             None
         };
-        
-        Ok(FaceVertex { vertex, texture, normal })
+
+        Ok(FaceVertex {
+            vertex,
+            texture,
+            normal,
+        })
     }
 }
 
@@ -256,7 +270,7 @@ impl crate::registry::MeshReader for ObjReader {
         let obj_data = RobustObjReader::read_obj_file(path)?;
         RobustObjReader::obj_data_to_mesh(&obj_data)
     }
-    
+
     fn can_read(&self, path: &Path) -> bool {
         // Check if file starts with "#" or "v " (vertex definition)
         if let Ok(file) = File::open(path) {
@@ -269,7 +283,7 @@ impl crate::registry::MeshReader for ObjReader {
         }
         false
     }
-    
+
     fn format_name(&self) -> &'static str {
         "obj"
     }
@@ -279,19 +293,19 @@ impl crate::registry::MeshWriter for ObjWriter {
     fn write_mesh(&self, mesh: &TriangleMesh, path: &Path) -> Result<()> {
         let file = File::create(path)?;
         let mut writer = BufWriter::new(file);
-        
+
         // Write header
         writeln!(writer, "# OBJ file generated by ThreeCrate")?;
         writeln!(writer, "# Vertices: {}", mesh.vertices.len())?;
         writeln!(writer, "# Faces: {}", mesh.faces.len())?;
         writeln!(writer)?;
-        
+
         // Write vertices
         for vertex in &mesh.vertices {
             writeln!(writer, "v {} {} {}", vertex.x, vertex.y, vertex.z)?;
         }
         writeln!(writer)?;
-        
+
         // Write normals if available
         if let Some(normals) = &mesh.normals {
             for normal in normals {
@@ -299,7 +313,7 @@ impl crate::registry::MeshWriter for ObjWriter {
             }
             writeln!(writer)?;
         }
-        
+
         // Write faces
         if mesh.normals.is_some() {
             // Write faces with normals
@@ -307,27 +321,24 @@ impl crate::registry::MeshWriter for ObjWriter {
                 writeln!(
                     writer,
                     "f {}//{} {}//{} {}//{}",
-                    face[0] + 1, face[0] + 1,
-                    face[1] + 1, face[1] + 1,
-                    face[2] + 1, face[2] + 1
+                    face[0] + 1,
+                    face[0] + 1,
+                    face[1] + 1,
+                    face[1] + 1,
+                    face[2] + 1,
+                    face[2] + 1
                 )?;
             }
         } else {
             // Write faces without normals
             for face in &mesh.faces {
-                writeln!(
-                    writer,
-                    "f {} {} {}",
-                    face[0] + 1,
-                    face[1] + 1,
-                    face[2] + 1
-                )?;
+                writeln!(writer, "f {} {} {}", face[0] + 1, face[1] + 1, face[2] + 1)?;
             }
         }
-        
+
         Ok(())
     }
-    
+
     fn format_name(&self) -> &'static str {
         "obj"
     }
@@ -358,15 +369,15 @@ pub fn read_obj_vertices<P: AsRef<Path>>(path: P) -> Result<Vec<Point3f>> {
 pub fn write_obj_vertices<P: AsRef<Path>>(vertices: &[Point3f], path: P) -> Result<()> {
     let file = File::create(path)?;
     let mut writer = BufWriter::new(file);
-    
+
     writeln!(writer, "# OBJ vertices file generated by ThreeCrate")?;
     writeln!(writer, "# Vertices: {}", vertices.len())?;
     writeln!(writer)?;
-    
+
     for vertex in vertices {
         writeln!(writer, "v {} {} {}", vertex.x, vertex.y, vertex.z)?;
     }
-    
+
     Ok(())
 }
 
@@ -374,10 +385,9 @@ impl RobustObjReader {
     /// Read a complete OBJ file with materials
     pub fn read_obj_file<P: AsRef<Path>>(path: P) -> Result<ObjData> {
         let path = path.as_ref();
-        let file = File::open(path)
-            .map_err(|e| Error::Io(e))?;
+        let file = File::open(path).map_err(|e| Error::Io(e))?;
         let reader = BufReader::new(file);
-        
+
         let mut obj_data = ObjData {
             vertices: Vec::new(),
             texture_coords: Vec::new(),
@@ -386,92 +396,110 @@ impl RobustObjReader {
             materials: HashMap::new(),
             mtl_files: Vec::new(),
         };
-        
+
         let mut current_group = Group {
             name: "default".to_string(),
             faces: Vec::new(),
         };
         let mut current_material: Option<String> = None;
-        
+
         for (line_num, line) in reader.lines().enumerate() {
             let line = line.map_err(|e| Error::Io(e))?;
             let line = line.trim();
-            
+
             // Skip empty lines and comments
             if line.is_empty() || line.starts_with('#') {
                 continue;
             }
-            
+
             let parts: Vec<&str> = line.split_whitespace().collect();
             if parts.is_empty() {
                 continue;
             }
-            
+
             match parts[0] {
                 "v" => {
                     // Vertex position
                     if parts.len() < 4 {
-                        return Err(Error::InvalidData(
-                            format!("Invalid vertex at line {}: expected 3 coordinates", line_num + 1)
-                        ));
+                        return Err(Error::InvalidData(format!(
+                            "Invalid vertex at line {}: expected 3 coordinates",
+                            line_num + 1
+                        )));
                     }
-                    
-                    let x = parts[1].parse::<f32>()
-                        .map_err(|_| Error::InvalidData(format!("Invalid x coordinate at line {}", line_num + 1)))?;
-                    let y = parts[2].parse::<f32>()
-                        .map_err(|_| Error::InvalidData(format!("Invalid y coordinate at line {}", line_num + 1)))?;
-                    let z = parts[3].parse::<f32>()
-                        .map_err(|_| Error::InvalidData(format!("Invalid z coordinate at line {}", line_num + 1)))?;
-                    
+
+                    let x = parts[1].parse::<f32>().map_err(|_| {
+                        Error::InvalidData(format!("Invalid x coordinate at line {}", line_num + 1))
+                    })?;
+                    let y = parts[2].parse::<f32>().map_err(|_| {
+                        Error::InvalidData(format!("Invalid y coordinate at line {}", line_num + 1))
+                    })?;
+                    let z = parts[3].parse::<f32>().map_err(|_| {
+                        Error::InvalidData(format!("Invalid z coordinate at line {}", line_num + 1))
+                    })?;
+
                     obj_data.vertices.push(Point3f::new(x, y, z));
                 }
                 "vt" => {
                     // Texture coordinate
                     if parts.len() < 3 {
-                        return Err(Error::InvalidData(
-                            format!("Invalid texture coordinate at line {}: expected 2 coordinates", line_num + 1)
-                        ));
+                        return Err(Error::InvalidData(format!(
+                            "Invalid texture coordinate at line {}: expected 2 coordinates",
+                            line_num + 1
+                        )));
                     }
-                    
-                    let u = parts[1].parse::<f32>()
-                        .map_err(|_| Error::InvalidData(format!("Invalid u coordinate at line {}", line_num + 1)))?;
-                    let v = parts[2].parse::<f32>()
-                        .map_err(|_| Error::InvalidData(format!("Invalid v coordinate at line {}", line_num + 1)))?;
-                    
+
+                    let u = parts[1].parse::<f32>().map_err(|_| {
+                        Error::InvalidData(format!("Invalid u coordinate at line {}", line_num + 1))
+                    })?;
+                    let v = parts[2].parse::<f32>().map_err(|_| {
+                        Error::InvalidData(format!("Invalid v coordinate at line {}", line_num + 1))
+                    })?;
+
                     obj_data.texture_coords.push([u, v]);
                 }
                 "vn" => {
                     // Vertex normal
                     if parts.len() < 4 {
-                        return Err(Error::InvalidData(
-                            format!("Invalid normal at line {}: expected 3 components", line_num + 1)
-                        ));
+                        return Err(Error::InvalidData(format!(
+                            "Invalid normal at line {}: expected 3 components",
+                            line_num + 1
+                        )));
                     }
-                    
-                    let x = parts[1].parse::<f32>()
-                        .map_err(|_| Error::InvalidData(format!("Invalid normal x at line {}", line_num + 1)))?;
-                    let y = parts[2].parse::<f32>()
-                        .map_err(|_| Error::InvalidData(format!("Invalid normal y at line {}", line_num + 1)))?;
-                    let z = parts[3].parse::<f32>()
-                        .map_err(|_| Error::InvalidData(format!("Invalid normal z at line {}", line_num + 1)))?;
-                    
+
+                    let x = parts[1].parse::<f32>().map_err(|_| {
+                        Error::InvalidData(format!("Invalid normal x at line {}", line_num + 1))
+                    })?;
+                    let y = parts[2].parse::<f32>().map_err(|_| {
+                        Error::InvalidData(format!("Invalid normal y at line {}", line_num + 1))
+                    })?;
+                    let z = parts[3].parse::<f32>().map_err(|_| {
+                        Error::InvalidData(format!("Invalid normal z at line {}", line_num + 1))
+                    })?;
+
                     obj_data.normals.push(Vector3f::new(x, y, z));
                 }
                 "f" => {
                     // Face
                     if parts.len() < 4 {
-                        return Err(Error::InvalidData(
-                            format!("Invalid face at line {}: expected at least 3 vertices", line_num + 1)
-                        ));
+                        return Err(Error::InvalidData(format!(
+                            "Invalid face at line {}: expected at least 3 vertices",
+                            line_num + 1
+                        )));
                     }
-                    
+
                     let mut face_vertices = Vec::new();
                     for vertex_str in &parts[1..] {
-                        let face_vertex = FaceVertex::parse(vertex_str)
-                            .map_err(|e| Error::InvalidData(format!("Invalid face vertex '{}' at line {}: {}", vertex_str, line_num + 1, e)))?;
+                        let face_vertex = FaceVertex::parse(vertex_str).map_err(|e| {
+                            Error::InvalidData(format!(
+                                "Invalid face vertex '{}' at line {}: {}",
+                                vertex_str,
+                                line_num + 1,
+                                e
+                            ))
+                        })?;
                         face_vertices.push(face_vertex);
                     }
-                    
+
                     // Triangulate if necessary
                     let triangulated_faces = Self::triangulate_face(&face_vertices);
                     for triangle in triangulated_faces {
@@ -486,13 +514,13 @@ impl RobustObjReader {
                     if !current_group.faces.is_empty() || current_group.name != "default" {
                         obj_data.groups.push(current_group);
                     }
-                    
+
                     let group_name = if parts.len() > 1 {
                         parts[1..].join(" ")
                     } else {
                         format!("group_{}", obj_data.groups.len())
                     };
-                    
+
                     current_group = Group {
                         name: group_name,
                         faces: Vec::new(),
@@ -509,14 +537,14 @@ impl RobustObjReader {
                     if parts.len() > 1 {
                         let mtl_file = parts[1].to_string();
                         obj_data.mtl_files.push(mtl_file.clone());
-                        
+
                         // Try to load the MTL file
                         let mtl_path = if let Some(parent) = path.parent() {
                             parent.join(&mtl_file)
                         } else {
                             PathBuf::from(&mtl_file)
                         };
-                        
+
                         if let Ok(materials) = Self::read_mtl_file(&mtl_path) {
                             obj_data.materials.extend(materials);
                         }
@@ -527,12 +555,12 @@ impl RobustObjReader {
                 }
             }
         }
-        
+
         // Add the last group if it has faces
         if !current_group.faces.is_empty() {
             obj_data.groups.push(current_group);
         }
-        
+
         // If no groups were created, create a default group with all faces
         if obj_data.groups.is_empty() {
             obj_data.groups.push(Group {
@@ -540,40 +568,39 @@ impl RobustObjReader {
                 faces: Vec::new(),
             });
         }
-        
+
         Ok(obj_data)
     }
 
     /// Read an MTL file and return materials
     pub fn read_mtl_file<P: AsRef<Path>>(path: P) -> Result<HashMap<String, Material>> {
-        let file = File::open(path)
-            .map_err(|e| Error::Io(e))?;
+        let file = File::open(path).map_err(|e| Error::Io(e))?;
         let reader = BufReader::new(file);
-        
+
         let mut materials = HashMap::new();
         let mut current_material: Option<Material> = None;
-        
+
         for (_line_num, line) in reader.lines().enumerate() {
             let line = line.map_err(|e| Error::Io(e))?;
             let line = line.trim();
-            
+
             // Skip empty lines and comments
             if line.is_empty() || line.starts_with('#') {
                 continue;
             }
-            
+
             let parts: Vec<&str> = line.split_whitespace().collect();
             if parts.is_empty() {
                 continue;
             }
-            
+
             match parts[0] {
                 "newmtl" => {
                     // Save previous material
                     if let Some(material) = current_material.take() {
                         materials.insert(material.name.clone(), material);
                     }
-                    
+
                     // Start new material
                     if parts.len() > 1 {
                         current_material = Some(Material::new(parts[1].to_string()));
@@ -586,7 +613,7 @@ impl RobustObjReader {
                             if let (Ok(r), Ok(g), Ok(b)) = (
                                 parts[1].parse::<f32>(),
                                 parts[2].parse::<f32>(),
-                                parts[3].parse::<f32>()
+                                parts[3].parse::<f32>(),
                             ) {
                                 material.ambient = Some([r, g, b]);
                             }
@@ -600,7 +627,7 @@ impl RobustObjReader {
                             if let (Ok(r), Ok(g), Ok(b)) = (
                                 parts[1].parse::<f32>(),
                                 parts[2].parse::<f32>(),
-                                parts[3].parse::<f32>()
+                                parts[3].parse::<f32>(),
                             ) {
                                 material.diffuse = Some([r, g, b]);
                             }
@@ -614,7 +641,7 @@ impl RobustObjReader {
                             if let (Ok(r), Ok(g), Ok(b)) = (
                                 parts[1].parse::<f32>(),
                                 parts[2].parse::<f32>(),
-                                parts[3].parse::<f32>()
+                                parts[3].parse::<f32>(),
                             ) {
                                 material.specular = Some([r, g, b]);
                             }
@@ -690,15 +717,15 @@ impl RobustObjReader {
                 }
             }
         }
-        
+
         // Save the last material
         if let Some(material) = current_material {
             materials.insert(material.name.clone(), material);
         }
-        
+
         Ok(materials)
     }
-    
+
     /// Triangulate a face with arbitrary number of vertices
     fn triangulate_face(vertices: &[FaceVertex]) -> Vec<Vec<FaceVertex>> {
         match vertices.len() {
@@ -727,46 +754,50 @@ impl RobustObjReader {
             }
         }
     }
-    
+
     /// Convert ObjData to TriangleMesh
     pub fn obj_data_to_mesh(obj_data: &ObjData) -> Result<TriangleMesh> {
         let mut mesh_faces = Vec::new();
         let mut mesh_normals = Vec::new();
         let mut has_normals = false;
-        
+
         // Collect all faces from all groups
         for group in &obj_data.groups {
             for face in &group.faces {
                 if face.vertices.len() != 3 {
                     continue; // Skip non-triangular faces (shouldn't happen after triangulation)
                 }
-                
+
                 // Extract vertex indices
                 let face_indices = [
                     face.vertices[0].vertex,
                     face.vertices[1].vertex,
                     face.vertices[2].vertex,
                 ];
-                
+
                 // Validate vertex indices
                 for &idx in &face_indices {
                     if idx >= obj_data.vertices.len() {
-                        return Err(Error::InvalidData(
-                            format!("Vertex index {} out of range (max: {})", idx, obj_data.vertices.len() - 1)
-                        ));
+                        return Err(Error::InvalidData(format!(
+                            "Vertex index {} out of range (max: {})",
+                            idx,
+                            obj_data.vertices.len() - 1
+                        )));
                     }
                 }
-                
+
                 mesh_faces.push(face_indices);
-                
+
                 // Handle normals if available
                 if !obj_data.normals.is_empty() {
                     for vertex in &face.vertices {
                         if let Some(normal_idx) = vertex.normal {
                             if normal_idx >= obj_data.normals.len() {
-                                return Err(Error::InvalidData(
-                                    format!("Normal index {} out of range (max: {})", normal_idx, obj_data.normals.len() - 1)
-                                ));
+                                return Err(Error::InvalidData(format!(
+                                    "Normal index {} out of range (max: {})",
+                                    normal_idx,
+                                    obj_data.normals.len() - 1
+                                )));
                             }
                             mesh_normals.push(obj_data.normals[normal_idx]);
                             has_normals = true;
@@ -779,14 +810,14 @@ impl RobustObjReader {
                 }
             }
         }
-        
+
         let mut mesh = TriangleMesh::from_vertices_and_faces(obj_data.vertices.clone(), mesh_faces);
-        
+
         // Set normals if available
         if has_normals && mesh_normals.len() == mesh.vertices.len() {
             mesh.set_normals(mesh_normals);
         }
-        
+
         Ok(mesh)
     }
 }
@@ -801,32 +832,38 @@ impl RobustObjWriter {
         let path = path.as_ref();
         let file = File::create(path)?;
         let mut writer = BufWriter::new(file);
-        
+
         // Write header comments
         for comment in &options.comments {
             writeln!(writer, "# {}", comment)?;
         }
         writeln!(writer, "# Vertices: {}", obj_data.vertices.len())?;
-        writeln!(writer, "# Texture coordinates: {}", obj_data.texture_coords.len())?;
+        writeln!(
+            writer,
+            "# Texture coordinates: {}",
+            obj_data.texture_coords.len()
+        )?;
         writeln!(writer, "# Normals: {}", obj_data.normals.len())?;
         writeln!(writer, "# Groups: {}", obj_data.groups.len())?;
         writeln!(writer)?;
-        
+
         // Write MTL library reference if materials should be written
         if options.write_materials && !obj_data.materials.is_empty() {
             let default_mtl_filename = Self::get_mtl_filename(path);
-            let mtl_filename = options.mtl_filename.as_ref()
+            let mtl_filename = options
+                .mtl_filename
+                .as_ref()
                 .unwrap_or(&default_mtl_filename);
             writeln!(writer, "mtllib {}", mtl_filename)?;
             writeln!(writer)?;
         }
-        
+
         // Write object name if specified
         if let Some(ref object_name) = options.object_name {
             writeln!(writer, "o {}", object_name)?;
             writeln!(writer)?;
         }
-        
+
         // Write vertices
         for vertex in &obj_data.vertices {
             writeln!(writer, "v {} {} {}", vertex.x, vertex.y, vertex.z)?;
@@ -834,7 +871,7 @@ impl RobustObjWriter {
         if !obj_data.vertices.is_empty() {
             writeln!(writer)?;
         }
-        
+
         // Write texture coordinates if available and requested
         if options.write_texcoords && !obj_data.texture_coords.is_empty() {
             for tex_coord in &obj_data.texture_coords {
@@ -842,7 +879,7 @@ impl RobustObjWriter {
             }
             writeln!(writer)?;
         }
-        
+
         // Write vertex normals if available and requested
         if options.write_normals && !obj_data.normals.is_empty() {
             for normal in &obj_data.normals {
@@ -850,7 +887,7 @@ impl RobustObjWriter {
             }
             writeln!(writer)?;
         }
-        
+
         // Write groups and faces
         for group in &obj_data.groups {
             // Write group name
@@ -861,14 +898,14 @@ impl RobustObjWriter {
             } else {
                 "default"
             };
-            
+
             if group_name != "default" || options.group_name.is_some() {
                 writeln!(writer, "g {}", group_name)?;
             }
-            
+
             // Track current material
             let mut current_material: Option<&String> = None;
-            
+
             for face in &group.faces {
                 // Write material change if needed
                 if let Some(ref material) = face.material {
@@ -882,12 +919,12 @@ impl RobustObjWriter {
                         current_material = Some(material_name);
                     }
                 }
-                
+
                 // Write face
                 write!(writer, "f")?;
                 for vertex in &face.vertices {
                     write!(writer, " {}", vertex.vertex + 1)?; // Convert to 1-based indexing
-                    
+
                     // Add texture coordinate if available and requested
                     if options.write_texcoords && !obj_data.texture_coords.is_empty() {
                         if let Some(tex_idx) = vertex.texture {
@@ -896,7 +933,7 @@ impl RobustObjWriter {
                             write!(writer, "/")?;
                         }
                     }
-                    
+
                     // Add normal if available and requested
                     if options.write_normals && !obj_data.normals.is_empty() {
                         if !options.write_texcoords || obj_data.texture_coords.is_empty() {
@@ -904,7 +941,7 @@ impl RobustObjWriter {
                         } else {
                             write!(writer, "/")?;
                         }
-                        
+
                         if let Some(norm_idx) = vertex.normal {
                             write!(writer, "{}", norm_idx + 1)?;
                         }
@@ -912,24 +949,26 @@ impl RobustObjWriter {
                 }
                 writeln!(writer)?;
             }
-            
+
             if !group.faces.is_empty() {
                 writeln!(writer)?;
             }
         }
-        
+
         // Write MTL file if requested
         if options.write_materials && !obj_data.materials.is_empty() {
             let default_mtl_filename = Self::get_mtl_filename(path);
-            let mtl_filename = options.mtl_filename.as_ref()
+            let mtl_filename = options
+                .mtl_filename
+                .as_ref()
                 .unwrap_or(&default_mtl_filename);
             let mtl_path = path.parent().unwrap_or(Path::new(".")).join(mtl_filename);
             Self::write_mtl_file(&obj_data.materials, &mtl_path)?;
         }
-        
+
         Ok(())
     }
-    
+
     /// Write a TriangleMesh as OBJ with options
     pub fn write_mesh<P: AsRef<Path>>(
         mesh: &TriangleMesh,
@@ -940,7 +979,7 @@ impl RobustObjWriter {
         let obj_data = Self::mesh_to_obj_data(mesh, options)?;
         Self::write_obj_file(&obj_data, path, options)
     }
-    
+
     /// Write MTL material file
     pub fn write_mtl_file<P: AsRef<Path>>(
         materials: &HashMap<String, Material>,
@@ -948,63 +987,63 @@ impl RobustObjWriter {
     ) -> Result<()> {
         let file = File::create(path)?;
         let mut writer = BufWriter::new(file);
-        
+
         writeln!(writer, "# MTL file generated by ThreeCrate")?;
         writeln!(writer, "# Materials: {}", materials.len())?;
         writeln!(writer)?;
-        
+
         for (name, material) in materials {
             writeln!(writer, "newmtl {}", name)?;
-            
+
             // Write ambient color
             if let Some(ambient) = material.ambient {
                 writeln!(writer, "Ka {} {} {}", ambient[0], ambient[1], ambient[2])?;
             }
-            
+
             // Write diffuse color
             if let Some(diffuse) = material.diffuse {
                 writeln!(writer, "Kd {} {} {}", diffuse[0], diffuse[1], diffuse[2])?;
             }
-            
+
             // Write specular color
             if let Some(specular) = material.specular {
                 writeln!(writer, "Ks {} {} {}", specular[0], specular[1], specular[2])?;
             }
-            
+
             // Write shininess
             if let Some(shininess) = material.shininess {
                 writeln!(writer, "Ns {}", shininess)?;
             }
-            
+
             // Write transparency
             if let Some(transparency) = material.transparency {
                 writeln!(writer, "d {}", transparency)?;
             }
-            
+
             // Write illumination model
             if let Some(illumination) = material.illumination {
                 writeln!(writer, "illum {}", illumination)?;
             }
-            
+
             // Write texture maps
             if let Some(ref diffuse_map) = material.diffuse_map {
                 writeln!(writer, "map_Kd {}", diffuse_map)?;
             }
-            
+
             if let Some(ref normal_map) = material.normal_map {
                 writeln!(writer, "map_Bump {}", normal_map)?;
             }
-            
+
             if let Some(ref specular_map) = material.specular_map {
                 writeln!(writer, "map_Ks {}", specular_map)?;
             }
-            
+
             writeln!(writer)?;
         }
-        
+
         Ok(())
     }
-    
+
     /// Convert TriangleMesh to ObjData
     fn mesh_to_obj_data(mesh: &TriangleMesh, options: &ObjWriteOptions) -> Result<ObjData> {
         let mut obj_data = ObjData {
@@ -1015,14 +1054,14 @@ impl RobustObjWriter {
             materials: HashMap::new(),
             mtl_files: Vec::new(),
         };
-        
+
         // Add normals if available and requested
         if options.write_normals {
             if let Some(ref normals) = mesh.normals {
                 obj_data.normals = normals.clone();
             }
         }
-        
+
         // Create faces with proper indexing
         let mut faces = Vec::new();
         for face_indices in &mesh.faces {
@@ -1039,29 +1078,32 @@ impl RobustObjWriter {
                 };
                 face_vertices.push(face_vertex);
             }
-            
+
             faces.push(Face {
                 vertices: face_vertices,
                 material: options.material_name.clone(),
             });
         }
-        
+
         // Create a single group
-        let group_name = options.group_name.clone().unwrap_or_else(|| "default".to_string());
+        let group_name = options
+            .group_name
+            .clone()
+            .unwrap_or_else(|| "default".to_string());
         obj_data.groups.push(Group {
             name: group_name,
             faces,
         });
-        
+
         // Add material if specified
         if let Some(ref material_name) = options.material_name {
             let material = Material::new(material_name.clone());
             obj_data.materials.insert(material_name.clone(), material);
         }
-        
+
         Ok(obj_data)
     }
-    
+
     /// Generate MTL filename from OBJ path
     fn get_mtl_filename(obj_path: &Path) -> String {
         obj_path
@@ -1088,22 +1130,25 @@ impl ObjStreamingReader {
         let path = path.as_ref();
         let file = File::open(path)?;
         let mut reader = BufReader::new(file);
-        
+
         // First pass: count vertices
         let mut total_vertices = 0;
         let mut line = String::new();
         while reader.read_line(&mut line)? > 0 {
             let trimmed = line.trim();
-            if trimmed.starts_with("v ") && !trimmed.starts_with("vt ") && !trimmed.starts_with("vn ") {
+            if trimmed.starts_with("v ")
+                && !trimmed.starts_with("vt ")
+                && !trimmed.starts_with("vn ")
+            {
                 total_vertices += 1;
             }
             line.clear();
         }
-        
+
         // Reset file position
         let file = File::open(path)?;
         let reader = BufReader::new(file);
-        
+
         Ok(Self {
             reader,
             current_line: 0,
@@ -1117,17 +1162,17 @@ impl ObjStreamingReader {
 
 impl Iterator for ObjStreamingReader {
     type Item = Result<Point3f>;
-    
+
     fn next(&mut self) -> Option<Self::Item> {
         if self.vertices_read >= self.total_vertices {
             return None;
         }
-        
+
         // Read a chunk if buffer is empty
         if self.buffer.is_empty() {
             let remaining = self.total_vertices - self.vertices_read;
             let to_read = std::cmp::min(remaining, self.chunk_size);
-            
+
             for _ in 0..to_read {
                 let mut line = String::new();
                 loop {
@@ -1136,9 +1181,12 @@ impl Iterator for ObjStreamingReader {
                         Ok(_) => {
                             self.current_line += 1;
                             let trimmed = line.trim();
-                            
+
                             // Skip non-vertex lines
-                            if trimmed.starts_with("v ") && !trimmed.starts_with("vt ") && !trimmed.starts_with("vn ") {
+                            if trimmed.starts_with("v ")
+                                && !trimmed.starts_with("vt ")
+                                && !trimmed.starts_with("vn ")
+                            {
                                 self.buffer.push(line.clone());
                                 line.clear();
                                 break;
@@ -1150,36 +1198,46 @@ impl Iterator for ObjStreamingReader {
                 }
             }
         }
-        
+
         // Process next vertex from buffer
         if !self.buffer.is_empty() {
             let vertex_line = self.buffer.remove(0);
             let parts: Vec<&str> = vertex_line.trim().split_whitespace().collect();
             if parts.len() < 4 {
-                return Some(Err(Error::InvalidData(
-                    format!("Invalid vertex at line {}: expected 3 coordinates", self.current_line)
-                )));
+                return Some(Err(Error::InvalidData(format!(
+                    "Invalid vertex at line {}: expected 3 coordinates",
+                    self.current_line
+                ))));
             }
-            
+
             let x = match parts[1].parse::<f32>() {
                 Ok(v) => v,
-                Err(_) => return Some(Err(Error::InvalidData(
-                    format!("Invalid x coordinate at line {}", self.current_line)
-                ))),
+                Err(_) => {
+                    return Some(Err(Error::InvalidData(format!(
+                        "Invalid x coordinate at line {}",
+                        self.current_line
+                    ))))
+                }
             };
             let y = match parts[2].parse::<f32>() {
                 Ok(v) => v,
-                Err(_) => return Some(Err(Error::InvalidData(
-                    format!("Invalid y coordinate at line {}", self.current_line)
-                ))),
+                Err(_) => {
+                    return Some(Err(Error::InvalidData(format!(
+                        "Invalid y coordinate at line {}",
+                        self.current_line
+                    ))))
+                }
             };
             let z = match parts[3].parse::<f32>() {
                 Ok(v) => v,
-                Err(_) => return Some(Err(Error::InvalidData(
-                    format!("Invalid z coordinate at line {}", self.current_line)
-                ))),
+                Err(_) => {
+                    return Some(Err(Error::InvalidData(format!(
+                        "Invalid z coordinate at line {}",
+                        self.current_line
+                    ))))
+                }
             };
-            
+
             self.vertices_read += 1;
             Some(Ok(Point3f::new(x, y, z)))
         } else {
@@ -1205,21 +1263,24 @@ impl ObjMeshStreamingReader {
         let path = path.as_ref();
         let file = File::open(path)?;
         let mut reader = BufReader::new(file);
-        
+
         // First pass: collect vertices and count faces
         let mut vertices = Vec::new();
         let mut total_faces = 0;
         let mut line = String::new();
-        
+
         while reader.read_line(&mut line)? > 0 {
             let trimmed = line.trim();
-            if trimmed.starts_with("v ") && !trimmed.starts_with("vt ") && !trimmed.starts_with("vn ") {
+            if trimmed.starts_with("v ")
+                && !trimmed.starts_with("vt ")
+                && !trimmed.starts_with("vn ")
+            {
                 let parts: Vec<&str> = trimmed.split_whitespace().collect();
                 if parts.len() >= 4 {
                     if let (Ok(x), Ok(y), Ok(z)) = (
                         parts[1].parse::<f32>(),
                         parts[2].parse::<f32>(),
-                        parts[3].parse::<f32>()
+                        parts[3].parse::<f32>(),
                     ) {
                         vertices.push(Point3f::new(x, y, z));
                     }
@@ -1229,11 +1290,11 @@ impl ObjMeshStreamingReader {
             }
             line.clear();
         }
-        
+
         // Reset file position
         let file = File::open(path)?;
         let reader = BufReader::new(file);
-        
+
         Ok(Self {
             reader,
             current_line: 0,
@@ -1248,17 +1309,17 @@ impl ObjMeshStreamingReader {
 
 impl Iterator for ObjMeshStreamingReader {
     type Item = Result<[usize; 3]>;
-    
+
     fn next(&mut self) -> Option<Self::Item> {
         if self.faces_read >= self.total_faces {
             return None;
         }
-        
+
         // Read a chunk if buffer is empty
         if self.buffer.is_empty() {
             let remaining = self.total_faces - self.faces_read;
             let to_read = std::cmp::min(remaining, self.chunk_size);
-            
+
             for _ in 0..to_read {
                 let mut line = String::new();
                 loop {
@@ -1267,7 +1328,7 @@ impl Iterator for ObjMeshStreamingReader {
                         Ok(_) => {
                             self.current_line += 1;
                             let trimmed = line.trim();
-                            
+
                             // Skip non-face lines
                             if trimmed.starts_with("f ") {
                                 self.buffer.push(line.clone());
@@ -1281,65 +1342,83 @@ impl Iterator for ObjMeshStreamingReader {
                 }
             }
         }
-        
+
         // Process next face from buffer
         if !self.buffer.is_empty() {
             let face_line = self.buffer.remove(0);
             let parts: Vec<&str> = face_line.trim().split_whitespace().collect();
             if parts.len() < 4 {
-                return Some(Err(Error::InvalidData(
-                    format!("Invalid face at line {}: expected at least 3 vertices", self.current_line)
-                )));
+                return Some(Err(Error::InvalidData(format!(
+                    "Invalid face at line {}: expected at least 3 vertices",
+                    self.current_line
+                ))));
             }
-            
+
             // Parse face vertices (only need vertex indices, not texture/normal)
             let mut face_vertices = Vec::new();
             for vertex_str in &parts[1..] {
                 let face_vertex = match FaceVertex::parse(vertex_str) {
                     Ok(fv) => fv.vertex,
-                    Err(e) => return Some(Err(Error::InvalidData(
-                        format!("Invalid face vertex '{}' at line {}: {}", vertex_str, self.current_line, e)
-                    ))),
+                    Err(e) => {
+                        return Some(Err(Error::InvalidData(format!(
+                            "Invalid face vertex '{}' at line {}: {}",
+                            vertex_str, self.current_line, e
+                        ))))
+                    }
                 };
                 face_vertices.push(face_vertex);
             }
-            
+
             // Triangulate if necessary
             let triangulated_faces = RobustObjReader::triangulate_face(
-                &face_vertices.iter().map(|&v| FaceVertex { vertex: v, texture: None, normal: None }).collect::<Vec<_>>()
+                &face_vertices
+                    .iter()
+                    .map(|&v| FaceVertex {
+                        vertex: v,
+                        texture: None,
+                        normal: None,
+                    })
+                    .collect::<Vec<_>>(),
             );
-            
+
             if triangulated_faces.is_empty() {
                 return Some(Err(Error::InvalidData("Degenerate face".to_string())));
             }
-            
+
             // Return first triangle, store others for later
             let first_triangle = &triangulated_faces[0];
-            let face_indices = [first_triangle[0].vertex, first_triangle[1].vertex, first_triangle[2].vertex];
-            
+            let face_indices = [
+                first_triangle[0].vertex,
+                first_triangle[1].vertex,
+                first_triangle[2].vertex,
+            ];
+
             // Validate indices
             for &idx in &face_indices {
                 if idx >= self.vertices.len() {
-                    return Some(Err(Error::InvalidData(
-                        format!("Face index {} out of range (max: {})", idx, self.vertices.len() - 1)
-                    )));
+                    return Some(Err(Error::InvalidData(format!(
+                        "Face index {} out of range (max: {})",
+                        idx,
+                        self.vertices.len() - 1
+                    ))));
                 }
             }
-            
+
             // Store remaining triangles in buffer for next calls
             for triangle in triangulated_faces.into_iter().skip(1) {
-                let face_str = format!("f {} {} {}", 
-                    triangle[0].vertex + 1, 
-                    triangle[1].vertex + 1, 
+                let face_str = format!(
+                    "f {} {} {}",
+                    triangle[0].vertex + 1,
+                    triangle[1].vertex + 1,
                     triangle[2].vertex + 1
                 );
                 self.buffer.push(face_str);
             }
-            
+
             self.faces_read += 1;
             Some(Ok(face_indices))
         } else {
             None
         }
     }
-} 
+}

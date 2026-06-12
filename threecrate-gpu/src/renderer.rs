@@ -1,7 +1,7 @@
 use crate::device::GpuContext;
-use threecrate_core::{PointCloud, Point3f, ColoredPoint3f, Error, Result};
-use nalgebra::{Matrix4, Vector3};
 use bytemuck::{Pod, Zeroable};
+use nalgebra::{Matrix4, Vector3};
+use threecrate_core::{ColoredPoint3f, Error, Point3f, PointCloud, Result};
 use wgpu::util::DeviceExt;
 use winit::window::Window;
 
@@ -156,19 +156,23 @@ impl<'window> PointCloudRenderer<'window> {
     /// Create new point cloud renderer with splatting support
     pub async fn new(window: &'window Window, config: RenderConfig) -> Result<Self> {
         let gpu_context = GpuContext::new().await?;
-        
-        let surface = gpu_context.instance.create_surface(window)
+
+        let surface = gpu_context
+            .instance
+            .create_surface(window)
             .map_err(|e| Error::Gpu(format!("Failed to create surface: {:?}", e)))?;
 
         let surface_caps = surface.get_capabilities(&gpu_context.adapter);
-        let surface_format = surface_caps.formats.iter()
+        let surface_format = surface_caps
+            .formats
+            .iter()
             .copied()
             .find(|f| f.is_srgb())
             .unwrap_or(surface_caps.formats[0]);
 
         let size = window.inner_size();
         let sample_count = if config.enable_multisampling { 4 } else { 1 };
-        
+
         let surface_config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: surface_format,
@@ -210,125 +214,144 @@ impl<'window> PointCloudRenderer<'window> {
             _padding: 0.0,
         };
 
-        let camera_buffer = gpu_context.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Camera Buffer"),
-            contents: bytemuck::bytes_of(&camera_uniform),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
+        let camera_buffer =
+            gpu_context
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Camera Buffer"),
+                    contents: bytemuck::bytes_of(&camera_uniform),
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                });
 
         // Create render parameters buffer
         let render_params = config.render_params;
-        let render_params_buffer = gpu_context.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Render Params Buffer"),
-            contents: bytemuck::bytes_of(&render_params),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
+        let render_params_buffer =
+            gpu_context
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Render Params Buffer"),
+                    contents: bytemuck::bytes_of(&render_params),
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                });
 
         // Create bind group layout
-        let bind_group_layout = gpu_context.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-            ],
-            label: Some("point_cloud_bind_group_layout"),
-        });
+        let bind_group_layout =
+            gpu_context
+                .device
+                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    entries: &[
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 0,
+                            visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Uniform,
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 1,
+                            visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Uniform,
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                    ],
+                    label: Some("point_cloud_bind_group_layout"),
+                });
 
-        let bind_group = gpu_context.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: camera_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: render_params_buffer.as_entire_binding(),
-                },
-            ],
-            label: Some("point_cloud_bind_group"),
-        });
+        let bind_group = gpu_context
+            .device
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                layout: &bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: camera_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: render_params_buffer.as_entire_binding(),
+                    },
+                ],
+                label: Some("point_cloud_bind_group"),
+            });
 
         // Create render pipeline
-        let shader = gpu_context.device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("Point Cloud Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/point_cloud.wgsl").into()),
-        });
+        let shader = gpu_context
+            .device
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("Point Cloud Shader"),
+                source: wgpu::ShaderSource::Wgsl(include_str!("shaders/point_cloud.wgsl").into()),
+            });
 
-        let render_pipeline_layout = gpu_context.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("Point Cloud Render Pipeline Layout"),
-            bind_group_layouts: &[Some(&bind_group_layout)],
-            immediate_size: 0,
-        });
+        let render_pipeline_layout =
+            gpu_context
+                .device
+                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("Point Cloud Render Pipeline Layout"),
+                    bind_group_layouts: &[Some(&bind_group_layout)],
+                    immediate_size: 0,
+                });
 
-        let render_pipeline = gpu_context.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Point Cloud Render Pipeline"),
-            layout: Some(&render_pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                buffers: &[PointVertex::desc()],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: surface_config.format,
-                    blend: if config.enable_alpha_blending {
-                        Some(wgpu::BlendState::ALPHA_BLENDING)
-                    } else {
-                        Some(wgpu::BlendState::REPLACE)
+        let render_pipeline =
+            gpu_context
+                .device
+                .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some("Point Cloud Render Pipeline"),
+                    layout: Some(&render_pipeline_layout),
+                    vertex: wgpu::VertexState {
+                        module: &shader,
+                        entry_point: Some("vs_main"),
+                        buffers: &[PointVertex::desc()],
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
                     },
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: None,
-                unclipped_depth: false,
-                polygon_mode: wgpu::PolygonMode::Fill,
-                conservative: false,
-            },
-            depth_stencil: if config.enable_depth_test {
-                Some(wgpu::DepthStencilState {
-                    format: wgpu::TextureFormat::Depth32Float,
-                    depth_write_enabled: Some(true),
-                    depth_compare: Some(wgpu::CompareFunction::Less),
-                    stencil: wgpu::StencilState::default(),
-                    bias: wgpu::DepthBiasState::default(),
-                })
-            } else {
-                None
-            },
-            multisample: wgpu::MultisampleState {
-                count: sample_count,
-                mask: !0,
-                alpha_to_coverage_enabled: false,
-            },
-            multiview_mask: None,
-            cache: None,
-        });
+                    fragment: Some(wgpu::FragmentState {
+                        module: &shader,
+                        entry_point: Some("fs_main"),
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format: surface_config.format,
+                            blend: if config.enable_alpha_blending {
+                                Some(wgpu::BlendState::ALPHA_BLENDING)
+                            } else {
+                                Some(wgpu::BlendState::REPLACE)
+                            },
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    }),
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::TriangleList,
+                        strip_index_format: None,
+                        front_face: wgpu::FrontFace::Ccw,
+                        cull_mode: None,
+                        unclipped_depth: false,
+                        polygon_mode: wgpu::PolygonMode::Fill,
+                        conservative: false,
+                    },
+                    depth_stencil: if config.enable_depth_test {
+                        Some(wgpu::DepthStencilState {
+                            format: wgpu::TextureFormat::Depth32Float,
+                            depth_write_enabled: Some(true),
+                            depth_compare: Some(wgpu::CompareFunction::Less),
+                            stencil: wgpu::StencilState::default(),
+                            bias: wgpu::DepthBiasState::default(),
+                        })
+                    } else {
+                        None
+                    },
+                    multisample: wgpu::MultisampleState {
+                        count: sample_count,
+                        mask: !0,
+                        alpha_to_coverage_enabled: false,
+                    },
+                    multiview_mask: None,
+                    cache: None,
+                });
 
         Ok(Self {
             gpu_context,
@@ -348,10 +371,15 @@ impl<'window> PointCloudRenderer<'window> {
     }
 
     /// Update camera matrices and position
-    pub fn update_camera(&mut self, view_matrix: Matrix4<f32>, proj_matrix: Matrix4<f32>, camera_pos: Vector3<f32>) {
+    pub fn update_camera(
+        &mut self,
+        view_matrix: Matrix4<f32>,
+        proj_matrix: Matrix4<f32>,
+        camera_pos: Vector3<f32>,
+    ) {
         self.camera_uniform.view_proj = (proj_matrix * view_matrix).into();
         self.camera_uniform.view_pos = camera_pos.into();
-        
+
         self.gpu_context.queue.write_buffer(
             &self.camera_buffer,
             0,
@@ -373,24 +401,28 @@ impl<'window> PointCloudRenderer<'window> {
     pub fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
         self.surface_config.width = new_size.width;
         self.surface_config.height = new_size.height;
-        self.surface.configure(&self.gpu_context.device, &self.surface_config);
-        
+        self.surface
+            .configure(&self.gpu_context.device, &self.surface_config);
+
         // Recreate MSAA texture if needed
         if self.config.enable_multisampling {
-            let msaa_texture = self.gpu_context.device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("MSAA Texture"),
-                size: wgpu::Extent3d {
-                    width: new_size.width,
-                    height: new_size.height,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 4,
-                dimension: wgpu::TextureDimension::D2,
-                format: self.surface_config.format,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-                view_formats: &[],
-            });
+            let msaa_texture = self
+                .gpu_context
+                .device
+                .create_texture(&wgpu::TextureDescriptor {
+                    label: Some("MSAA Texture"),
+                    size: wgpu::Extent3d {
+                        width: new_size.width,
+                        height: new_size.height,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 4,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: self.surface_config.format,
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                    view_formats: &[],
+                });
             let msaa_view = msaa_texture.create_view(&wgpu::TextureViewDescriptor::default());
             self.msaa_texture = Some(msaa_texture);
             self.msaa_view = Some(msaa_view);
@@ -399,31 +431,39 @@ impl<'window> PointCloudRenderer<'window> {
 
     /// Create vertex buffer from point vertices
     pub fn create_vertex_buffer(&self, vertices: &[PointVertex]) -> wgpu::Buffer {
-        self.gpu_context.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Point Cloud Vertex Buffer"),
-            contents: bytemuck::cast_slice(vertices),
-            usage: wgpu::BufferUsages::VERTEX,
-        })
+        self.gpu_context
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Point Cloud Vertex Buffer"),
+                contents: bytemuck::cast_slice(vertices),
+                usage: wgpu::BufferUsages::VERTEX,
+            })
     }
 
     /// Create depth texture
     pub fn create_depth_texture(&self) -> wgpu::Texture {
-        let sample_count = if self.config.enable_multisampling { 4 } else { 1 };
-        
-        self.gpu_context.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Depth Texture"),
-            size: wgpu::Extent3d {
-                width: self.surface_config.width,
-                height: self.surface_config.height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Depth32Float,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            view_formats: &[],
-        })
+        let sample_count = if self.config.enable_multisampling {
+            4
+        } else {
+            1
+        };
+
+        self.gpu_context
+            .device
+            .create_texture(&wgpu::TextureDescriptor {
+                label: Some("Depth Texture"),
+                size: wgpu::Extent3d {
+                    width: self.surface_config.width,
+                    height: self.surface_config.height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Depth32Float,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                view_formats: &[],
+            })
     }
 
     /// Render point cloud with splatting
@@ -435,15 +475,22 @@ impl<'window> PointCloudRenderer<'window> {
         let output = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame) => frame,
             wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
-            wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => return Ok(()),
+            wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
+                return Ok(())
+            }
             _ => return Err(Error::Gpu("Failed to get surface texture".to_string())),
         };
-        
-        let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-        let mut encoder = self.gpu_context.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Point Cloud Render Encoder"),
-        });
+        let view = output
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+
+        let mut encoder =
+            self.gpu_context
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("Point Cloud Render Encoder"),
+                });
 
         // Determine render target
         let (color_attachment, resolve_target) = if let Some(ref msaa_view) = self.msaa_view {
@@ -492,7 +539,9 @@ impl<'window> PointCloudRenderer<'window> {
             render_pass.draw(0..vertices.len() as u32, 0..1);
         }
 
-        self.gpu_context.queue.submit(std::iter::once(encoder.finish()));
+        self.gpu_context
+            .queue
+            .submit(std::iter::once(encoder.finish()));
         output.present();
 
         Ok(())
@@ -500,18 +549,29 @@ impl<'window> PointCloudRenderer<'window> {
 }
 
 /// Convert point cloud to vertices with estimated normals
-pub fn point_cloud_to_vertices(point_cloud: &PointCloud<Point3f>, color: [f32; 3], size: f32) -> Vec<PointVertex> {
+pub fn point_cloud_to_vertices(
+    point_cloud: &PointCloud<Point3f>,
+    color: [f32; 3],
+    size: f32,
+) -> Vec<PointVertex> {
     let normals = estimate_point_normals(&point_cloud.points);
-    point_cloud.points.iter()
+    point_cloud
+        .points
+        .iter()
         .zip(normals.iter())
         .map(|(point, normal)| PointVertex::from_point(point, color, size, *normal))
         .collect()
 }
 
 /// Convert colored point cloud to vertices with estimated normals
-pub fn point_cloud_to_vertices_colored(point_cloud: &PointCloud<Point3f>, size: f32) -> Vec<PointVertex> {
+pub fn point_cloud_to_vertices_colored(
+    point_cloud: &PointCloud<Point3f>,
+    size: f32,
+) -> Vec<PointVertex> {
     let normals = estimate_point_normals(&point_cloud.points);
-    point_cloud.points.iter()
+    point_cloud
+        .points
+        .iter()
         .zip(normals.iter())
         .map(|(point, normal)| {
             // Generate a color based on point position for visualization
@@ -520,20 +580,27 @@ pub fn point_cloud_to_vertices_colored(point_cloud: &PointCloud<Point3f>, size: 
                 (point.y * 0.5 + 0.5).clamp(0.0, 1.0),
                 (point.z * 0.5 + 0.5).clamp(0.0, 1.0),
             ];
-            
+
             PointVertex::from_point(point, color, size, *normal)
         })
         .collect()
 }
 
 /// Convert colored point cloud to vertices with estimated normals
-pub fn colored_point_cloud_to_vertices(point_cloud: &PointCloud<ColoredPoint3f>, size: f32) -> Vec<PointVertex> {
-    let positions: Vec<Point3f> = point_cloud.points.iter()
+pub fn colored_point_cloud_to_vertices(
+    point_cloud: &PointCloud<ColoredPoint3f>,
+    size: f32,
+) -> Vec<PointVertex> {
+    let positions: Vec<Point3f> = point_cloud
+        .points
+        .iter()
         .map(|p| Point3f::new(p.position.x, p.position.y, p.position.z))
         .collect();
     let normals = estimate_point_normals(&positions);
-    
-    point_cloud.points.iter()
+
+    point_cloud
+        .points
+        .iter()
         .zip(normals.iter())
         .map(|(point, normal)| PointVertex::from_colored_point(point, size, *normal))
         .collect()
@@ -542,28 +609,29 @@ pub fn colored_point_cloud_to_vertices(point_cloud: &PointCloud<ColoredPoint3f>,
 /// Simple normal estimation using local point neighborhood
 fn estimate_point_normals(points: &[Point3f]) -> Vec<[f32; 3]> {
     let mut normals = vec![[0.0, 0.0, 1.0]; points.len()];
-    
+
     for (i, point) in points.iter().enumerate() {
         // Find nearby points for normal estimation
         let mut neighbors = Vec::new();
         let search_radius = 0.1;
-        
+
         for (j, other_point) in points.iter().enumerate() {
             if i != j {
-                let distance = ((point.x - other_point.x).powi(2) + 
-                               (point.y - other_point.y).powi(2) + 
-                               (point.z - other_point.z).powi(2)).sqrt();
-                
+                let distance = ((point.x - other_point.x).powi(2)
+                    + (point.y - other_point.y).powi(2)
+                    + (point.z - other_point.z).powi(2))
+                .sqrt();
+
                 if distance < search_radius && neighbors.len() < 10 {
                     neighbors.push(*other_point);
                 }
             }
         }
-        
+
         if neighbors.len() >= 3 {
             // Compute normal using PCA-like approach
             let mut normal = estimate_normal_from_neighbors(point, &neighbors);
-            
+
             // Normalize the normal
             let length = (normal[0].powi(2) + normal[1].powi(2) + normal[2].powi(2)).sqrt();
             if length > 0.0 {
@@ -571,11 +639,11 @@ fn estimate_point_normals(points: &[Point3f]) -> Vec<[f32; 3]> {
                 normal[1] /= length;
                 normal[2] /= length;
             }
-            
+
             normals[i] = normal;
         }
     }
-    
+
     normals
 }
 
@@ -584,35 +652,35 @@ fn estimate_normal_from_neighbors(center: &Point3f, neighbors: &[Point3f]) -> [f
     if neighbors.len() < 2 {
         return [0.0, 0.0, 1.0];
     }
-    
+
     // Use first two neighbors to compute normal
     let v1 = [
         neighbors[0].x - center.x,
         neighbors[0].y - center.y,
         neighbors[0].z - center.z,
     ];
-    
+
     let v2 = [
         neighbors[1].x - center.x,
         neighbors[1].y - center.y,
         neighbors[1].z - center.z,
     ];
-    
+
     // Cross product
     let normal = [
         v1[1] * v2[2] - v1[2] * v2[1],
         v1[2] * v2[0] - v1[0] * v2[2],
         v1[0] * v2[1] - v1[1] * v2[0],
     ];
-    
+
     normal
 }
 
 // Note: Interactive rendering function commented out due to lifetime complexity
 // Users can create their own rendering loop using PointCloudRenderer::new()
-// 
-// /// GPU-accelerated point cloud rendering function  
+//
+// /// GPU-accelerated point cloud rendering function
 // pub async fn gpu_render_point_cloud(...) -> Result<()> {
 //     // Implementation requires complex lifetime management
 //     // Use PointCloudRenderer directly for custom rendering loops
-// } 
+// }

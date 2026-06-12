@@ -1,6 +1,6 @@
 //! 3D transformation utilities
 
-use nalgebra::{Point3, Vector3, Matrix4, Isometry3, Transform3, UnitQuaternion};
+use nalgebra::{Isometry3, Matrix4, Point3, Transform3, UnitQuaternion, Vector3};
 use serde::{Deserialize, Serialize};
 
 /// A 3D transformation that can be applied to points and point clouds
@@ -77,9 +77,9 @@ impl Transform3D {
 
     /// Get the inverse transformation
     pub fn inverse(self) -> Option<Self> {
-        self.matrix.try_inverse().map(|inv_matrix| Self {
-            matrix: inv_matrix,
-        })
+        self.matrix
+            .try_inverse()
+            .map(|inv_matrix| Self { matrix: inv_matrix })
     }
 
     /// Check if this is approximately the identity transformation
@@ -123,4 +123,4 @@ impl From<Transform3<f32>> for Transform3D {
             matrix: transform.into_inner(),
         }
     }
-} 
+}

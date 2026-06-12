@@ -42,10 +42,10 @@ fn main() {
 
 #[cfg(feature = "bevy_interop")]
 mod viewer {
+    use bevy::asset::RenderAssetUsages;
     use bevy::input::mouse::{MouseMotion, MouseWheel};
     use bevy::mesh::{PrimitiveTopology, VertexAttributeValues};
     use bevy::prelude::*;
-    use bevy::asset::RenderAssetUsages;
     use threecrate_core::Point3f;
     use threecrate_reconstruction::marching_cubes::{
         create_sphere_volume, marching_cubes, VolumetricGrid,
@@ -156,8 +156,8 @@ mod viewer {
             for y in 0..resolution[1] {
                 for z in 0..resolution[2] {
                     let w = grid.grid_to_world(x, y, z);
-                    let xz = ((w.x - center.x).powi(2) + (w.z - center.z).powi(2)).sqrt()
-                        - major_radius;
+                    let xz =
+                        ((w.x - center.x).powi(2) + (w.z - center.z).powi(2)).sqrt() - major_radius;
                     let d = (xz.powi(2) + (w.y - center.y).powi(2)).sqrt() - minor_radius;
                     grid.set_value(x, y, z, d).unwrap();
                 }
@@ -228,7 +228,11 @@ mod viewer {
             let r = (1.0 - y_unit * y_unit).sqrt();
             let theta = golden * i as f32;
             let scale = 2.5_f32;
-            positions.push([theta.cos() * r * scale, y_unit * scale, theta.sin() * r * scale]);
+            positions.push([
+                theta.cos() * r * scale,
+                y_unit * scale,
+                theta.sin() * r * scale,
+            ]);
 
             // Hue from 0° to 360° across the sphere
             let hue = (i as f32 / N as f32) * 360.0;
@@ -248,12 +252,19 @@ mod viewer {
         let c = v * s;
         let x = c * (1.0 - ((h / 60.0) % 2.0 - 1.0).abs());
         let m = v - c;
-        let (r, g, b) = if h < 60.0 { (c, x, 0.0) }
-            else if h < 120.0 { (x, c, 0.0) }
-            else if h < 180.0 { (0.0, c, x) }
-            else if h < 240.0 { (0.0, x, c) }
-            else if h < 300.0 { (x, 0.0, c) }
-            else              { (c, 0.0, x) };
+        let (r, g, b) = if h < 60.0 {
+            (c, x, 0.0)
+        } else if h < 120.0 {
+            (x, c, 0.0)
+        } else if h < 180.0 {
+            (0.0, c, x)
+        } else if h < 240.0 {
+            (0.0, x, c)
+        } else if h < 300.0 {
+            (x, 0.0, c)
+        } else {
+            (c, 0.0, x)
+        };
         (r + m, g + m, b + m)
     }
 
@@ -417,15 +428,21 @@ mod viewer {
         if keyboard.just_pressed(KeyCode::Escape) {
             exit.write(bevy::app::AppExit::Success);
         }
-        if keyboard.just_pressed(KeyCode::Digit1) && state.mode != DisplayMode::Mesh(MeshType::Sphere) {
+        if keyboard.just_pressed(KeyCode::Digit1)
+            && state.mode != DisplayMode::Mesh(MeshType::Sphere)
+        {
             state.mode = DisplayMode::Mesh(MeshType::Sphere);
             state.scene_dirty = true;
         }
-        if keyboard.just_pressed(KeyCode::Digit2) && state.mode != DisplayMode::Mesh(MeshType::Torus) {
+        if keyboard.just_pressed(KeyCode::Digit2)
+            && state.mode != DisplayMode::Mesh(MeshType::Torus)
+        {
             state.mode = DisplayMode::Mesh(MeshType::Torus);
             state.scene_dirty = true;
         }
-        if keyboard.just_pressed(KeyCode::Digit3) && state.mode != DisplayMode::Mesh(MeshType::Gyroid) {
+        if keyboard.just_pressed(KeyCode::Digit3)
+            && state.mode != DisplayMode::Mesh(MeshType::Gyroid)
+        {
             state.mode = DisplayMode::Mesh(MeshType::Gyroid);
             state.scene_dirty = true;
         }
@@ -498,7 +515,11 @@ mod viewer {
         let mode_line = match state.mode {
             DisplayMode::Mesh(t) => {
                 let (_, _, _, color_name) = COLORS[state.color_index];
-                format!("Mode : Mesh — {} (1·2·3)\nColor: {} (C to cycle)", t.label(), color_name)
+                format!(
+                    "Mode : Mesh — {} (1·2·3)\nColor: {} (C to cycle)",
+                    t.label(),
+                    color_name
+                )
             }
             DisplayMode::PointCloud => "Mode : Point Cloud (4)".to_string(),
         };

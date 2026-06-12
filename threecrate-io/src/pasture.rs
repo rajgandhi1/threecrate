@@ -3,11 +3,13 @@
 //! This module provides support for various point cloud formats through the pasture library,
 //! including LAS, LAZ, PCD, and other formats.
 
+use crate::registry::{
+    PointCloudReader as RegistryPointCloudReader, PointCloudWriter as RegistryPointCloudWriter,
+};
 use crate::{PointCloudReader, PointCloudWriter};
-use crate::registry::{PointCloudReader as RegistryPointCloudReader, PointCloudWriter as RegistryPointCloudWriter};
-use threecrate_core::{PointCloud, Point3f, Result};
-use std::path::Path;
 use pasture_core::containers::BorrowedBuffer;
+use std::path::Path;
+use threecrate_core::{Point3f, PointCloud, Result};
 
 pub struct PastureReader;
 pub struct PastureWriter;
@@ -17,7 +19,12 @@ impl RegistryPointCloudReader for PastureReader {
     fn read_point_cloud(&self, path: &Path) -> Result<PointCloud<Point3f>> {
         // Use pasture to read the point cloud
         let buffer = pasture_io::base::read_all::<pasture_core::containers::VectorBuffer, _>(path)
-            .map_err(|e| threecrate_core::Error::Io(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
+            .map_err(|e| {
+                threecrate_core::Error::Io(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    e.to_string(),
+                ))
+            })?;
 
         // Convert pasture point cloud to threecrate PointCloud
         let cloud = PointCloud::new();
@@ -28,7 +35,7 @@ impl RegistryPointCloudReader for PastureReader {
         if buffer.len() > 0 {
             // For now, return an error indicating the implementation needs refinement
             return Err(threecrate_core::Error::Unsupported(
-                "LAS/LAZ reading implemented but needs attribute parsing refinement".to_string()
+                "LAS/LAZ reading implemented but needs attribute parsing refinement".to_string(),
             ));
         }
 
@@ -55,10 +62,10 @@ impl RegistryPointCloudWriter for PastureWriter {
         // For now, return an error indicating the implementation needs refinement
         // The pasture API requires proper buffer setup and attribute handling
         Err(threecrate_core::Error::Unsupported(
-            "LAS/LAZ writing implemented but needs buffer setup refinement".to_string()
+            "LAS/LAZ writing implemented but needs buffer setup refinement".to_string(),
         ))
     }
-    
+
     fn format_name(&self) -> &'static str {
         "pasture"
     }
@@ -80,13 +87,13 @@ impl PointCloudWriter for PastureWriter {
 }
 
 /// Read a colored point cloud from supported formats
-/// 
+///
 /// This is a placeholder for future implementation
 pub fn read_colored_point_cloud<P: AsRef<Path>>(path: P) -> Result<PointCloud<Point3f>> {
     let _path = path.as_ref();
-    
+
     // TODO: Implement colored point cloud reading with pasture
     Err(threecrate_core::Error::Unsupported(
-        "Colored point cloud reading not yet implemented".to_string()
+        "Colored point cloud reading not yet implemented".to_string(),
     ))
 }

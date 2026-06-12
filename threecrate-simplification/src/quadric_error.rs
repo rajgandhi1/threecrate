@@ -1,15 +1,15 @@
 //! Quadric error decimation
-//! 
+//!
 //! Implementation of the Garland-Heckbert algorithm for mesh simplification
 //! based on quadric error metrics.
 
-use threecrate_core::{TriangleMesh, Result, Error, Point3f};
 use crate::MeshSimplifier;
 use nalgebra::{Matrix4, Vector4};
+use threecrate_core::{Error, Point3f, Result, TriangleMesh};
 // use rayon::prelude::*;
 use priority_queue::PriorityQueue;
-use std::collections::{HashMap, HashSet};
 use std::cmp::Ordering;
+use std::collections::{HashMap, HashSet};
 
 /// Edge collapse operation
 #[derive(Debug, Clone)]
@@ -85,7 +85,7 @@ impl QuadricErrorSimplifier {
     pub fn new() -> Self {
         Self::default()
     }
-    
+
     /// Create with custom parameters
     pub fn with_params(
         max_edge_length: Option<f32>,
@@ -98,63 +98,78 @@ impl QuadricErrorSimplifier {
             feature_angle_threshold,
         }
     }
-    
+
     /// Compute plane equation from triangle vertices
     fn compute_plane(&self, v0: &Point3f, v1: &Point3f, v2: &Point3f) -> Vector4<f64> {
         let edge1 = v1 - v0;
         let edge2 = v2 - v0;
         let normal = edge1.cross(&edge2).normalize();
-        
+
         // Handle degenerate triangles
         if !normal.iter().all(|x| x.is_finite()) {
             return Vector4::new(0.0, 0.0, 1.0, 0.0);
         }
-        
+
         let d = -normal.dot(&v0.coords);
         Vector4::new(normal.x as f64, normal.y as f64, normal.z as f64, d as f64)
     }
-    
+
     /// Compute quadric matrix from plane equation
     fn plane_to_quadric(&self, plane: &Vector4<f64>) -> Matrix4<f64> {
         let a = plane[0];
-        let b = plane[1]; 
+        let b = plane[1];
         let c = plane[2];
         let d = plane[3];
-        
+
         Matrix4::new(
-            a*a, a*b, a*c, a*d,
-            a*b, b*b, b*c, b*d,
-            a*c, b*c, c*c, c*d,
-            a*d, b*d, c*d, d*d,
+            a * a,
+            a * b,
+            a * c,
+            a * d,
+            a * b,
+            b * b,
+            b * c,
+            b * d,
+            a * c,
+            b * c,
+            c * c,
+            c * d,
+            a * d,
+            b * d,
+            c * d,
+            d * d,
         )
     }
-    
+
     /// Initialize vertex information including quadrics
     fn initialize_vertices(&self, mesh: &TriangleMesh) -> Vec<VertexInfo> {
-        let mut vertices: Vec<VertexInfo> = mesh.vertices.iter().enumerate().map(|(_i, &pos)| {
-            VertexInfo {
+        let mut vertices: Vec<VertexInfo> = mesh
+            .vertices
+            .iter()
+            .enumerate()
+            .map(|(_i, &pos)| VertexInfo {
                 position: pos,
                 quadric: Matrix4::zeros(),
                 faces: HashSet::new(),
                 neighbors: HashSet::new(),
-            }
-        }).collect();
-        
+            })
+            .collect();
+
         // Compute face planes and accumulate quadrics
         for (face_idx, face) in mesh.faces.iter().enumerate() {
             let v0 = mesh.vertices[face[0]];
             let v1 = mesh.vertices[face[1]];
             let v2 = mesh.vertices[face[2]];
-            
+
             let plane = self.compute_plane(&v0, &v1, &v2);
             let quadric = self.plane_to_quadric(&plane);
-            
+
             // Add quadric to each vertex of the face
             for &vertex_idx in face.iter() {
                 vertices[vertex_idx].quadric += quadric;
                 vertices[vertex_idx].faces.insert(face_idx);
             }
-            
+
             // Build adjacency
             vertices[face[0]].neighbors.insert(face[1]);
             vertices[face[0]].neighbors.insert(face[2]);
@@ -163,10 +178,10 @@ impl QuadricErrorSimplifier {
             vertices[face[2]].neighbors.insert(face[0]);
             vertices[face[2]].neighbors.insert(face[1]);
         }
-        
+
         vertices
     }
-    
+
     /// Find boundary edges in the mesh
     fn find_boundary_edges(&self, mesh: &TriangleMesh) -> HashSet<(usize, usize)> {
         let mut edge_count: HashMap<(usize, usize), usize> = HashMap::new();
@@ -180,7 +195,8 @@ impl QuadricErrorSimplifier {
                 *edge_count.entry(*edge).or_insert(0) += 1;
             }
         }
-        edge_count.into_iter()
+        edge_count
+            .into_iter()
             .filter(|(_, count)| *count == 1)
             .map(|(edge, _)| edge)
             .collect()
@@ -202,7 +218,8 @@ impl QuadricErrorSimplifier {
             }
         }
 
-        edge_count.into_iter()
+        edge_count
+            .into_iter()
             .filter(|(_, count)| *count == 1)
             .map(|(edge, _)| edge)
             .collect()
@@ -217,12 +234,17 @@ impl QuadricErrorSimplifier {
         }
         boundary_verts
     }
-    
+
     /// Compute optimal position and cost for edge collapse
-    fn compute_collapse_cost(&self, v1_idx: usize, v2_idx: usize, vertices: &[VertexInfo]) -> Option<EdgeCollapse> {
+    fn compute_collapse_cost(
+        &self,
+        v1_idx: usize,
+        v2_idx: usize,
+        vertices: &[VertexInfo],
+    ) -> Option<EdgeCollapse> {
         let v1 = &vertices[v1_idx];
         let v2 = &vertices[v2_idx];
-        
+
         // Check edge length constraint
         if let Some(max_len) = self.max_edge_length {
             let edge_len = (v1.position - v2.position).magnitude();
@@ -230,15 +252,15 @@ impl QuadricErrorSimplifier {
                 return None;
             }
         }
-        
+
         // Combined quadric
         let q_combined = v1.quadric + v2.quadric;
-        
+
         // Try to solve for optimal position: ∇(v^T Q v) = 0
         // This gives us: 2Qv = 0, or the 3x3 upper-left block of Q
         let q_3x3 = q_combined.fixed_view::<3, 3>(0, 0);
         let q_3x1 = q_combined.fixed_view::<3, 1>(0, 3);
-        
+
         let optimal_pos = if let Some(inv_q) = q_3x3.try_inverse() {
             let optimal_homogeneous = -inv_q * q_3x1;
             Point3f::new(
@@ -247,10 +269,10 @@ impl QuadricErrorSimplifier {
                 optimal_homogeneous[2] as f32,
             )
         } else {
-                         // If not invertible, use midpoint
-             Point3f::from((v1.position.coords + v2.position.coords) * 0.5)
+            // If not invertible, use midpoint
+            Point3f::from((v1.position.coords + v2.position.coords) * 0.5)
         };
-        
+
         // Compute quadric error at optimal position
         let pos_homogeneous = Vector4::new(
             optimal_pos.x as f64,
@@ -258,9 +280,9 @@ impl QuadricErrorSimplifier {
             optimal_pos.z as f64,
             1.0,
         );
-        
-                 let cost = (pos_homogeneous.transpose() * q_combined * pos_homogeneous)[0];
-        
+
+        let cost = (pos_homogeneous.transpose() * q_combined * pos_homogeneous)[0];
+
         Some(EdgeCollapse {
             vertex1: v1_idx,
             vertex2: v2_idx,
@@ -268,9 +290,13 @@ impl QuadricErrorSimplifier {
             cost,
         })
     }
-    
+
     /// Generate all valid edge collapses
-    fn generate_edge_collapses(&self, vertices: &[VertexInfo], boundary_edges: &HashSet<(usize, usize)>) -> Vec<EdgeCollapse> {
+    fn generate_edge_collapses(
+        &self,
+        vertices: &[VertexInfo],
+        boundary_edges: &HashSet<(usize, usize)>,
+    ) -> Vec<EdgeCollapse> {
         let mut collapses = Vec::new();
 
         // Get all boundary vertices
@@ -282,7 +308,8 @@ impl QuadricErrorSimplifier {
 
         for (v1_idx, vertex) in vertices.iter().enumerate() {
             for &v2_idx in &vertex.neighbors {
-                if v1_idx < v2_idx { // Avoid duplicate edges
+                if v1_idx < v2_idx {
+                    // Avoid duplicate edges
                     // Skip any edge involving a boundary vertex if preservation is enabled
                     if self.preserve_boundary {
                         if boundary_verts.contains(&v1_idx) || boundary_verts.contains(&v2_idx) {
@@ -297,7 +324,7 @@ impl QuadricErrorSimplifier {
         }
         collapses
     }
-    
+
     /// Apply edge collapse to mesh data structures
     fn apply_collapse(
         &self,
@@ -308,12 +335,12 @@ impl QuadricErrorSimplifier {
     ) -> Result<()> {
         let v1_idx = collapse.vertex1;
         let v2_idx = collapse.vertex2;
-        
-                 // Update vertex position and combine quadrics
-         let v2_quadric = vertices[v2_idx].quadric.clone();
-         vertices[v1_idx].position = collapse.new_position;
-         vertices[v1_idx].quadric += v2_quadric;
-        
+
+        // Update vertex position and combine quadrics
+        let v2_quadric = vertices[v2_idx].quadric.clone();
+        vertices[v1_idx].position = collapse.new_position;
+        vertices[v1_idx].quadric += v2_quadric;
+
         // Update faces that reference v2 to reference v1
         for face in faces.iter_mut() {
             for vertex_ref in face.iter_mut() {
@@ -322,15 +349,13 @@ impl QuadricErrorSimplifier {
                 }
             }
         }
-        
+
         // Remove degenerate faces (triangles with repeated vertices)
-        faces.retain(|face| {
-            face[0] != face[1] && face[1] != face[2] && face[2] != face[0]
-        });
-        
+        faces.retain(|face| face[0] != face[1] && face[1] != face[2] && face[2] != face[0]);
+
         // Update vertex mapping
         vertex_mapping.insert(v2_idx, v1_idx);
-        
+
         // Update adjacency information
         let v2_neighbors = vertices[v2_idx].neighbors.clone();
         for &neighbor in &v2_neighbors {
@@ -341,20 +366,20 @@ impl QuadricErrorSimplifier {
             }
         }
         vertices[v1_idx].neighbors.remove(&v2_idx);
-        
+
         // Mark v2 as invalid
         vertices[v2_idx].neighbors.clear();
         vertices[v2_idx].faces.clear();
-        
+
         Ok(())
     }
-    
+
     /// Rebuild mesh from simplified vertex and face data
     fn rebuild_mesh(&self, vertices: &[VertexInfo], faces: &[[usize; 3]]) -> TriangleMesh {
         // Create mapping from old indices to new indices (compacting)
         let mut old_to_new: HashMap<usize, usize> = HashMap::new();
         let mut new_vertices = Vec::new();
-        
+
         // Collect valid vertices
         for (old_idx, vertex) in vertices.iter().enumerate() {
             if !vertex.neighbors.is_empty() || !vertex.faces.is_empty() {
@@ -362,9 +387,10 @@ impl QuadricErrorSimplifier {
                 new_vertices.push(vertex.position);
             }
         }
-        
+
         // Update face indices
-        let new_faces: Vec<[usize; 3]> = faces.iter()
+        let new_faces: Vec<[usize; 3]> = faces
+            .iter()
             .filter_map(|face| {
                 if let (Some(&new_v0), Some(&new_v1), Some(&new_v2)) = (
                     old_to_new.get(&face[0]),
@@ -377,7 +403,7 @@ impl QuadricErrorSimplifier {
                 }
             })
             .collect();
-        
+
         TriangleMesh::from_vertices_and_faces(new_vertices, new_faces)
     }
 }
@@ -388,39 +414,44 @@ impl MeshSimplifier for QuadricErrorSimplifier {
         if mesh.is_empty() {
             return Err(Error::InvalidData("Mesh is empty".to_string()));
         }
-        
+
         if !(0.0..=1.0).contains(&reduction_ratio) {
-            return Err(Error::InvalidData("Reduction ratio must be between 0.0 and 1.0".to_string()));
+            return Err(Error::InvalidData(
+                "Reduction ratio must be between 0.0 and 1.0".to_string(),
+            ));
         }
-        
+
         if reduction_ratio == 0.0 {
             return Ok(mesh.clone());
         }
-        
+
         let target_face_count = ((1.0 - reduction_ratio) * mesh.faces.len() as f32) as usize;
-        
+
         // Initialize vertex information
         let mut vertices = self.initialize_vertices(mesh);
         let mut faces = mesh.faces.clone();
         let mut vertex_mapping = HashMap::new();
-        
+
         // Find boundary edges
         let boundary_edges = self.find_boundary_edges(mesh);
-        
+
         // Generate initial edge collapses
         let mut collapse_queue = PriorityQueue::new();
         let initial_collapses = self.generate_edge_collapses(&vertices, &boundary_edges);
-        
+
         for (idx, collapse) in initial_collapses.into_iter().enumerate() {
             collapse_queue.push(idx, collapse);
         }
-        
+
         // Perform edge collapses until target is reached
         let mut collapse_counter = 0;
         while faces.len() > target_face_count && !collapse_queue.is_empty() {
             if let Some((_, collapse)) = collapse_queue.pop() {
                 // Verify collapse is still valid
-                if vertices[collapse.vertex1].neighbors.contains(&collapse.vertex2) {
+                if vertices[collapse.vertex1]
+                    .neighbors
+                    .contains(&collapse.vertex2)
+                {
                     self.apply_collapse(&collapse, &mut vertices, &mut faces, &mut vertex_mapping)?;
                     collapse_counter += 1;
                     // Periodically regenerate collapses to maintain quality
@@ -428,7 +459,8 @@ impl MeshSimplifier for QuadricErrorSimplifier {
                         collapse_queue.clear();
                         // Recompute boundary edges based on current face configuration
                         let current_boundary_edges = self.find_boundary_edges_from_faces(&faces);
-                        let new_collapses = self.generate_edge_collapses(&vertices, &current_boundary_edges);
+                        let new_collapses =
+                            self.generate_edge_collapses(&vertices, &current_boundary_edges);
                         for (idx, collapse) in new_collapses.into_iter().enumerate() {
                             collapse_queue.push(collapse_counter * 1000 + idx, collapse);
                         }
@@ -436,7 +468,7 @@ impl MeshSimplifier for QuadricErrorSimplifier {
                 }
             }
         }
-        
+
         Ok(self.rebuild_mesh(&vertices, &faces))
     }
 }
@@ -459,9 +491,9 @@ mod tests {
         let v0 = Point3::new(0.0, 0.0, 0.0);
         let v1 = Point3::new(1.0, 0.0, 0.0);
         let v2 = Point3::new(0.0, 1.0, 0.0);
-        
+
         let plane = simplifier.compute_plane(&v0, &v1, &v2);
-        
+
         // Should be z = 0 plane: 0x + 0y + 1z + 0 = 0
         assert!((plane[0]).abs() < 1e-6);
         assert!((plane[1]).abs() < 1e-6);
@@ -473,7 +505,7 @@ mod tests {
     fn test_empty_mesh() {
         let simplifier = QuadricErrorSimplifier::new();
         let mesh = TriangleMesh::new();
-        
+
         let result = simplifier.simplify(&mesh, 0.5);
         assert!(result.is_err());
     }
@@ -488,7 +520,7 @@ mod tests {
         ];
         let faces = vec![[0, 1, 2]];
         let mesh = TriangleMesh::from_vertices_and_faces(vertices, faces);
-        
+
         let result = simplifier.simplify(&mesh, 0.0).unwrap();
         assert_eq!(result.vertex_count(), 3);
         assert_eq!(result.face_count(), 1);
@@ -504,7 +536,7 @@ mod tests {
         ];
         let faces = vec![[0, 1, 2]];
         let mesh = TriangleMesh::from_vertices_and_faces(vertices, faces);
-        
+
         assert!(simplifier.simplify(&mesh, -0.1).is_err());
         assert!(simplifier.simplify(&mesh, 1.1).is_err());
     }
@@ -513,9 +545,9 @@ mod tests {
     fn test_quadric_matrix_computation() {
         let simplifier = QuadricErrorSimplifier::new();
         let plane = Vector4::new(1.0, 0.0, 0.0, -1.0); // x = 1 plane
-        
+
         let quadric = simplifier.plane_to_quadric(&plane);
-        
+
         // Check diagonal elements
         assert!((quadric[(0, 0)] - 1.0).abs() < 1e-10);
         assert!((quadric[(1, 1)] - 0.0).abs() < 1e-10);
@@ -533,12 +565,7 @@ mod tests {
             Point3::new(0.5, 1.0, 0.0),
             Point3::new(0.5, 0.5, 1.0),
         ];
-        let faces = vec![
-            [0, 1, 2],
-            [0, 1, 3],
-            [0, 2, 3],
-            [1, 2, 3],
-        ];
+        let faces = vec![[0, 1, 2], [0, 1, 3], [0, 2, 3], [1, 2, 3]];
         let mesh = TriangleMesh::from_vertices_and_faces(vertices, faces);
         let simplified = simplifier.simplify(&mesh, 0.5).unwrap();
         // Should have fewer faces
@@ -559,11 +586,7 @@ mod tests {
         let mut vertices = Vec::new();
         for y in 0..grid_size {
             for x in 0..grid_size {
-                vertices.push(Point3::new(
-                    x as f32 * spacing,
-                    y as f32 * spacing,
-                    z,
-                ));
+                vertices.push(Point3::new(x as f32 * spacing, y as f32 * spacing, z));
             }
         }
 
@@ -584,7 +607,11 @@ mod tests {
 
         let mesh = TriangleMesh::from_vertices_and_faces(vertices.clone(), faces.clone());
 
-        println!("Original mesh: {} vertices, {} faces", mesh.vertex_count(), mesh.face_count());
+        println!(
+            "Original mesh: {} vertices, {} faces",
+            mesh.vertex_count(),
+            mesh.face_count()
+        );
 
         // Identify original boundary vertices (edges of the grid)
         let mut original_boundary_verts = std::collections::HashSet::new();
@@ -599,7 +626,10 @@ mod tests {
             original_boundary_verts.insert(i * grid_size + (grid_size - 1));
         }
 
-        println!("Original boundary vertices: {}", original_boundary_verts.len());
+        println!(
+            "Original boundary vertices: {}",
+            original_boundary_verts.len()
+        );
 
         // Debug: Check boundary edge detection
         let boundary_edges = simplifier.find_boundary_edges(&mesh);
@@ -611,12 +641,19 @@ mod tests {
             detected_boundary_verts.insert(v1);
             detected_boundary_verts.insert(v2);
         }
-        println!("Detected boundary vertices: {}", detected_boundary_verts.len());
+        println!(
+            "Detected boundary vertices: {}",
+            detected_boundary_verts.len()
+        );
 
         // Simplify with 50% reduction
         let simplified = simplifier.simplify(&mesh, 0.5).unwrap();
 
-        println!("Simplified mesh: {} vertices, {} faces", simplified.vertex_count(), simplified.face_count());
+        println!(
+            "Simplified mesh: {} vertices, {} faces",
+            simplified.vertex_count(),
+            simplified.face_count()
+        );
 
         // Check if boundary vertices are preserved
         // We need to check if the boundary vertices' positions are still in the simplified mesh
@@ -639,8 +676,14 @@ mod tests {
             ));
         }
 
-        let preserved_boundary_count = boundary_positions.intersection(&simplified_positions).count();
-        println!("Preserved boundary vertices: {}/{}", preserved_boundary_count, boundary_positions.len());
+        let preserved_boundary_count = boundary_positions
+            .intersection(&simplified_positions)
+            .count();
+        println!(
+            "Preserved boundary vertices: {}/{}",
+            preserved_boundary_count,
+            boundary_positions.len()
+        );
 
         // Boundary vertices should be preserved when preserve_boundary is true
         // We expect all or most boundary vertices to remain
@@ -648,4 +691,4 @@ mod tests {
             "Expected at least 90% of boundary vertices to be preserved, but only {}% were preserved",
             (preserved_boundary_count as f32 / boundary_positions.len() as f32 * 100.0));
     }
-} 
+}

@@ -1,11 +1,8 @@
 //! Registration algorithms
 
-use threecrate_core::{PointCloud, Result, Point3f, Vector3f, Error, Isometry3};
-use nalgebra::{Matrix3, Matrix6, Vector6, UnitQuaternion, Translation3};
+use nalgebra::{Matrix3, Matrix6, Translation3, UnitQuaternion, Vector6};
 use rayon::prelude::*;
-
-
-
+use threecrate_core::{Error, Isometry3, Point3f, PointCloud, Result, Vector3f};
 
 /// Result of ICP registration
 #[derive(Debug, Clone)]
@@ -36,7 +33,7 @@ fn find_correspondences(
 
             for (target_idx, target_point) in target.iter().enumerate() {
                 let distance = (source_point - target_point).magnitude();
-                
+
                 if distance < best_distance {
                     best_distance = distance;
                     best_idx = Some(target_idx);
@@ -61,14 +58,22 @@ fn compute_transformation(
     target_points: &[Point3f],
 ) -> Result<Isometry3<f32>> {
     if source_points.len() != target_points.len() || source_points.is_empty() {
-        return Err(Error::InvalidData("Point correspondence mismatch".to_string()));
+        return Err(Error::InvalidData(
+            "Point correspondence mismatch".to_string(),
+        ));
     }
 
     let n = source_points.len() as f32;
 
     // Compute centroids
-    let source_centroid = source_points.iter().fold(Point3f::origin(), |acc, p| acc + p.coords) / n;
-    let target_centroid = target_points.iter().fold(Point3f::origin(), |acc, p| acc + p.coords) / n;
+    let source_centroid = source_points
+        .iter()
+        .fold(Point3f::origin(), |acc, p| acc + p.coords)
+        / n;
+    let target_centroid = target_points
+        .iter()
+        .fold(Point3f::origin(), |acc, p| acc + p.coords)
+        / n;
 
     // Compute covariance matrix H
     let mut h = Matrix3::zeros();
@@ -80,8 +85,12 @@ fn compute_transformation(
 
     // SVD decomposition
     let svd = h.svd(true, true);
-    let u = svd.u.ok_or_else(|| Error::Algorithm("SVD U matrix not available".to_string()))?;
-    let v_t = svd.v_t.ok_or_else(|| Error::Algorithm("SVD V^T matrix not available".to_string()))?;
+    let u = svd
+        .u
+        .ok_or_else(|| Error::Algorithm("SVD U matrix not available".to_string()))?;
+    let v_t = svd
+        .v_t
+        .ok_or_else(|| Error::Algorithm("SVD V^T matrix not available".to_string()))?;
 
     // Compute rotation matrix
     let mut r = v_t.transpose() * u.transpose();
@@ -106,10 +115,7 @@ fn compute_transformation(
 }
 
 /// Compute mean squared error between corresponding points
-fn compute_mse(
-    source_points: &[Point3f],
-    target_points: &[Point3f],
-) -> f32 {
+fn compute_mse(source_points: &[Point3f], target_points: &[Point3f]) -> f32 {
     if source_points.is_empty() {
         return 0.0;
     }
@@ -124,15 +130,15 @@ fn compute_mse(
 }
 
 /// ICP (Iterative Closest Point) registration - Main function matching requested API
-/// 
+///
 /// This function performs point cloud registration using the ICP algorithm.
-/// 
+///
 /// # Arguments
 /// * `source` - Source point cloud to be aligned
 /// * `target` - Target point cloud to align to
 /// * `init` - Initial transformation estimate
 /// * `max_iters` - Maximum number of iterations
-/// 
+///
 /// # Returns
 /// * `Isometry3<f32>` - Final transformation that aligns source to target
 pub fn icp(
@@ -148,9 +154,9 @@ pub fn icp(
 }
 
 /// Detailed ICP registration with comprehensive options and result
-/// 
+///
 /// This function provides full control over ICP parameters and returns detailed results.
-/// 
+///
 /// # Arguments
 /// * `source` - Source point cloud to be aligned
 /// * `target` - Target point cloud to align to
@@ -158,7 +164,7 @@ pub fn icp(
 /// * `max_iters` - Maximum number of iterations
 /// * `max_correspondence_distance` - Maximum distance for valid correspondences (None = no limit)
 /// * `convergence_threshold` - MSE change threshold for convergence
-/// 
+///
 /// # Returns
 /// * `Result<ICPResult>` - Detailed ICP result including transformation, error, and convergence info
 pub fn icp_detailed(
@@ -170,11 +176,15 @@ pub fn icp_detailed(
     convergence_threshold: f32,
 ) -> Result<ICPResult> {
     if source.is_empty() || target.is_empty() {
-        return Err(Error::InvalidData("Source or target point cloud is empty".to_string()));
+        return Err(Error::InvalidData(
+            "Source or target point cloud is empty".to_string(),
+        ));
     }
 
     if max_iters == 0 {
-        return Err(Error::InvalidData("Max iterations must be positive".to_string()));
+        return Err(Error::InvalidData(
+            "Max iterations must be positive".to_string(),
+        ));
     }
 
     let mut current_transform = init;
@@ -210,7 +220,9 @@ pub fn icp_detailed(
         }
 
         if valid_source_points.len() < 3 {
-            return Err(Error::Algorithm("Insufficient correspondences found".to_string()));
+            return Err(Error::Algorithm(
+                "Insufficient correspondences found".to_string(),
+            ));
         }
 
         // Compute transformation for this iteration
@@ -278,10 +290,10 @@ pub fn icp_legacy(
 ) -> Result<(threecrate_core::Transform3D, f32)> {
     let init = Isometry3::identity();
     let result = icp_detailed(source, target, init, max_iterations, Some(threshold), 1e-6)?;
-    
+
     // Convert Isometry3 to Transform3D
     let transform = threecrate_core::Transform3D::from(result.transformation);
-    
+
     Ok((transform, result.mse))
 }
 
@@ -331,9 +343,9 @@ fn compute_transformation_point_to_plane(
     let x = if let Some(chol) = ata.cholesky() {
         chol.solve(&atb)
     } else {
-        ata.lu()
-            .solve(&atb)
-            .ok_or_else(|| Error::Algorithm("Point-to-plane system is ill-conditioned".to_string()))?
+        ata.lu().solve(&atb).ok_or_else(|| {
+            Error::Algorithm("Point-to-plane system is ill-conditioned".to_string())
+        })?
     };
 
     // Compose small-angle rotations Rz(γ) * Ry(β) * Rx(α)
@@ -469,7 +481,8 @@ pub fn icp_point_to_plane_detailed(
             ));
         }
 
-        let delta = compute_transformation_point_to_plane(&valid_source, &valid_target, &valid_normals)?;
+        let delta =
+            compute_transformation_point_to_plane(&valid_source, &valid_target, &valid_normals)?;
         current_transform = delta * current_transform;
 
         let current_mse = compute_point_to_plane_mse(&valid_source, &valid_target, &valid_normals);
@@ -499,10 +512,10 @@ pub fn icp_point_to_plane_detailed(
 }
 
 /// Point-to-point ICP registration
-/// 
+///
 /// This function performs point-to-point ICP registration using Euclidean distance minimization.
 /// It finds the rigid transformation that best aligns the source point cloud to the target.
-/// 
+///
 /// # Arguments
 /// * `source` - Source point cloud to be aligned
 /// * `target` - Target point cloud to align to
@@ -510,16 +523,16 @@ pub fn icp_point_to_plane_detailed(
 /// * `max_iterations` - Maximum number of iterations to perform
 /// * `convergence_threshold` - MSE change threshold for convergence (default: 1e-6)
 /// * `max_correspondence_distance` - Maximum distance for valid correspondences (None = no limit)
-/// 
+///
 /// # Returns
 /// * `Result<ICPResult>` - Detailed ICP result including transformation, error, and convergence info
-/// 
+///
 /// # Example
 /// ```rust
 /// use threecrate_algorithms::icp_point_to_point;
 /// use threecrate_core::{PointCloud, Point3f};
 /// use nalgebra::Isometry3;
-/// 
+///
 /// fn main() -> Result<(), Box<dyn std::error::Error>> {
 ///     // Create source and target point clouds
 ///     let mut source = PointCloud::new();
@@ -548,15 +561,21 @@ pub fn icp_point_to_point(
 ) -> Result<ICPResult> {
     // Validate inputs
     if source.is_empty() || target.is_empty() {
-        return Err(Error::InvalidData("Source or target point cloud is empty".to_string()));
+        return Err(Error::InvalidData(
+            "Source or target point cloud is empty".to_string(),
+        ));
     }
 
     if max_iterations == 0 {
-        return Err(Error::InvalidData("Max iterations must be positive".to_string()));
+        return Err(Error::InvalidData(
+            "Max iterations must be positive".to_string(),
+        ));
     }
 
     if convergence_threshold <= 0.0 {
-        return Err(Error::InvalidData("Convergence threshold must be positive".to_string()));
+        return Err(Error::InvalidData(
+            "Convergence threshold must be positive".to_string(),
+        ));
     }
 
     // Use the detailed ICP implementation with point-to-point distance minimization
@@ -571,15 +590,15 @@ pub fn icp_point_to_point(
 }
 
 /// Point-to-point ICP registration with default parameters
-/// 
+///
 /// Convenience function that uses reasonable default parameters for point-to-point ICP.
-/// 
+///
 /// # Arguments
 /// * `source` - Source point cloud to be aligned
 /// * `target` - Target point cloud to align to
 /// * `init` - Initial transformation estimate
 /// * `max_iterations` - Maximum number of iterations
-/// 
+///
 /// # Returns
 /// * `Result<ICPResult>` - Detailed ICP result
 pub fn icp_point_to_point_default(
@@ -602,7 +621,7 @@ mod tests {
         // Create identical point clouds
         let mut source = PointCloud::new();
         let mut target = PointCloud::new();
-        
+
         for i in 0..10 {
             let point = Point3f::new(i as f32, (i * 2) as f32, (i * 3) as f32);
             source.push(point);
@@ -623,9 +642,9 @@ mod tests {
         // Create source and target with known translation
         let mut source = PointCloud::new();
         let mut target = PointCloud::new();
-        
+
         let translation = Vector3f::new(1.0, 2.0, 3.0);
-        
+
         for i in 0..10 {
             let source_point = Point3f::new(i as f32, (i * 2) as f32, (i * 3) as f32);
             let target_point = source_point + translation;
@@ -640,8 +659,12 @@ mod tests {
         let computed_translation = result.transformation.translation.vector;
         // ICP may not converge exactly due to numerical precision and algorithm limitations
         // The algorithm should at least move in the correct direction
-        assert!(computed_translation.magnitude() > 0.05, "Translation magnitude too small: {}", computed_translation.magnitude());
-        
+        assert!(
+            computed_translation.magnitude() > 0.05,
+            "Translation magnitude too small: {}",
+            computed_translation.magnitude()
+        );
+
         assert!(result.mse < 2.0); // Allow for higher MSE in simple test cases
     }
 
@@ -650,9 +673,10 @@ mod tests {
         // Create source and target with known rotation
         let mut source = PointCloud::new();
         let mut target = PointCloud::new();
-        
-        let rotation = UnitQuaternion::from_axis_angle(&Vector3f::z_axis(), std::f32::consts::FRAC_PI_4);
-        
+
+        let rotation =
+            UnitQuaternion::from_axis_angle(&Vector3f::z_axis(), std::f32::consts::FRAC_PI_4);
+
         for i in 0..20 {
             let source_point = Point3f::new(i as f32, (i % 5) as f32, 0.0);
             let target_point = rotation * source_point;
@@ -671,13 +695,13 @@ mod tests {
     fn test_icp_insufficient_points() {
         let mut source = PointCloud::new();
         let mut target = PointCloud::new();
-        
+
         source.push(Point3f::new(0.0, 0.0, 0.0));
         target.push(Point3f::new(1.0, 1.0, 1.0));
 
         let init = Isometry3::identity();
         let result = icp_detailed(&source, &target, init, 10, None, 1e-6);
-        
+
         assert!(result.is_err());
     }
 
@@ -686,7 +710,7 @@ mod tests {
         // Test the main API function
         let mut source = PointCloud::new();
         let mut target = PointCloud::new();
-        
+
         for i in 0..5 {
             let point = Point3f::new(i as f32, i as f32, 0.0);
             source.push(point);
@@ -695,7 +719,7 @@ mod tests {
 
         let init = Isometry3::identity();
         let transform = icp(&source, &target, init, 20);
-        
+
         // Should return a valid transformation (not panic)
         assert!(transform.translation.vector.magnitude() > 0.5);
     }
@@ -707,7 +731,7 @@ mod tests {
             Point3f::new(1.0, 0.0, 0.0),
             Point3f::new(0.0, 1.0, 0.0),
         ];
-        
+
         let target = vec![
             Point3f::new(0.1, 0.1, 0.0),
             Point3f::new(1.1, 0.1, 0.0),
@@ -715,7 +739,7 @@ mod tests {
         ];
 
         let correspondences = find_correspondences(&source, &target, None);
-        
+
         assert_eq!(correspondences.len(), 3);
         assert!(correspondences[0].is_some());
         assert!(correspondences[1].is_some());
@@ -727,7 +751,7 @@ mod tests {
         // Test basic functionality with simple point clouds
         let mut source = PointCloud::new();
         let mut target = PointCloud::new();
-        
+
         // Create a simple cube pattern
         for x in 0..3 {
             for y in 0..3 {
@@ -745,9 +769,13 @@ mod tests {
         // Should converge and find a reasonable transformation
         assert!(result.converged || result.iterations == 50);
         assert!(result.mse < 2.0); // Allow for higher MSE in simple test cases
-        // The transformation should at least move in the right direction
+                                   // The transformation should at least move in the right direction
         let translation_mag = result.transformation.translation.vector.magnitude();
-        assert!(translation_mag > 0.1, "Translation magnitude too small: {}", translation_mag);
+        assert!(
+            translation_mag > 0.1,
+            "Translation magnitude too small: {}",
+            translation_mag
+        );
     }
 
     #[test]
@@ -755,7 +783,7 @@ mod tests {
         // Test with noisy data
         let mut source = PointCloud::new();
         let mut target = PointCloud::new();
-        
+
         let translation = Vector3f::new(2.0, 1.0, 0.5);
         let rotation = UnitQuaternion::from_axis_angle(&Vector3f::z_axis(), 0.3);
         let transform = Isometry3::from_parts(
@@ -800,12 +828,16 @@ mod tests {
         // Test with a known transformation
         let mut source = PointCloud::new();
         let mut target = PointCloud::new();
-        
+
         // Known transformation - use smaller values for better convergence
         let known_translation = Vector3f::new(1.0, -0.5, 0.25);
         let known_rotation = UnitQuaternion::from_axis_angle(&Vector3f::z_axis(), 0.2);
         let known_transform = Isometry3::from_parts(
-            Translation3::new(known_translation.x, known_translation.y, known_translation.z),
+            Translation3::new(
+                known_translation.x,
+                known_translation.y,
+                known_translation.z,
+            ),
             known_rotation,
         );
 
@@ -826,8 +858,12 @@ mod tests {
         // Should find a transformation close to the known one
         let computed_translation = result.transformation.translation.vector;
         let translation_error = (computed_translation - known_translation).magnitude();
-        assert!(translation_error < 1.0, "Translation error too large: {}", translation_error);
-        
+        assert!(
+            translation_error < 1.0,
+            "Translation error too large: {}",
+            translation_error
+        );
+
         assert!(result.mse < 0.5);
     }
 
@@ -836,7 +872,7 @@ mod tests {
         // Test convergence behavior
         let mut source = PointCloud::new();
         let mut target = PointCloud::new();
-        
+
         // Create point clouds that should converge quickly
         for i in 0..50 {
             let point = Point3f::new(i as f32 * 0.1, (i * 2) as f32 * 0.1, 0.0);
@@ -858,12 +894,12 @@ mod tests {
         // Test with maximum correspondence distance
         let mut source = PointCloud::new();
         let mut target = PointCloud::new();
-        
+
         // Create source points
         for i in 0..10 {
             source.push(Point3f::new(i as f32, 0.0, 0.0));
         }
-        
+
         // Create target points with some far away
         for i in 0..10 {
             if i < 5 {
@@ -888,7 +924,7 @@ mod tests {
         // Test the default convenience function
         let mut source = PointCloud::new();
         let mut target = PointCloud::new();
-        
+
         for i in 0..10 {
             let point = Point3f::new(i as f32, i as f32, 0.0);
             source.push(point);
@@ -973,8 +1009,8 @@ mod tests {
             target.push(p + shift);
         }
         // Reuse the source normals as approximate target normals (valid for small shift).
-        let result = icp_point_to_plane(&source, &target, &normals, Isometry3::identity(), 50)
-            .unwrap();
+        let result =
+            icp_point_to_plane(&source, &target, &normals, Isometry3::identity(), 50).unwrap();
 
         let t_err = (result.transformation.translation.vector - shift).magnitude();
         assert!(t_err < 0.3, "translation error={}", t_err);
@@ -1051,4 +1087,4 @@ mod tests {
         let result = result.unwrap();
         assert!(result.mse < 0.5, "mse={}", result.mse);
     }
-} 
+}

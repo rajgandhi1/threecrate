@@ -82,15 +82,21 @@ impl SoaPoints {
 
     /// X coordinates slice.
     #[inline]
-    pub fn xs(&self) -> &[f32] { &self.xs }
+    pub fn xs(&self) -> &[f32] {
+        &self.xs
+    }
 
     /// Y coordinates slice.
     #[inline]
-    pub fn ys(&self) -> &[f32] { &self.ys }
+    pub fn ys(&self) -> &[f32] {
+        &self.ys
+    }
 
     /// Z coordinates slice.
     #[inline]
-    pub fn zs(&self) -> &[f32] { &self.zs }
+    pub fn zs(&self) -> &[f32] {
+        &self.zs
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -268,7 +274,10 @@ unsafe fn avx2_distances_squared(query: &Point3f, pts: &SoaPoints, out: &mut [f3
 }
 
 /// Scalar tail processing for SIMD functions.
-#[cfg_attr(not(any(target_arch = "x86", target_arch = "x86_64")), allow(dead_code))]
+#[cfg_attr(
+    not(any(target_arch = "x86", target_arch = "x86_64")),
+    allow(dead_code)
+)]
 #[inline(always)]
 fn scalar_remainder(
     query: &Point3f,
@@ -320,17 +329,25 @@ pub struct SimdBruteForceSearch {
 impl SimdBruteForceSearch {
     /// Construct a new searcher from a point slice (O(N) time and space).
     pub fn new(points: &[Point3f]) -> Self {
-        Self { soa: SoaPoints::from_points(points) }
+        Self {
+            soa: SoaPoints::from_points(points),
+        }
     }
 
     /// Number of indexed points.
-    pub fn len(&self) -> usize { self.soa.len() }
+    pub fn len(&self) -> usize {
+        self.soa.len()
+    }
 
     /// Returns `true` if the index is empty.
-    pub fn is_empty(&self) -> bool { self.soa.is_empty() }
+    pub fn is_empty(&self) -> bool {
+        self.soa.is_empty()
+    }
 
     /// Return the SoA representation (useful for benchmarks / inspection).
-    pub fn soa(&self) -> &SoaPoints { &self.soa }
+    pub fn soa(&self) -> &SoaPoints {
+        &self.soa
+    }
 }
 
 impl NearestNeighborSearch for SimdBruteForceSearch {
@@ -352,11 +369,17 @@ impl NearestNeighborSearch for SimdBruteForceSearch {
 
         for (idx, &d2) in dist_sq.iter().enumerate() {
             if heap.len() < k {
-                heap.push(DistEntry { dist_sq: d2, index: idx });
+                heap.push(DistEntry {
+                    dist_sq: d2,
+                    index: idx,
+                });
             } else if let Some(farthest) = heap.peek() {
                 if d2 < farthest.dist_sq {
                     heap.pop();
-                    heap.push(DistEntry { dist_sq: d2, index: idx });
+                    heap.push(DistEntry {
+                        dist_sq: d2,
+                        index: idx,
+                    });
                 }
             }
         }
@@ -387,7 +410,11 @@ impl NearestNeighborSearch for SimdBruteForceSearch {
             .iter()
             .enumerate()
             .filter_map(|(idx, &d2)| {
-                if d2 <= radius_sq { Some((idx, d2.sqrt())) } else { None }
+                if d2 <= radius_sq {
+                    Some((idx, d2.sqrt()))
+                } else {
+                    None
+                }
             })
             .collect();
 
@@ -482,7 +509,10 @@ mod tests {
         let mut out = vec![0.0f32; pts.len()];
         scalar_distances_squared(&query, &soa, &mut out);
         for (got, expected) in out.iter().zip(reference.iter()) {
-            assert!((got - expected).abs() < 1e-6, "got={got}, expected={expected}");
+            assert!(
+                (got - expected).abs() < 1e-6,
+                "got={got}, expected={expected}"
+            );
         }
     }
 
@@ -550,7 +580,10 @@ mod tests {
 
         assert_eq!(simd_res.len(), k);
         for ((si, sd), (_, bd)) in simd_res.iter().zip(scalar_res.iter()) {
-            assert!((sd - bd).abs() < 1e-5, "dist mismatch: simd={sd} scalar={bd}");
+            assert!(
+                (sd - bd).abs() < 1e-5,
+                "dist mismatch: simd={sd} scalar={bd}"
+            );
             let _ = si; // index ties are allowed at equal distance
         }
     }

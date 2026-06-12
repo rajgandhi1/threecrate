@@ -1,6 +1,6 @@
 //! Camera utilities for 3D visualization
 
-use nalgebra::{Point3, Vector3, Matrix4, Perspective3};
+use nalgebra::{Matrix4, Perspective3, Point3, Vector3};
 use std::f32::consts::PI;
 
 /// A 3D camera for viewing point clouds and meshes
@@ -10,16 +10,16 @@ pub struct Camera {
     pub target: Point3<f32>,
     pub up: Vector3<f32>,
     pub fov: f32,
-    pub fovy_degrees: f32,  // FOV in degrees for UI display
+    pub fovy_degrees: f32, // FOV in degrees for UI display
     pub aspect_ratio: f32,
     pub near: f32,
     pub far: f32,
-    
+
     // Spherical coordinates for orbit control
     pub radius: f32,
-    pub theta: f32,  // Azimuth angle
-    pub phi: f32,    // Polar angle
-    
+    pub theta: f32, // Azimuth angle
+    pub phi: f32,   // Polar angle
+
     // Default position for reset
     default_position: Point3<f32>,
     default_target: Point3<f32>,
@@ -42,7 +42,7 @@ impl Camera {
         let theta = direction.z.atan2(direction.x);
         let phi = (direction.y / radius).asin();
         let fov = fovy_degrees.to_radians();
-        
+
         Self {
             position,
             target,
@@ -81,7 +81,7 @@ impl Camera {
     /// Rotate the camera around the target (orbit control)
     pub fn orbit(&mut self, delta_theta: f32, delta_phi: f32) {
         self.theta += delta_theta;
-        self.phi = (self.phi + delta_phi).clamp(-PI/2.0 + 0.1, PI/2.0 - 0.1);
+        self.phi = (self.phi + delta_phi).clamp(-PI / 2.0 + 0.1, PI / 2.0 - 0.1);
         self.update_position_from_spherical();
     }
 
@@ -90,7 +90,7 @@ impl Camera {
         let forward = (self.target - self.position).normalize();
         let right = forward.cross(&self.up).normalize();
         let up = right.cross(&forward).normalize();
-        
+
         let pan_vector = right * delta_x + up * delta_y;
         self.position += pan_vector;
         self.target += pan_vector;
@@ -113,7 +113,7 @@ impl Camera {
         self.position = self.default_position;
         self.target = self.default_target;
         self.up = self.default_up;
-        
+
         let direction = self.position - self.target;
         self.radius = direction.magnitude();
         self.theta = direction.z.atan2(direction.x);
@@ -125,7 +125,7 @@ impl Camera {
         let x = self.radius * self.phi.cos() * self.theta.cos();
         let y = self.radius * self.phi.sin();
         let z = self.radius * self.phi.cos() * self.theta.sin();
-        
+
         self.position = self.target + Vector3::new(x, y, z);
     }
 
@@ -181,10 +181,10 @@ impl Default for Camera {
             Point3::new(0.0, 0.0, 5.0),
             Point3::new(0.0, 0.0, 0.0),
             Vector3::new(0.0, 1.0, 0.0),
-            45.0,  // 45 degrees FOV
+            45.0, // 45 degrees FOV
             16.0 / 9.0,
             0.1,
             100.0,
         )
     }
-} 
+}

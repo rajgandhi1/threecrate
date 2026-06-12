@@ -77,10 +77,10 @@ impl TriangleMesh {
                 let v0 = self.vertices[face[0]];
                 let v1 = self.vertices[face[1]];
                 let v2 = self.vertices[face[2]];
-                
+
                 let edge1 = v1 - v0;
                 let edge2 = v2 - v0;
-                
+
                 edge1.cross(&edge2).normalize()
             })
             .collect()
@@ -145,4 +145,4 @@ impl Default for ColoredTriangleMesh {
     fn default() -> Self {
         Self::new()
     }
-} 
+}

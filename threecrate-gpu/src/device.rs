@@ -27,17 +27,17 @@ impl GpuContext {
                 force_fallback_adapter: false,
             })
             .await
-            .map_err(|e| threecrate_core::Error::Gpu(format!("Failed to find suitable adapter: {:?}", e)))?;
+            .map_err(|e| {
+                threecrate_core::Error::Gpu(format!("Failed to find suitable adapter: {:?}", e))
+            })?;
 
         let (device, queue) = adapter
-            .request_device(
-                &wgpu::DeviceDescriptor {
-                    label: Some("ThreeCrate GPU Device"),
-                    required_features: wgpu::Features::empty(),
-                    required_limits: wgpu::Limits::default(),
-                    ..Default::default()
-                }
-            )
+            .request_device(&wgpu::DeviceDescriptor {
+                label: Some("ThreeCrate GPU Device"),
+                required_features: wgpu::Features::empty(),
+                required_limits: wgpu::Limits::default(),
+                ..Default::default()
+            })
             .await
             .map_err(|e| threecrate_core::Error::Gpu(format!("Failed to create device: {}", e)))?;
 
@@ -50,12 +50,18 @@ impl GpuContext {
     }
 
     /// Create a buffer from data
-    pub fn create_buffer_init<T: bytemuck::Pod>(&self, label: &str, data: &[T], usage: wgpu::BufferUsages) -> wgpu::Buffer {
-        self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some(label),
-            contents: bytemuck::cast_slice(data),
-            usage,
-        })
+    pub fn create_buffer_init<T: bytemuck::Pod>(
+        &self,
+        label: &str,
+        data: &[T],
+        usage: wgpu::BufferUsages,
+    ) -> wgpu::Buffer {
+        self.device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some(label),
+                contents: bytemuck::cast_slice(data),
+                usage,
+            })
     }
 
     /// Create an empty buffer
@@ -69,39 +75,56 @@ impl GpuContext {
     }
 
     /// Create a compute pipeline
-    pub fn create_compute_pipeline(&self, label: &str, shader: &wgpu::ShaderModule, entry_point: &str) -> wgpu::ComputePipeline {
-        self.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some(label),
-            layout: None,
-            module: shader,
-            entry_point: Some(entry_point),
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-            cache: None,
-        })
+    pub fn create_compute_pipeline(
+        &self,
+        label: &str,
+        shader: &wgpu::ShaderModule,
+        entry_point: &str,
+    ) -> wgpu::ComputePipeline {
+        self.device
+            .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some(label),
+                layout: None,
+                module: shader,
+                entry_point: Some(entry_point),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                cache: None,
+            })
     }
 
     /// Create a shader module from WGSL source
     pub fn create_shader_module(&self, label: &str, source: &str) -> wgpu::ShaderModule {
-        self.device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some(label),
-            source: wgpu::ShaderSource::Wgsl(source.into()),
-        })
+        self.device
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some(label),
+                source: wgpu::ShaderSource::Wgsl(source.into()),
+            })
     }
 
     /// Create a bind group layout
-    pub fn create_bind_group_layout(&self, label: &str, entries: &[wgpu::BindGroupLayoutEntry]) -> wgpu::BindGroupLayout {
-        self.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some(label),
-            entries,
-        })
+    pub fn create_bind_group_layout(
+        &self,
+        label: &str,
+        entries: &[wgpu::BindGroupLayoutEntry],
+    ) -> wgpu::BindGroupLayout {
+        self.device
+            .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some(label),
+                entries,
+            })
     }
 
     /// Create a bind group
-    pub fn create_bind_group(&self, label: &str, layout: &wgpu::BindGroupLayout, entries: &[wgpu::BindGroupEntry]) -> wgpu::BindGroup {
+    pub fn create_bind_group(
+        &self,
+        label: &str,
+        layout: &wgpu::BindGroupLayout,
+        entries: &[wgpu::BindGroupEntry],
+    ) -> wgpu::BindGroup {
         self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some(label),
             layout,
             entries,
         })
     }
-} 
+}

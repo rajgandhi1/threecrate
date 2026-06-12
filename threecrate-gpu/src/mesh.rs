@@ -1,10 +1,10 @@
 //! GPU-accelerated mesh rendering with PBR and flat shading
 
-use threecrate_core::{Result, Error};
-use threecrate_simplification::ProgressiveMesh;
 use crate::GpuContext;
-use nalgebra::{Matrix4, Vector3, Point3};
 use bytemuck::{Pod, Zeroable};
+use nalgebra::{Matrix4, Point3, Vector3};
+use threecrate_core::{Error, Result};
+use threecrate_simplification::ProgressiveMesh;
 use wgpu::util::DeviceExt;
 use winit::window::Window;
 
@@ -23,25 +23,20 @@ pub struct MeshVertex {
 
 impl MeshVertex {
     /// Create a new mesh vertex
-    pub fn new(
-        position: [f32; 3],
-        normal: [f32; 3],
-        uv: [f32; 2],
-        color: [f32; 3],
-    ) -> Self {
+    pub fn new(position: [f32; 3], normal: [f32; 3], uv: [f32; 2], color: [f32; 3]) -> Self {
         // Calculate tangent and bitangent vectors (simplified)
         let tangent = if normal[0].abs() > 0.9 {
             [0.0, 1.0, 0.0]
         } else {
             [1.0, 0.0, 0.0]
         };
-        
+
         let bitangent = [
             normal[1] * tangent[2] - normal[2] * tangent[1],
             normal[2] * tangent[0] - normal[0] * tangent[2],
             normal[0] * tangent[1] - normal[1] * tangent[0],
         ];
-        
+
         Self {
             position,
             normal,
@@ -52,12 +47,12 @@ impl MeshVertex {
             _padding: 0.0,
         }
     }
-    
+
     /// Create vertex from position and normal with default color
     pub fn from_pos_normal(position: [f32; 3], normal: [f32; 3]) -> Self {
         Self::new(position, normal, [0.0, 0.0], [0.8, 0.8, 0.8])
     }
-    
+
     /// Vertex buffer layout descriptor
     pub fn desc<'a>() -> wgpu::VertexBufferLayout<'a> {
         wgpu::VertexBufferLayout {
@@ -118,13 +113,13 @@ pub struct MeshCameraUniform {
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
 pub struct PbrMaterial {
-    pub albedo: [f32; 3],      // offset  0 (12 bytes)
-    pub metallic: f32,         // offset 12 (4 bytes)
-    pub roughness: f32,        // offset 16 (4 bytes)
-    pub ao: f32,               // offset 20 (4 bytes)
-    pub _padding1: [f32; 2],   // offset 24 (8 bytes) — aligns emission to offset 32 per WGSL std140
-    pub emission: [f32; 3],    // offset 32 (12 bytes)
-    pub _padding2: f32,        // offset 44 (4 bytes) — total: 48 bytes
+    pub albedo: [f32; 3],    // offset  0 (12 bytes)
+    pub metallic: f32,       // offset 12 (4 bytes)
+    pub roughness: f32,      // offset 16 (4 bytes)
+    pub ao: f32,             // offset 20 (4 bytes)
+    pub _padding1: [f32; 2], // offset 24 (8 bytes) — aligns emission to offset 32 per WGSL std140
+    pub emission: [f32; 3],  // offset 32 (12 bytes)
+    pub _padding2: f32,      // offset 44 (4 bytes) — total: 48 bytes
 }
 
 impl Default for PbrMaterial {
@@ -226,89 +221,217 @@ impl GpuMesh {
             material,
         }
     }
-    
+
     /// Create a simple triangle mesh for testing
     pub fn triangle() -> Self {
         let vertices = vec![
-            MeshVertex::new([-0.5, -0.5, 0.0], [0.0, 0.0, 1.0], [0.0, 0.0], [1.0, 0.0, 0.0]),
-            MeshVertex::new([0.5, -0.5, 0.0], [0.0, 0.0, 1.0], [1.0, 0.0], [0.0, 1.0, 0.0]),
-            MeshVertex::new([0.0, 0.5, 0.0], [0.0, 0.0, 1.0], [0.5, 1.0], [0.0, 0.0, 1.0]),
+            MeshVertex::new(
+                [-0.5, -0.5, 0.0],
+                [0.0, 0.0, 1.0],
+                [0.0, 0.0],
+                [1.0, 0.0, 0.0],
+            ),
+            MeshVertex::new(
+                [0.5, -0.5, 0.0],
+                [0.0, 0.0, 1.0],
+                [1.0, 0.0],
+                [0.0, 1.0, 0.0],
+            ),
+            MeshVertex::new(
+                [0.0, 0.5, 0.0],
+                [0.0, 0.0, 1.0],
+                [0.5, 1.0],
+                [0.0, 0.0, 1.0],
+            ),
         ];
-        
+
         let indices = vec![0, 1, 2];
-        
+
         Self::new(vertices, indices, PbrMaterial::default())
     }
-    
+
     /// Create a cube mesh for testing
     pub fn cube() -> Self {
         let vertices = vec![
             // Front face
-            MeshVertex::new([-1.0, -1.0, 1.0], [0.0, 0.0, 1.0], [0.0, 0.0], [0.8, 0.2, 0.2]),
-            MeshVertex::new([1.0, -1.0, 1.0], [0.0, 0.0, 1.0], [1.0, 0.0], [0.8, 0.2, 0.2]),
-            MeshVertex::new([1.0, 1.0, 1.0], [0.0, 0.0, 1.0], [1.0, 1.0], [0.8, 0.2, 0.2]),
-            MeshVertex::new([-1.0, 1.0, 1.0], [0.0, 0.0, 1.0], [0.0, 1.0], [0.8, 0.2, 0.2]),
-            
+            MeshVertex::new(
+                [-1.0, -1.0, 1.0],
+                [0.0, 0.0, 1.0],
+                [0.0, 0.0],
+                [0.8, 0.2, 0.2],
+            ),
+            MeshVertex::new(
+                [1.0, -1.0, 1.0],
+                [0.0, 0.0, 1.0],
+                [1.0, 0.0],
+                [0.8, 0.2, 0.2],
+            ),
+            MeshVertex::new(
+                [1.0, 1.0, 1.0],
+                [0.0, 0.0, 1.0],
+                [1.0, 1.0],
+                [0.8, 0.2, 0.2],
+            ),
+            MeshVertex::new(
+                [-1.0, 1.0, 1.0],
+                [0.0, 0.0, 1.0],
+                [0.0, 1.0],
+                [0.8, 0.2, 0.2],
+            ),
             // Back face
-            MeshVertex::new([1.0, -1.0, -1.0], [0.0, 0.0, -1.0], [0.0, 0.0], [0.2, 0.8, 0.2]),
-            MeshVertex::new([-1.0, -1.0, -1.0], [0.0, 0.0, -1.0], [1.0, 0.0], [0.2, 0.8, 0.2]),
-            MeshVertex::new([-1.0, 1.0, -1.0], [0.0, 0.0, -1.0], [1.0, 1.0], [0.2, 0.8, 0.2]),
-            MeshVertex::new([1.0, 1.0, -1.0], [0.0, 0.0, -1.0], [0.0, 1.0], [0.2, 0.8, 0.2]),
-            
+            MeshVertex::new(
+                [1.0, -1.0, -1.0],
+                [0.0, 0.0, -1.0],
+                [0.0, 0.0],
+                [0.2, 0.8, 0.2],
+            ),
+            MeshVertex::new(
+                [-1.0, -1.0, -1.0],
+                [0.0, 0.0, -1.0],
+                [1.0, 0.0],
+                [0.2, 0.8, 0.2],
+            ),
+            MeshVertex::new(
+                [-1.0, 1.0, -1.0],
+                [0.0, 0.0, -1.0],
+                [1.0, 1.0],
+                [0.2, 0.8, 0.2],
+            ),
+            MeshVertex::new(
+                [1.0, 1.0, -1.0],
+                [0.0, 0.0, -1.0],
+                [0.0, 1.0],
+                [0.2, 0.8, 0.2],
+            ),
             // Top face
-            MeshVertex::new([-1.0, 1.0, 1.0], [0.0, 1.0, 0.0], [0.0, 0.0], [0.2, 0.2, 0.8]),
-            MeshVertex::new([1.0, 1.0, 1.0], [0.0, 1.0, 0.0], [1.0, 0.0], [0.2, 0.2, 0.8]),
-            MeshVertex::new([1.0, 1.0, -1.0], [0.0, 1.0, 0.0], [1.0, 1.0], [0.2, 0.2, 0.8]),
-            MeshVertex::new([-1.0, 1.0, -1.0], [0.0, 1.0, 0.0], [0.0, 1.0], [0.2, 0.2, 0.8]),
-            
+            MeshVertex::new(
+                [-1.0, 1.0, 1.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0],
+                [0.2, 0.2, 0.8],
+            ),
+            MeshVertex::new(
+                [1.0, 1.0, 1.0],
+                [0.0, 1.0, 0.0],
+                [1.0, 0.0],
+                [0.2, 0.2, 0.8],
+            ),
+            MeshVertex::new(
+                [1.0, 1.0, -1.0],
+                [0.0, 1.0, 0.0],
+                [1.0, 1.0],
+                [0.2, 0.2, 0.8],
+            ),
+            MeshVertex::new(
+                [-1.0, 1.0, -1.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 1.0],
+                [0.2, 0.2, 0.8],
+            ),
             // Bottom face
-            MeshVertex::new([-1.0, -1.0, -1.0], [0.0, -1.0, 0.0], [0.0, 0.0], [0.8, 0.8, 0.2]),
-            MeshVertex::new([1.0, -1.0, -1.0], [0.0, -1.0, 0.0], [1.0, 0.0], [0.8, 0.8, 0.2]),
-            MeshVertex::new([1.0, -1.0, 1.0], [0.0, -1.0, 0.0], [1.0, 1.0], [0.8, 0.8, 0.2]),
-            MeshVertex::new([-1.0, -1.0, 1.0], [0.0, -1.0, 0.0], [0.0, 1.0], [0.8, 0.8, 0.2]),
-            
+            MeshVertex::new(
+                [-1.0, -1.0, -1.0],
+                [0.0, -1.0, 0.0],
+                [0.0, 0.0],
+                [0.8, 0.8, 0.2],
+            ),
+            MeshVertex::new(
+                [1.0, -1.0, -1.0],
+                [0.0, -1.0, 0.0],
+                [1.0, 0.0],
+                [0.8, 0.8, 0.2],
+            ),
+            MeshVertex::new(
+                [1.0, -1.0, 1.0],
+                [0.0, -1.0, 0.0],
+                [1.0, 1.0],
+                [0.8, 0.8, 0.2],
+            ),
+            MeshVertex::new(
+                [-1.0, -1.0, 1.0],
+                [0.0, -1.0, 0.0],
+                [0.0, 1.0],
+                [0.8, 0.8, 0.2],
+            ),
             // Right face
-            MeshVertex::new([1.0, -1.0, 1.0], [1.0, 0.0, 0.0], [0.0, 0.0], [0.8, 0.2, 0.8]),
-            MeshVertex::new([1.0, -1.0, -1.0], [1.0, 0.0, 0.0], [1.0, 0.0], [0.8, 0.2, 0.8]),
-            MeshVertex::new([1.0, 1.0, -1.0], [1.0, 0.0, 0.0], [1.0, 1.0], [0.8, 0.2, 0.8]),
-            MeshVertex::new([1.0, 1.0, 1.0], [1.0, 0.0, 0.0], [0.0, 1.0], [0.8, 0.2, 0.8]),
-            
+            MeshVertex::new(
+                [1.0, -1.0, 1.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 0.0],
+                [0.8, 0.2, 0.8],
+            ),
+            MeshVertex::new(
+                [1.0, -1.0, -1.0],
+                [1.0, 0.0, 0.0],
+                [1.0, 0.0],
+                [0.8, 0.2, 0.8],
+            ),
+            MeshVertex::new(
+                [1.0, 1.0, -1.0],
+                [1.0, 0.0, 0.0],
+                [1.0, 1.0],
+                [0.8, 0.2, 0.8],
+            ),
+            MeshVertex::new(
+                [1.0, 1.0, 1.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0],
+                [0.8, 0.2, 0.8],
+            ),
             // Left face
-            MeshVertex::new([-1.0, -1.0, -1.0], [-1.0, 0.0, 0.0], [0.0, 0.0], [0.2, 0.8, 0.8]),
-            MeshVertex::new([-1.0, -1.0, 1.0], [-1.0, 0.0, 0.0], [1.0, 0.0], [0.2, 0.8, 0.8]),
-            MeshVertex::new([-1.0, 1.0, 1.0], [-1.0, 0.0, 0.0], [1.0, 1.0], [0.2, 0.8, 0.8]),
-            MeshVertex::new([-1.0, 1.0, -1.0], [-1.0, 0.0, 0.0], [0.0, 1.0], [0.2, 0.8, 0.8]),
+            MeshVertex::new(
+                [-1.0, -1.0, -1.0],
+                [-1.0, 0.0, 0.0],
+                [0.0, 0.0],
+                [0.2, 0.8, 0.8],
+            ),
+            MeshVertex::new(
+                [-1.0, -1.0, 1.0],
+                [-1.0, 0.0, 0.0],
+                [1.0, 0.0],
+                [0.2, 0.8, 0.8],
+            ),
+            MeshVertex::new(
+                [-1.0, 1.0, 1.0],
+                [-1.0, 0.0, 0.0],
+                [1.0, 1.0],
+                [0.2, 0.8, 0.8],
+            ),
+            MeshVertex::new(
+                [-1.0, 1.0, -1.0],
+                [-1.0, 0.0, 0.0],
+                [0.0, 1.0],
+                [0.2, 0.8, 0.8],
+            ),
         ];
-        
+
         let indices = vec![
             // Front face
-            0, 1, 2, 2, 3, 0,
-            // Back face
-            4, 5, 6, 6, 7, 4,
-            // Top face
-            8, 9, 10, 10, 11, 8,
-            // Bottom face
-            12, 13, 14, 14, 15, 12,
-            // Right face
-            16, 17, 18, 18, 19, 16,
-            // Left face
+            0, 1, 2, 2, 3, 0, // Back face
+            4, 5, 6, 6, 7, 4, // Top face
+            8, 9, 10, 10, 11, 8, // Bottom face
+            12, 13, 14, 14, 15, 12, // Right face
+            16, 17, 18, 18, 19, 16, // Left face
             20, 21, 22, 22, 23, 20,
         ];
-        
+
         Self::new(vertices, indices, PbrMaterial::default())
     }
-    
+
     /// Create a mesh from point cloud with estimated normals
     pub fn from_point_cloud(points: &[Point3<f32>], color: [f32; 3]) -> Self {
-        let vertices: Vec<MeshVertex> = points.iter().map(|p| {
-            // Simple normal estimation (could use the GPU normal computation)
-            let normal = [0.0, 0.0, 1.0]; // Default normal
-            MeshVertex::new([p.x, p.y, p.z], normal, [0.0, 0.0], color)
-        }).collect();
-        
+        let vertices: Vec<MeshVertex> = points
+            .iter()
+            .map(|p| {
+                // Simple normal estimation (could use the GPU normal computation)
+                let normal = [0.0, 0.0, 1.0]; // Default normal
+                MeshVertex::new([p.x, p.y, p.z], normal, [0.0, 0.0], color)
+            })
+            .collect();
+
         // Create indices for point rendering (each point is a degenerate triangle)
         let indices: Vec<u32> = (0..vertices.len() as u32).collect();
-        
+
         Self::new(vertices, indices, PbrMaterial::default())
     }
 }
@@ -345,19 +468,23 @@ impl<'window> MeshRenderer<'window> {
     /// Create new mesh renderer with PBR and flat shading support
     pub async fn new(window: &'window Window, config: MeshRenderConfig) -> Result<Self> {
         let gpu_context = GpuContext::new().await?;
-        
-        let surface = gpu_context.instance.create_surface(window)
+
+        let surface = gpu_context
+            .instance
+            .create_surface(window)
             .map_err(|e| Error::Gpu(format!("Failed to create surface: {:?}", e)))?;
 
         let surface_caps = surface.get_capabilities(&gpu_context.adapter);
-        let surface_format = surface_caps.formats.iter()
+        let surface_format = surface_caps
+            .formats
+            .iter()
             .copied()
             .find(|f| f.is_srgb())
             .unwrap_or(surface_caps.formats[0]);
 
         let size = window.inner_size();
         let sample_count = if config.enable_multisampling { 4 } else { 1 };
-        
+
         let surface_config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: surface_format,
@@ -399,62 +526,73 @@ impl<'window> MeshRenderer<'window> {
             _padding: 0.0,
         };
 
-        let camera_buffer = gpu_context.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Camera Buffer"),
-            contents: bytemuck::bytes_of(&camera_uniform),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
+        let camera_buffer =
+            gpu_context
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Camera Buffer"),
+                    contents: bytemuck::bytes_of(&camera_uniform),
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                });
 
         // Create lighting parameters buffer
         let lighting_params = config.lighting_params;
-        let lighting_buffer = gpu_context.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Lighting Buffer"),
-            contents: bytemuck::bytes_of(&lighting_params),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
+        let lighting_buffer =
+            gpu_context
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Lighting Buffer"),
+                    contents: bytemuck::bytes_of(&lighting_params),
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                });
 
         // Create bind group layout
-        let bind_group_layout = gpu_context.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-            ],
-            label: Some("mesh_bind_group_layout"),
-        });
+        let bind_group_layout =
+            gpu_context
+                .device
+                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    entries: &[
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 0,
+                            visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Uniform,
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 1,
+                            visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Uniform,
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 2,
+                            visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Uniform,
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                    ],
+                    label: Some("mesh_bind_group_layout"),
+                });
 
         // Create PBR pipeline
-        let pbr_shader = gpu_context.device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("PBR Mesh Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/mesh_pbr.wgsl").into()),
-        });
+        let pbr_shader = gpu_context
+            .device
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("PBR Mesh Shader"),
+                source: wgpu::ShaderSource::Wgsl(include_str!("shaders/mesh_pbr.wgsl").into()),
+            });
 
         let pbr_pipeline = Self::create_render_pipeline(
             &gpu_context.device,
@@ -467,10 +605,12 @@ impl<'window> MeshRenderer<'window> {
         );
 
         // Create flat pipeline
-        let flat_shader = gpu_context.device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("Flat Mesh Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/mesh_flat.wgsl").into()),
-        });
+        let flat_shader = gpu_context
+            .device
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("Flat Mesh Shader"),
+                source: wgpu::ShaderSource::Wgsl(include_str!("shaders/mesh_flat.wgsl").into()),
+            });
 
         let flat_pipeline = Self::create_render_pipeline(
             &gpu_context.device,
@@ -532,11 +672,12 @@ impl<'window> MeshRenderer<'window> {
         config: &MeshRenderConfig,
         label: &str,
     ) -> wgpu::RenderPipeline {
-        let render_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some(&format!("{} Mesh Render Pipeline Layout", label)),
-            bind_group_layouts: &[Some(bind_group_layout)],
-            immediate_size: 0,
-        });
+        let render_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some(&format!("{} Mesh Render Pipeline Layout", label)),
+                bind_group_layouts: &[Some(bind_group_layout)],
+                immediate_size: 0,
+            });
 
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some(&format!("{} Mesh Render Pipeline", label)),
@@ -596,10 +737,15 @@ impl<'window> MeshRenderer<'window> {
     }
 
     /// Update camera matrices and position
-    pub fn update_camera(&mut self, view_matrix: Matrix4<f32>, proj_matrix: Matrix4<f32>, camera_pos: Vector3<f32>) {
+    pub fn update_camera(
+        &mut self,
+        view_matrix: Matrix4<f32>,
+        proj_matrix: Matrix4<f32>,
+        camera_pos: Vector3<f32>,
+    ) {
         self.camera_uniform.view_proj = (proj_matrix * view_matrix).into();
         self.camera_uniform.view_pos = camera_pos.into();
-        
+
         self.gpu_context.queue.write_buffer(
             &self.camera_buffer,
             0,
@@ -622,24 +768,28 @@ impl<'window> MeshRenderer<'window> {
         if new_size.width > 0 && new_size.height > 0 {
             self.surface_config.width = new_size.width;
             self.surface_config.height = new_size.height;
-            self.surface.configure(&self.gpu_context.device, &self.surface_config);
-            
+            self.surface
+                .configure(&self.gpu_context.device, &self.surface_config);
+
             // Recreate MSAA texture if needed
             if self.config.enable_multisampling {
-                let msaa_texture = self.gpu_context.device.create_texture(&wgpu::TextureDescriptor {
-                    label: Some("MSAA Texture"),
-                    size: wgpu::Extent3d {
-                        width: new_size.width,
-                        height: new_size.height,
-                        depth_or_array_layers: 1,
-                    },
-                    mip_level_count: 1,
-                    sample_count: 4,
-                    dimension: wgpu::TextureDimension::D2,
-                    format: self.surface_config.format,
-                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-                    view_formats: &[],
-                });
+                let msaa_texture =
+                    self.gpu_context
+                        .device
+                        .create_texture(&wgpu::TextureDescriptor {
+                            label: Some("MSAA Texture"),
+                            size: wgpu::Extent3d {
+                                width: new_size.width,
+                                height: new_size.height,
+                                depth_or_array_layers: 1,
+                            },
+                            mip_level_count: 1,
+                            sample_count: 4,
+                            dimension: wgpu::TextureDimension::D2,
+                            format: self.surface_config.format,
+                            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                            view_formats: &[],
+                        });
                 let msaa_view = msaa_texture.create_view(&wgpu::TextureViewDescriptor::default());
                 self.msaa_texture = Some(msaa_texture);
                 self.msaa_view = Some(msaa_view);
@@ -649,40 +799,50 @@ impl<'window> MeshRenderer<'window> {
 
     /// Create vertex buffer
     pub fn create_vertex_buffer(&self, vertices: &[MeshVertex]) -> wgpu::Buffer {
-        self.gpu_context.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Mesh Vertex Buffer"),
-            contents: bytemuck::cast_slice(vertices),
-            usage: wgpu::BufferUsages::VERTEX,
-        })
+        self.gpu_context
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Mesh Vertex Buffer"),
+                contents: bytemuck::cast_slice(vertices),
+                usage: wgpu::BufferUsages::VERTEX,
+            })
     }
 
     /// Create index buffer
     pub fn create_index_buffer(&self, indices: &[u32]) -> wgpu::Buffer {
-        self.gpu_context.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Mesh Index Buffer"),
-            contents: bytemuck::cast_slice(indices),
-            usage: wgpu::BufferUsages::INDEX,
-        })
+        self.gpu_context
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Mesh Index Buffer"),
+                contents: bytemuck::cast_slice(indices),
+                usage: wgpu::BufferUsages::INDEX,
+            })
     }
 
     /// Create depth texture
     pub fn create_depth_texture(&self) -> wgpu::Texture {
-        let sample_count = if self.config.enable_multisampling { 4 } else { 1 };
-        
-        self.gpu_context.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Depth Texture"),
-            size: wgpu::Extent3d {
-                width: self.surface_config.width,
-                height: self.surface_config.height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Depth32Float,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            view_formats: &[],
-        })
+        let sample_count = if self.config.enable_multisampling {
+            4
+        } else {
+            1
+        };
+
+        self.gpu_context
+            .device
+            .create_texture(&wgpu::TextureDescriptor {
+                label: Some("Depth Texture"),
+                size: wgpu::Extent3d {
+                    width: self.surface_config.width,
+                    height: self.surface_config.height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Depth32Float,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                view_formats: &[],
+            })
     }
 
     /// Render mesh with specified shading mode
@@ -695,56 +855,70 @@ impl<'window> MeshRenderer<'window> {
         let output = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame) => frame,
             wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
-            wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => return Ok(()),
+            wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
+                return Ok(())
+            }
             _ => return Err(Error::Gpu("Failed to get surface texture".to_string())),
         };
-        
-        let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let view = output
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
 
         // Create material buffer based on shading mode
         let material_buffer = match shading_mode {
             ShadingMode::Pbr => {
-                self.gpu_context.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("PBR Material Buffer"),
-                    contents: bytemuck::bytes_of(&mesh.material),
-                    usage: wgpu::BufferUsages::UNIFORM,
-                })
+                self.gpu_context
+                    .device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("PBR Material Buffer"),
+                        contents: bytemuck::bytes_of(&mesh.material),
+                        usage: wgpu::BufferUsages::UNIFORM,
+                    })
             }
             ShadingMode::Flat => {
                 let flat_material = FlatMaterial {
                     color: mesh.material.albedo,
                     _padding: 0.0,
                 };
-                self.gpu_context.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("Flat Material Buffer"),
-                    contents: bytemuck::bytes_of(&flat_material),
-                    usage: wgpu::BufferUsages::UNIFORM,
-                })
+                self.gpu_context
+                    .device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("Flat Material Buffer"),
+                        contents: bytemuck::bytes_of(&flat_material),
+                        usage: wgpu::BufferUsages::UNIFORM,
+                    })
             }
         };
 
-        let bind_group = self.gpu_context.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &self.bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: self.camera_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: material_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: self.lighting_buffer.as_entire_binding(),
-                },
-            ],
-            label: Some("mesh_bind_group"),
-        });
+        let bind_group = self
+            .gpu_context
+            .device
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                layout: &self.bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: self.camera_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: material_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: self.lighting_buffer.as_entire_binding(),
+                    },
+                ],
+                label: Some("mesh_bind_group"),
+            });
 
-        let mut encoder = self.gpu_context.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Mesh Render Encoder"),
-        });
+        let mut encoder =
+            self.gpu_context
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("Mesh Render Encoder"),
+                });
 
         // Determine render target
         let (color_attachment, resolve_target) = if let Some(ref msaa_view) = self.msaa_view {
@@ -799,7 +973,9 @@ impl<'window> MeshRenderer<'window> {
             render_pass.draw_indexed(0..mesh.indices.len() as u32, 0, 0..1);
         }
 
-        self.gpu_context.queue.submit(std::iter::once(encoder.finish()));
+        self.gpu_context
+            .queue
+            .submit(std::iter::once(encoder.finish()));
         output.present();
 
         Ok(())
@@ -819,62 +995,93 @@ impl<'window> MeshRenderer<'window> {
         let format = self.surface_config.format;
 
         // Offscreen render target (no MSAA, COPY_SRC so we can read it back)
-        let render_texture = self.gpu_context.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Screenshot Render Texture"),
-            size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
-            view_formats: &[],
-        });
+        let render_texture = self
+            .gpu_context
+            .device
+            .create_texture(&wgpu::TextureDescriptor {
+                label: Some("Screenshot Render Texture"),
+                size: wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+                view_formats: &[],
+            });
         let render_view = render_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-        let depth_texture = self.gpu_context.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Screenshot Depth Texture"),
-            size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Depth32Float,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            view_formats: &[],
-        });
+        let depth_texture = self
+            .gpu_context
+            .device
+            .create_texture(&wgpu::TextureDescriptor {
+                label: Some("Screenshot Depth Texture"),
+                size: wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Depth32Float,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                view_formats: &[],
+            });
         let depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
         let vertex_buffer = self.create_vertex_buffer(&mesh.vertices);
         let index_buffer = self.create_index_buffer(&mesh.indices);
 
         let material_buffer = match shading_mode {
-            ShadingMode::Pbr => self.gpu_context.device.create_buffer_init(
-                &wgpu::util::BufferInitDescriptor {
-                    label: Some("Screenshot PBR Material Buffer"),
-                    contents: bytemuck::bytes_of(&mesh.material),
-                    usage: wgpu::BufferUsages::UNIFORM,
-                },
-            ),
+            ShadingMode::Pbr => {
+                self.gpu_context
+                    .device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("Screenshot PBR Material Buffer"),
+                        contents: bytemuck::bytes_of(&mesh.material),
+                        usage: wgpu::BufferUsages::UNIFORM,
+                    })
+            }
             ShadingMode::Flat => {
-                let flat_material = FlatMaterial { color: mesh.material.albedo, _padding: 0.0 };
-                self.gpu_context.device.create_buffer_init(
-                    &wgpu::util::BufferInitDescriptor {
+                let flat_material = FlatMaterial {
+                    color: mesh.material.albedo,
+                    _padding: 0.0,
+                };
+                self.gpu_context
+                    .device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                         label: Some("Screenshot Flat Material Buffer"),
                         contents: bytemuck::bytes_of(&flat_material),
                         usage: wgpu::BufferUsages::UNIFORM,
-                    },
-                )
+                    })
             }
         };
 
-        let bind_group = self.gpu_context.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &self.bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: self.camera_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: material_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: self.lighting_buffer.as_entire_binding() },
-            ],
-            label: Some("screenshot_bind_group"),
-        });
+        let bind_group = self
+            .gpu_context
+            .device
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                layout: &self.bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: self.camera_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: material_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: self.lighting_buffer.as_entire_binding(),
+                    },
+                ],
+                label: Some("screenshot_bind_group"),
+            });
 
         // wgpu requires bytes_per_row to be aligned to COPY_BYTES_PER_ROW_ALIGNMENT (256)
         let bytes_per_pixel = 4u32;
@@ -882,16 +1089,22 @@ impl<'window> MeshRenderer<'window> {
         let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
         let padded_bytes_per_row = (unpadded_bytes_per_row + align - 1) / align * align;
 
-        let staging_buffer = self.gpu_context.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Screenshot Staging Buffer"),
-            size: (padded_bytes_per_row * height) as wgpu::BufferAddress,
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let staging_buffer = self
+            .gpu_context
+            .device
+            .create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Screenshot Staging Buffer"),
+                size: (padded_bytes_per_row * height) as wgpu::BufferAddress,
+                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
 
-        let mut encoder = self.gpu_context.device.create_command_encoder(
-            &wgpu::CommandEncoderDescriptor { label: Some("Screenshot Encoder") },
-        );
+        let mut encoder =
+            self.gpu_context
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("Screenshot Encoder"),
+                });
 
         {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -951,16 +1164,28 @@ impl<'window> MeshRenderer<'window> {
                     rows_per_image: None,
                 },
             },
-            wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
         );
 
-        self.gpu_context.queue.submit(std::iter::once(encoder.finish()));
+        self.gpu_context
+            .queue
+            .submit(std::iter::once(encoder.finish()));
 
         // Map the buffer and wait for the GPU to finish
         let buffer_slice = staging_buffer.slice(..);
-        let (tx, rx) = std::sync::mpsc::channel::<std::result::Result<(), wgpu::BufferAsyncError>>();
-        buffer_slice.map_async(wgpu::MapMode::Read, move |v| { let _ = tx.send(v); });
-        self.gpu_context.device.poll(wgpu::PollType::Wait { submission_index: None, timeout: None });
+        let (tx, rx) =
+            std::sync::mpsc::channel::<std::result::Result<(), wgpu::BufferAsyncError>>();
+        buffer_slice.map_async(wgpu::MapMode::Read, move |v| {
+            let _ = tx.send(v);
+        });
+        self.gpu_context.device.poll(wgpu::PollType::Wait {
+            submission_index: None,
+            timeout: None,
+        });
         rx.recv()
             .map_err(|_| Error::Gpu("Screenshot buffer map channel error".to_string()))?
             .map_err(|e| Error::Gpu(format!("Screenshot buffer map error: {:?}", e)))?;
@@ -997,21 +1222,17 @@ pub fn mesh_to_gpu_mesh(
                 .and_then(|n| n.get(i))
                 .map(|n| [n.x, n.y, n.z])
                 .unwrap_or([0.0, 0.0, 1.0]);
-            
+
             let color = colors
                 .and_then(|c| c.get(i))
                 .copied()
                 .unwrap_or([0.8, 0.8, 0.8]);
-            
+
             MeshVertex::new([vertex.x, vertex.y, vertex.z], normal, [0.0, 0.0], color)
         })
         .collect();
 
-    GpuMesh::new(
-        gpu_vertices,
-        indices.to_vec(),
-        material.unwrap_or_default(),
-    )
+    GpuMesh::new(gpu_vertices, indices.to_vec(), material.unwrap_or_default())
 }
 
 /// Pre-computed LOD levels for a mesh, generated from a progressive mesh.
@@ -1078,7 +1299,13 @@ fn triangle_mesh_to_gpu_mesh(mesh: &threecrate_core::TriangleMesh) -> GpuMesh {
     let colors_f32: Option<Vec<[f32; 3]>> = mesh.colors.as_ref().map(|colors| {
         colors
             .iter()
-            .map(|c| [c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0])
+            .map(|c| {
+                [
+                    c[0] as f32 / 255.0,
+                    c[1] as f32 / 255.0,
+                    c[2] as f32 / 255.0,
+                ]
+            })
             .collect()
     });
 

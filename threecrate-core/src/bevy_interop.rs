@@ -4,8 +4,8 @@
 
 use crate::mesh::TriangleMesh;
 use crate::Result;
-use bevy::mesh::{Mesh, PrimitiveTopology, Indices, VertexAttributeValues};
 use bevy::asset::RenderAssetUsages;
+use bevy::mesh::{Indices, Mesh, PrimitiveTopology, VertexAttributeValues};
 
 impl TriangleMesh {
     /// Convert a TriangleMesh to a Bevy Mesh
@@ -42,20 +42,13 @@ impl TriangleMesh {
         );
 
         // Convert vertices to Bevy format [f32; 3]
-        let positions: Vec<[f32; 3]> = self
-            .vertices
-            .iter()
-            .map(|v| [v.x, v.y, v.z])
-            .collect();
+        let positions: Vec<[f32; 3]> = self.vertices.iter().map(|v| [v.x, v.y, v.z]).collect();
 
         mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
 
         // Add normals if available
         if let Some(ref normals) = self.normals {
-            let bevy_normals: Vec<[f32; 3]> = normals
-                .iter()
-                .map(|n| [n.x, n.y, n.z])
-                .collect();
+            let bevy_normals: Vec<[f32; 3]> = normals.iter().map(|n| [n.x, n.y, n.z]).collect();
             mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, bevy_normals);
         }
 
@@ -127,9 +120,9 @@ impl TriangleMesh {
         };
 
         // Extract indices
-        let indices = bevy_mesh.indices().ok_or_else(|| {
-            crate::Error::InvalidData("Bevy mesh missing indices".to_string())
-        })?;
+        let indices = bevy_mesh
+            .indices()
+            .ok_or_else(|| crate::Error::InvalidData("Bevy mesh missing indices".to_string()))?;
 
         let faces: Vec<[usize; 3]> = match indices {
             Indices::U16(idx) => idx

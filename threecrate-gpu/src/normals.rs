@@ -1,7 +1,7 @@
 //! GPU-accelerated normal estimation
 
-use threecrate_core::{PointCloud, Result, Point3f, NormalPoint3f};
 use crate::GpuContext;
+use threecrate_core::{NormalPoint3f, Point3f, PointCloud, Result};
 // use wgpu::util::DeviceExt; // Used in device.rs
 
 const NORMALS_SHADER: &str = r#"
@@ -129,10 +129,7 @@ impl GpuContext {
         }
 
         // Convert points to GPU format (std430 alignment prefers vec4)
-        let point_data: Vec<[f32; 4]> = points
-            .iter()
-            .map(|p| [p.x, p.y, p.z, 0.0])
-            .collect();
+        let point_data: Vec<[f32; 4]> = points.iter().map(|p| [p.x, p.y, p.z, 0.0]).collect();
 
         // Create buffers
         let input_buffer = self.create_buffer_init(
@@ -149,12 +146,15 @@ impl GpuContext {
 
         // For now, use a simple neighbor computation (could be replaced with KD-tree)
         let k_neighbors = k_neighbors.max(3).min(64);
-        let neighbors = self.compute_neighbors_simple_points3(&points.iter().map(|p| [p.x, p.y, p.z]).collect::<Vec<[f32;3]>>(), k_neighbors);
-        let neighbors_buffer = self.create_buffer_init(
-            "Neighbors",
-            &neighbors,
-            wgpu::BufferUsages::STORAGE,
+        let neighbors = self.compute_neighbors_simple_points3(
+            &points
+                .iter()
+                .map(|p| [p.x, p.y, p.z])
+                .collect::<Vec<[f32; 3]>>(),
+            k_neighbors,
         );
+        let neighbors_buffer =
+            self.create_buffer_init("Neighbors", &neighbors, wgpu::BufferUsages::STORAGE);
 
         #[repr(C)]
         #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
@@ -202,11 +202,8 @@ impl GpuContext {
             viewpoint: vp,
         };
 
-        let params_buffer = self.create_buffer_init(
-            "Params",
-            &[params],
-            wgpu::BufferUsages::UNIFORM,
-        );
+        let params_buffer =
+            self.create_buffer_init("Params", &[params], wgpu::BufferUsages::UNIFORM);
 
         // Create shader
         let shader = self.create_shader_module("Normals Compute", NORMALS_SHADER);
@@ -259,18 +256,22 @@ impl GpuContext {
         );
 
         // Create compute pipeline
-        let pipeline = self.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("Normal Computation Pipeline"),
-            layout: Some(&self.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("Normal Pipeline Layout"),
-                bind_group_layouts: &[Some(&bind_group_layout)],
-                immediate_size: 0,
-            })),
-            module: &shader,
-            entry_point: Some("main"),
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-            cache: None,
-        });
+        let pipeline = self
+            .device
+            .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("Normal Computation Pipeline"),
+                layout: Some(&self.device.create_pipeline_layout(
+                    &wgpu::PipelineLayoutDescriptor {
+                        label: Some("Normal Pipeline Layout"),
+                        bind_group_layouts: &[Some(&bind_group_layout)],
+                        immediate_size: 0,
+                    },
+                )),
+                module: &shader,
+                entry_point: Some("main"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                cache: None,
+            });
 
         // Create bind group
         let bind_group = self.create_bind_group(
@@ -297,9 +298,11 @@ impl GpuContext {
         );
 
         // Execute compute shader
-        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Normal Computation"),
-        });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Normal Computation"),
+            });
 
         {
             let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -342,31 +345,38 @@ impl GpuContext {
         if let Some(Ok(())) = receiver.receive().await {
             let data = buffer_slice.get_mapped_range();
             let normals4: Vec<[f32; 4]> = bytemuck::cast_slice(&data).to_vec();
-            
+
             let result = normals4
                 .into_iter()
                 .map(|n| nalgebra::Vector3::new(n[0], n[1], n[2]))
                 .collect();
-            
+
             drop(data);
             staging_buffer.unmap();
-            
+
             Ok(result)
         } else {
-            Err(threecrate_core::Error::Gpu("Failed to read GPU results".to_string()))
+            Err(threecrate_core::Error::Gpu(
+                "Failed to read GPU results".to_string(),
+            ))
         }
     }
 
     /// Compute normals for a point cloud using GPU acceleration with default options
-    pub async fn compute_normals(&self, points: &[Point3f], k_neighbors: usize) -> Result<Vec<nalgebra::Vector3<f32>>> {
-        self.compute_normals_with_options(points, k_neighbors, true, None).await
+    pub async fn compute_normals(
+        &self,
+        points: &[Point3f],
+        k_neighbors: usize,
+    ) -> Result<Vec<nalgebra::Vector3<f32>>> {
+        self.compute_normals_with_options(points, k_neighbors, true, None)
+            .await
     }
 
     /// Simple neighbor computation (brute force - could be replaced with KD-tree)
     pub fn compute_neighbors_simple(&self, points: &[[f32; 3]], k: usize) -> Vec<[u32; 64]> {
         let mut neighbors = vec![[0u32; 64]; points.len()];
         let k = k.min(64).min(points.len()); // Limit to 64 neighbors and available points
-        
+
         for (i, point) in points.iter().enumerate() {
             let mut distances: Vec<(f32, usize)> = points
                 .iter()
@@ -379,24 +389,28 @@ impl GpuContext {
                     (dx * dx + dy * dy + dz * dz, j)
                 })
                 .collect();
-            
+
             distances.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
-            
+
             for (idx, &(_, neighbor_idx)) in distances.iter().take(k).enumerate() {
                 neighbors[i][idx] = neighbor_idx as u32;
             }
-            
+
             // Fill remaining slots with the same neighbor to avoid issues
             for idx in k..64 {
                 neighbors[i][idx] = if k > 0 { neighbors[i][k - 1] } else { i as u32 };
             }
         }
-        
+
         neighbors
     }
 
     /// Helper to compute neighbors from Vec<[f32;3]> built from owned data
-    pub fn compute_neighbors_simple_points3(&self, points: &[[f32; 3]], k: usize) -> Vec<[u32; 64]> {
+    pub fn compute_neighbors_simple_points3(
+        &self,
+        points: &[[f32; 3]],
+        k: usize,
+    ) -> Vec<[u32; 64]> {
         self.compute_neighbors_simple(points, k)
     }
 }
@@ -408,7 +422,7 @@ pub async fn gpu_estimate_normals(
     k: usize,
 ) -> Result<PointCloud<NormalPoint3f>> {
     let normals = gpu_context.compute_normals(&cloud.points, k).await?;
-    
+
     let normal_points: Vec<NormalPoint3f> = cloud
         .points
         .iter()
@@ -418,9 +432,9 @@ pub async fn gpu_estimate_normals(
             normal: *normal,
         })
         .collect();
-    
+
     Ok(PointCloud::from_points(normal_points))
-} 
+}
 
 #[cfg(test)]
 mod tests {
@@ -443,17 +457,21 @@ mod tests {
         let Some(gpu) = try_create_gpu_context().await else {
             return;
         };
-        
+
         let mut cloud = PointCloud::new();
         // Create XY plane grid
-        for i in 0..15 { for j in 0..15 {
-            cloud.push(Point3f::new(i as f32 * 0.1, j as f32 * 0.1, 0.0));
-        }}
+        for i in 0..15 {
+            for j in 0..15 {
+                cloud.push(Point3f::new(i as f32 * 0.1, j as f32 * 0.1, 0.0));
+            }
+        }
         let result = gpu_estimate_normals(&gpu, &mut cloud, 8).await.unwrap();
         assert_eq!(result.len(), 225);
         let mut z_count = 0;
         for p in result.iter() {
-            if p.normal.z.abs() > 0.8 { z_count += 1; }
+            if p.normal.z.abs() > 0.8 {
+                z_count += 1;
+            }
         }
         let pct = (z_count as f32 / result.len() as f32) * 100.0;
         assert!(pct > 80.0, "Only {:.1}% normals in Z direction", pct);
@@ -465,18 +483,24 @@ mod tests {
         let Some(gpu) = try_create_gpu_context().await else {
             return;
         };
-        
+
         let mut cloud = PointCloud::new();
-        for i in 0..10 { for j in 0..10 {
-            cloud.push(Point3f::new(i as f32 * 0.1, j as f32 * 0.1, 0.0));
-        }}
-        let gpu_cloud = gpu_estimate_normals(&gpu, &mut cloud.clone(), 8).await.unwrap();
+        for i in 0..10 {
+            for j in 0..10 {
+                cloud.push(Point3f::new(i as f32 * 0.1, j as f32 * 0.1, 0.0));
+            }
+        }
+        let gpu_cloud = gpu_estimate_normals(&gpu, &mut cloud.clone(), 8)
+            .await
+            .unwrap();
         let cpu_cloud = cpu_estimate_normals(&cloud, 8).unwrap();
         // Compare orientation alignment percentage
         let mut agree = 0usize;
         for (g, c) in gpu_cloud.iter().zip(cpu_cloud.iter()) {
             let dot = g.normal.dot(&c.normal);
-            if dot.abs() > 0.7 { agree += 1; }
+            if dot.abs() > 0.7 {
+                agree += 1;
+            }
         }
         let pct = (agree as f32 / gpu_cloud.len() as f32) * 100.0;
         assert!(pct > 70.0, "GPU-CPU normals agree only {:.1}%", pct);

@@ -14,9 +14,7 @@ use std::path::{Path, PathBuf};
 
 use threecrate_core::{Error, Point3f, PointCloud, Result};
 
-use crate::ros2::{
-    pointcloud2_to_xyz, PointCloud2Info, PointField as Pc2PointField,
-};
+use crate::ros2::{pointcloud2_to_xyz, PointCloud2Info, PointField as Pc2PointField};
 
 /// One message from a bag: a topic, ROS 2 message type, timestamp (ns since epoch),
 /// and the raw CDR-encoded payload.
@@ -67,7 +65,9 @@ impl<'a> CdrReader<'a> {
     /// Construct from a CDR payload starting with the 4-byte encapsulation header.
     fn from_payload(payload: &'a [u8]) -> Result<(Self, &'a [u8])> {
         if payload.len() < 4 {
-            return Err(Error::InvalidData("CDR payload too short for encapsulation header".into()));
+            return Err(Error::InvalidData(
+                "CDR payload too short for encapsulation header".into(),
+            ));
         }
         // Byte 0: representation id MSB (always 0 for plain CDR).
         // Byte 1: 0=BE, 1=LE.
@@ -81,7 +81,14 @@ impl<'a> CdrReader<'a> {
             }
         };
         let body = &payload[4..];
-        Ok((Self { buf: body, pos: 0, little_endian }, body))
+        Ok((
+            Self {
+                buf: body,
+                pos: 0,
+                little_endian,
+            },
+            body,
+        ))
     }
 
     fn align(&mut self, n: usize) {
@@ -115,7 +122,11 @@ impl<'a> CdrReader<'a> {
         self.ensure(4)?;
         let b: [u8; 4] = self.buf[self.pos..self.pos + 4].try_into().unwrap();
         self.pos += 4;
-        Ok(if self.little_endian { u32::from_le_bytes(b) } else { u32::from_be_bytes(b) })
+        Ok(if self.little_endian {
+            u32::from_le_bytes(b)
+        } else {
+            u32::from_be_bytes(b)
+        })
     }
 
     fn read_i32(&mut self) -> Result<i32> {
@@ -167,7 +178,12 @@ fn parse_pointcloud2_cdr(payload: &[u8]) -> Result<(PointCloud2Info, &[u8])> {
         let offset = r.read_u32()?;
         let datatype = r.read_u8()?;
         let count = r.read_u32()?;
-        fields.push(Pc2PointField { name, offset, datatype, count });
+        fields.push(Pc2PointField {
+            name,
+            offset,
+            datatype,
+            count,
+        });
     }
 
     let is_bigendian = r.read_bool()?;
@@ -272,12 +288,10 @@ impl McapReader {
         &'a self,
         topic: &'a str,
     ) -> Result<impl Iterator<Item = Result<BagMessage>> + 'a> {
-        Ok(self
-            .messages()?
-            .filter(move |m| match m {
-                Ok(m) => m.topic == topic,
-                Err(_) => true,
-            }))
+        Ok(self.messages()?.filter(move |m| match m {
+            Ok(m) => m.topic == topic,
+            Err(_) => true,
+        }))
     }
 
     /// Iterator restricted to a `[start_ns, end_ns]` time window (inclusive).
@@ -349,9 +363,15 @@ impl Rosbag2Reader {
             .map_err(|e| Error::InvalidData(format!("topics query failed: {e}")))?;
         let mut topics = Vec::new();
         for row in rows {
-            let (id, name, ty) = row
-                .map_err(|e| Error::InvalidData(format!("topics row error: {e}")))?;
-            topics.push((id, TopicInfo { name, message_type: ty }));
+            let (id, name, ty) =
+                row.map_err(|e| Error::InvalidData(format!("topics row error: {e}")))?;
+            topics.push((
+                id,
+                TopicInfo {
+                    name,
+                    message_type: ty,
+                },
+            ));
         }
         drop(stmt);
 
@@ -407,33 +427,28 @@ impl Rosbag2Reader {
 
     /// Read every message whose timestamp is in `[start_ns, end_ns]`.
     pub fn messages_in_range(&self, start_ns: u64, end_ns: u64) -> Result<Vec<BagMessage>> {
-        let topic_map: HashMap<i64, TopicInfo> =
-            self.topics.iter().cloned().collect();
+        let topic_map: HashMap<i64, TopicInfo> = self.topics.iter().cloned().collect();
         let mut stmt = self
             .conn
             .prepare("SELECT topic_id, timestamp, data FROM messages WHERE timestamp BETWEEN ? AND ? ORDER BY timestamp")
             .map_err(|e| Error::InvalidData(format!("messages query failed: {e}")))?;
         let rows = stmt
-            .query_map(
-                rusqlite::params![start_ns as i64, end_ns as i64],
-                |row| {
-                    Ok((
-                        row.get::<_, i64>(0)?,
-                        row.get::<_, i64>(1)?,
-                        row.get::<_, Vec<u8>>(2)?,
-                    ))
-                },
-            )
+            .query_map(rusqlite::params![start_ns as i64, end_ns as i64], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, Vec<u8>>(2)?,
+                ))
+            })
             .map_err(|e| Error::InvalidData(format!("range query failed: {e}")))?;
 
         let mut out = Vec::new();
         for row in rows {
-            let (tid, ts, data) =
-                row.map_err(|e| Error::InvalidData(format!("row error: {e}")))?;
-            let info = topic_map
-                .get(&tid)
-                .cloned()
-                .unwrap_or(TopicInfo { name: String::new(), message_type: String::new() });
+            let (tid, ts, data) = row.map_err(|e| Error::InvalidData(format!("row error: {e}")))?;
+            let info = topic_map.get(&tid).cloned().unwrap_or(TopicInfo {
+                name: String::new(),
+                message_type: String::new(),
+            });
             out.push(BagMessage {
                 topic: info.name,
                 message_type: info.message_type,
@@ -566,9 +581,7 @@ mod tests {
         // Write an MCAP into an in-memory buffer.
         let mut out: Vec<u8> = Vec::new();
         {
-            let mut writer = WriteOptions::new()
-                .create(Cursor::new(&mut out))
-                .unwrap();
+            let mut writer = WriteOptions::new().create(Cursor::new(&mut out)).unwrap();
             let schema_id = writer
                 .add_schema("sensor_msgs/msg/PointCloud2", "ros2msg", &[])
                 .unwrap();

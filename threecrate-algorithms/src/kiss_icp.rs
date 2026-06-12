@@ -90,9 +90,7 @@ fn adaptive_threshold(init: &Isometry3<f32>, voxel_size: f32) -> f32 {
     let rot_disp = 2.0 * init.rotation.imag().magnitude() * voxel_size;
     let motion = trans + rot_disp;
     // Lower bound: always allow 3 voxels; upper bound: 10 voxels to stay sane.
-    (3.0 * motion)
-        .max(3.0 * voxel_size)
-        .min(10.0 * voxel_size)
+    (3.0 * motion).max(3.0 * voxel_size).min(10.0 * voxel_size)
 }
 
 /// SVD-based rigid transform: Procrustes / Kabsch algorithm.
@@ -105,8 +103,14 @@ fn svd_transform(src: &[Point3f], tgt: &[Point3f]) -> Result<Isometry3<f32>> {
     }
     let n = src.len() as f32;
 
-    let src_mean = src.iter().fold(nalgebra::Vector3::zeros(), |a, p| a + p.coords) / n;
-    let tgt_mean = tgt.iter().fold(nalgebra::Vector3::zeros(), |a, p| a + p.coords) / n;
+    let src_mean = src
+        .iter()
+        .fold(nalgebra::Vector3::zeros(), |a, p| a + p.coords)
+        / n;
+    let tgt_mean = tgt
+        .iter()
+        .fold(nalgebra::Vector3::zeros(), |a, p| a + p.coords)
+        / n;
 
     let mut h = Matrix3::<f32>::zeros();
     for (s, t) in src.iter().zip(tgt.iter()) {
@@ -117,7 +121,8 @@ fn svd_transform(src: &[Point3f], tgt: &[Point3f]) -> Result<Isometry3<f32>> {
     if h.norm() < 1e-10 {
         return Err(Error::Algorithm(
             "KISS-ICP SVD: cross-covariance matrix H is near-zero — \
-             all correspondence points are identical or collinear".into(),
+             all correspondence points are identical or collinear"
+                .into(),
         ));
     }
 
@@ -202,7 +207,8 @@ pub fn kiss_icp(
     if source_ranged.is_empty() {
         return Err(Error::InvalidData(
             "KISS-ICP: no source points remain after range filtering — \
-             check min_range / max_range relative to your data".into(),
+             check min_range / max_range relative to your data"
+                .into(),
         ));
     }
     let source_down = voxel_grid_filter(&source_ranged, config.voxel_size)?;
@@ -224,8 +230,11 @@ pub fn kiss_icp(
 
     for iteration in 0..config.max_iterations {
         // Apply current estimate to the (downsampled) source.
-        let transformed: Vec<Point3f> =
-            source_down.points.iter().map(|p| current_transform * p).collect();
+        let transformed: Vec<Point3f> = source_down
+            .points
+            .iter()
+            .map(|p| current_transform * p)
+            .collect();
 
         // Collect valid correspondences within σ.
         let mut src_matched: Vec<Point3f> = Vec::new();
@@ -249,7 +258,8 @@ pub fn kiss_icp(
         if src_matched.len() < 3 {
             return Err(Error::Algorithm(
                 "KISS-ICP: too few correspondences within the adaptive threshold — \
-                 try increasing voxel_size or check point cloud overlap".into(),
+                 try increasing voxel_size or check point cloud overlap"
+                    .into(),
             ));
         }
 
@@ -304,12 +314,18 @@ mod tests {
     fn make_sphere(n: usize, radius: f32) -> PointCloud<Point3f> {
         let golden = std::f32::consts::PI * (3.0 - 5.0_f32.sqrt());
         PointCloud::from_points(
-            (0..n).map(|i| {
-                let y = 1.0 - (i as f32 / (n as f32 - 1.0).max(1.0)) * 2.0;
-                let r = (1.0 - y * y).max(0.0_f32).sqrt();
-                let theta = golden * i as f32;
-                Point3f::new(theta.cos() * r * radius, y * radius, theta.sin() * r * radius)
-            }).collect(),
+            (0..n)
+                .map(|i| {
+                    let y = 1.0 - (i as f32 / (n as f32 - 1.0).max(1.0)) * 2.0;
+                    let r = (1.0 - y * y).max(0.0_f32).sqrt();
+                    let theta = golden * i as f32;
+                    Point3f::new(
+                        theta.cos() * r * radius,
+                        y * radius,
+                        theta.sin() * r * radius,
+                    )
+                })
+                .collect(),
         )
     }
 
@@ -360,8 +376,7 @@ mod tests {
         // nearest target neighbour is unambiguously the "correct" one.
         let source = make_grid(100, 0.5, 5.0); // all points at z=5 → within [0.5, 100]
         let shift = Vector3f::new(0.1, 0.0, 0.0);
-        let target =
-            PointCloud::from_points(source.points.iter().map(|p| p + shift).collect());
+        let target = PointCloud::from_points(source.points.iter().map(|p| p + shift).collect());
 
         let config = KissIcpConfig {
             voxel_size: 0.2,
@@ -380,9 +395,13 @@ mod tests {
     fn kiss_icp_empty_source_errors() {
         let empty: PointCloud<Point3f> = PointCloud::new();
         let cloud = make_ring(30, 5.0);
-        assert!(
-            kiss_icp(&empty, &cloud, Isometry3::identity(), KissIcpConfig::default()).is_err()
-        );
+        assert!(kiss_icp(
+            &empty,
+            &cloud,
+            Isometry3::identity(),
+            KissIcpConfig::default()
+        )
+        .is_err());
     }
 
     #[test]
@@ -399,7 +418,10 @@ mod tests {
     #[test]
     fn kiss_icp_zero_voxel_size_errors() {
         let cloud = make_ring(30, 5.0);
-        let config = KissIcpConfig { voxel_size: 0.0, ..Default::default() };
+        let config = KissIcpConfig {
+            voxel_size: 0.0,
+            ..Default::default()
+        };
         assert!(kiss_icp(&cloud, &cloud, Isometry3::identity(), config).is_err());
     }
 
@@ -427,8 +449,8 @@ mod tests {
     #[test]
     fn range_filter_removes_out_of_range() {
         let pts = vec![
-            Point3f::new(0.1, 0.0, 0.0), // too close (range=0.1)
-            Point3f::new(5.0, 0.0, 0.0), // ok
+            Point3f::new(0.1, 0.0, 0.0),   // too close (range=0.1)
+            Point3f::new(5.0, 0.0, 0.0),   // ok
             Point3f::new(200.0, 0.0, 0.0), // too far
         ];
         let cloud = PointCloud::from_points(pts);
@@ -449,14 +471,21 @@ mod tests {
         // σ = clamp(3·1.414, 3, 10) = clamp(4.24, 3, 10) = 4.24
         let rot90 = Isometry3::from_parts(
             nalgebra::Translation3::identity(),
-            nalgebra::UnitQuaternion::from_axis_angle(&nalgebra::Vector3::z_axis(), std::f32::consts::FRAC_PI_2),
+            nalgebra::UnitQuaternion::from_axis_angle(
+                &nalgebra::Vector3::z_axis(),
+                std::f32::consts::FRAC_PI_2,
+            ),
         );
         let sigma = adaptive_threshold(&rot90, 1.0);
         assert!(sigma >= 3.0, "sigma below lower bound: {}", sigma);
         assert!(sigma <= 10.0, "sigma above upper bound: {}", sigma);
         // With the old (broken) code: σ = clamp(3·(0 + π/2), 3, 10) = 4.71
         // The new code should give a smaller, dimensionally-consistent value ≈ 4.24.
-        assert!(sigma < 4.5, "sigma suspiciously large — possible unit mixing: {}", sigma);
+        assert!(
+            sigma < 4.5,
+            "sigma suspiciously large — possible unit mixing: {}",
+            sigma
+        );
     }
 
     #[test]
@@ -465,7 +494,10 @@ mod tests {
         // σ = clamp(6, 3, 10) = 6
         let rot180 = Isometry3::from_parts(
             nalgebra::Translation3::identity(),
-            nalgebra::UnitQuaternion::from_axis_angle(&nalgebra::Vector3::z_axis(), std::f32::consts::PI),
+            nalgebra::UnitQuaternion::from_axis_angle(
+                &nalgebra::Vector3::z_axis(),
+                std::f32::consts::PI,
+            ),
         );
         let sigma = adaptive_threshold(&rot180, 1.0);
         assert!(sigma <= 10.0, "sigma exceeds 10·voxel_size: {}", sigma);
@@ -492,9 +524,7 @@ mod tests {
         let source = make_sphere(300, 5.0);
         let angle = 3_f32.to_radians();
         let rot = nalgebra::UnitQuaternion::from_axis_angle(&nalgebra::Vector3::z_axis(), angle);
-        let target = PointCloud::from_points(
-            source.points.iter().map(|p| rot * p).collect(),
-        );
+        let target = PointCloud::from_points(source.points.iter().map(|p| rot * p).collect());
 
         let config = KissIcpConfig {
             voxel_size: 0.5,
@@ -521,10 +551,9 @@ mod tests {
         let source = make_sphere(300, 5.0);
         let true_angle = 8_f32.to_radians();
         let init_angle = 6_f32.to_radians();
-        let true_rot = nalgebra::UnitQuaternion::from_axis_angle(&nalgebra::Vector3::z_axis(), true_angle);
-        let target = PointCloud::from_points(
-            source.points.iter().map(|p| true_rot * p).collect(),
-        );
+        let true_rot =
+            nalgebra::UnitQuaternion::from_axis_angle(&nalgebra::Vector3::z_axis(), true_angle);
+        let target = PointCloud::from_points(source.points.iter().map(|p| true_rot * p).collect());
         let init = Isometry3::from_parts(
             nalgebra::Translation3::identity(),
             nalgebra::UnitQuaternion::from_axis_angle(&nalgebra::Vector3::z_axis(), init_angle),
@@ -556,12 +585,16 @@ mod tests {
         let base = make_ring(200, 5.0);
         let noise_half = 0.05_f32;
         let source = PointCloud::from_points(
-            base.points.iter().enumerate().map(|(i, p)| {
-                let t = (i as f32 * 1.6180339887_f32).sin() * noise_half;
-                let u = (i as f32 * 2.7182818284_f32).cos() * noise_half;
-                let v = (i as f32 * 3.1415926535_f32).sin() * noise_half;
-                Point3f::new(p.x + t, p.y + u, p.z + v)
-            }).collect(),
+            base.points
+                .iter()
+                .enumerate()
+                .map(|(i, p)| {
+                    let t = (i as f32 * 1.6180339887_f32).sin() * noise_half;
+                    let u = (i as f32 * 2.7182818284_f32).cos() * noise_half;
+                    let v = (i as f32 * 3.1415926535_f32).sin() * noise_half;
+                    Point3f::new(p.x + t, p.y + u, p.z + v)
+                })
+                .collect(),
         );
 
         let config = KissIcpConfig {
@@ -588,11 +621,17 @@ mod tests {
         // rank-1 (only the X component is determined), so rotation is degenerate
         // but the translation along X should still be recovered correctly.
         let source = PointCloud::from_points(
-            (0..30).map(|i| Point3f::new(i as f32 * 0.3 + 1.0, 0.0, 5.0)).collect(),
+            (0..30)
+                .map(|i| Point3f::new(i as f32 * 0.3 + 1.0, 0.0, 5.0))
+                .collect(),
         );
         let shift_x = 0.05_f32;
         let target = PointCloud::from_points(
-            source.points.iter().map(|p| Point3f::new(p.x + shift_x, p.y, p.z)).collect(),
+            source
+                .points
+                .iter()
+                .map(|p| Point3f::new(p.x + shift_x, p.y, p.z))
+                .collect(),
         );
         let config = KissIcpConfig {
             voxel_size: 0.1,
@@ -603,14 +642,20 @@ mod tests {
         // Should succeed (rank-1 SVD is valid); translation along X should be close.
         let result = kiss_icp(&source, &target, Isometry3::identity(), config).unwrap();
         let tx = result.transformation.translation.vector.x;
-        assert!((tx - shift_x).abs() < 0.02, "x translation error={}", (tx - shift_x).abs());
+        assert!(
+            (tx - shift_x).abs() < 0.02,
+            "x translation error={}",
+            (tx - shift_x).abs()
+        );
     }
 
     #[test]
     fn kiss_icp_identical_points_reduced_to_one_errors() {
         // 20 identical points → voxel downsampling leaves 1 → <3 correspondences.
         let source = PointCloud::from_points(
-            std::iter::repeat(Point3f::new(5.0, 0.0, 0.0)).take(20).collect(),
+            std::iter::repeat(Point3f::new(5.0, 0.0, 0.0))
+                .take(20)
+                .collect(),
         );
         let config = KissIcpConfig {
             min_range: 0.1,

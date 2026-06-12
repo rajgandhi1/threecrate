@@ -1,8 +1,8 @@
 //! Nearest neighbor search implementations
 
-use threecrate_core::{Point3f, Result, NearestNeighborSearch};
-use std::collections::BinaryHeap;
 use std::cmp::Ordering;
+use std::collections::BinaryHeap;
+use threecrate_core::{NearestNeighborSearch, Point3f, Result};
 
 /// KD-Tree node for efficient nearest neighbor search
 #[derive(Debug)]
@@ -47,7 +47,7 @@ impl KdTree {
             .enumerate()
             .map(|(i, &point)| (point, i))
             .collect();
-        
+
         let root = Self::build_tree(&mut points_with_indices, 0, 0, points.len() - 1);
 
         Ok(Self {
@@ -57,7 +57,12 @@ impl KdTree {
     }
 
     /// Recursively build the KD-tree
-    fn build_tree(points: &mut [(Point3f, usize)], depth: usize, start: usize, end: usize) -> KdNode {
+    fn build_tree(
+        points: &mut [(Point3f, usize)],
+        depth: usize,
+        start: usize,
+        end: usize,
+    ) -> KdNode {
         if start == end {
             let (point, index) = points[start];
             return KdNode::new(point, index, depth % 3);
@@ -65,34 +70,50 @@ impl KdTree {
 
         let axis = depth % 3;
         let median_idx = (start + end) / 2;
-        
+
         // Find the actual median and partition points around it
         Self::select_median(points, start, end, median_idx, axis);
-        
+
         let (point, index) = points[median_idx];
         let mut node = KdNode::new(point, index, axis);
-        
+
         // Build left subtree
         if median_idx > start {
-            node.left = Some(Box::new(Self::build_tree(points, depth + 1, start, median_idx - 1)));
+            node.left = Some(Box::new(Self::build_tree(
+                points,
+                depth + 1,
+                start,
+                median_idx - 1,
+            )));
         }
-        
+
         // Build right subtree
         if median_idx < end {
-            node.right = Some(Box::new(Self::build_tree(points, depth + 1, median_idx + 1, end)));
+            node.right = Some(Box::new(Self::build_tree(
+                points,
+                depth + 1,
+                median_idx + 1,
+                end,
+            )));
         }
-        
+
         node
     }
 
     /// Select the median element and partition points around it
-    fn select_median(points: &mut [(Point3f, usize)], start: usize, end: usize, target: usize, axis: usize) {
+    fn select_median(
+        points: &mut [(Point3f, usize)],
+        start: usize,
+        end: usize,
+        target: usize,
+        axis: usize,
+    ) {
         let mut left = start;
         let mut right = end;
-        
+
         while left < right {
             let pivot_idx = Self::partition(points, left, right, axis);
-            
+
             match pivot_idx.cmp(&target) {
                 Ordering::Equal => return,
                 Ordering::Less => left = pivot_idx + 1,
@@ -100,7 +121,7 @@ impl KdTree {
             }
         }
     }
-    
+
     /// Partition points around a pivot on a specific axis
     fn partition(points: &mut [(Point3f, usize)], start: usize, end: usize, axis: usize) -> usize {
         let pivot_value = match axis {
@@ -109,7 +130,7 @@ impl KdTree {
             2 => points[end].0.z,
             _ => unreachable!(),
         };
-        
+
         let mut i = start;
         for j in start..end {
             let point_value = match axis {
@@ -118,13 +139,13 @@ impl KdTree {
                 2 => points[j].0.z,
                 _ => unreachable!(),
             };
-            
+
             if point_value <= pivot_value {
                 points.swap(i, j);
                 i += 1;
             }
         }
-        
+
         points.swap(i, end);
         i
     }
@@ -163,16 +184,22 @@ impl NearestNeighborSearch for KdTree {
             let dist = Self::distance_squared(&node.point, query).sqrt();
 
             if heap.len() < k {
-                heap.push(Neighbor { distance: dist, index: node.original_index });
+                heap.push(Neighbor {
+                    distance: dist,
+                    index: node.original_index,
+                });
             } else if let Some(farthest) = heap.peek() {
                 if dist < farthest.distance {
                     heap.pop();
-                    heap.push(Neighbor { distance: dist, index: node.original_index });
+                    heap.push(Neighbor {
+                        distance: dist,
+                        index: node.original_index,
+                    });
                 }
             }
 
             let query_val = query.coords[node.axis];
-            let node_val  = node.point.coords[node.axis];
+            let node_val = node.point.coords[node.axis];
             let axis_dist = (query_val - node_val).abs();
 
             // Near child: the half-space the query point lives in.
@@ -230,7 +257,7 @@ impl NearestNeighborSearch for KdTree {
             }
 
             let query_val = query.coords[node.axis];
-            let node_val  = node.point.coords[node.axis];
+            let node_val = node.point.coords[node.axis];
             let axis_dist = query_val - node_val;
 
             let (near, far) = if query_val <= node_val {
@@ -275,7 +302,9 @@ impl Ord for Neighbor {
     fn cmp(&self, other: &Self) -> Ordering {
         // Max-heap ordered by distance: larger distance = "greater" element,
         // so heap.peek() returns the farthest neighbour for eviction.
-        self.distance.partial_cmp(&other.distance).unwrap_or(Ordering::Equal)
+        self.distance
+            .partial_cmp(&other.distance)
+            .unwrap_or(Ordering::Equal)
     }
 }
 
@@ -298,7 +327,8 @@ impl NearestNeighborSearch for BruteForceSearch {
             return Vec::new();
         }
 
-        let mut distances: Vec<(usize, f32)> = self.points
+        let mut distances: Vec<(usize, f32)> = self
+            .points
             .iter()
             .enumerate()
             .map(|(idx, point)| {
@@ -309,13 +339,13 @@ impl NearestNeighborSearch for BruteForceSearch {
                 (idx, distance)
             })
             .collect();
-        
+
         // Sort by distance and take k nearest
         distances.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal));
         distances.truncate(k);
         distances
     }
-    
+
     fn find_radius_neighbors(&self, query: &Point3f, radius: f32) -> Vec<(usize, f32)> {
         if radius <= 0.0 || self.points.is_empty() {
             return Vec::new();
@@ -330,7 +360,7 @@ impl NearestNeighborSearch for BruteForceSearch {
                 let dy = point.y - query.y;
                 let dz = point.z - query.z;
                 let distance_squared = dx * dx + dy * dy + dz * dz;
-                
+
                 if distance_squared <= radius_squared {
                     Some((idx, distance_squared.sqrt()))
                 } else {
@@ -344,8 +374,8 @@ impl NearestNeighborSearch for BruteForceSearch {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use threecrate_core::Point3f;
     use rand::Rng;
+    use threecrate_core::Point3f;
 
     fn create_test_points() -> Vec<Point3f> {
         vec![
@@ -364,7 +394,7 @@ mod tests {
     fn test_kd_tree_construction() {
         let points = create_test_points();
         let kdtree = KdTree::new(&points).unwrap();
-        
+
         assert_eq!(kdtree.points.len(), points.len());
         assert!(kdtree.root.is_some());
     }
@@ -374,7 +404,7 @@ mod tests {
         let kdtree = KdTree::new(&[]).unwrap();
         assert!(kdtree.root.is_none());
         assert!(kdtree.points.is_empty());
-        
+
         let query = Point3f::new(0.0, 0.0, 0.0);
         let result = kdtree.find_k_nearest(&query, 5);
         assert!(result.is_empty());
@@ -385,47 +415,56 @@ mod tests {
         let points = create_test_points();
         let kdtree = KdTree::new(&points).unwrap();
         let brute_force = BruteForceSearch::new(&points);
-        
+
         let query = Point3f::new(0.5, 0.5, 0.5);
         let k = 3;
-        
+
         let mut kdtree_result = kdtree.find_k_nearest(&query, k);
         let mut brute_force_result = brute_force.find_k_nearest(&query, k);
-        
+
         println!("KD-tree result before sorting: {:?}", kdtree_result);
-        println!("Brute force result before sorting: {:?}", brute_force_result);
-        
+        println!(
+            "Brute force result before sorting: {:?}",
+            brute_force_result
+        );
+
         // Sort by distance first, then by index for consistent comparison
         kdtree_result.sort_by(|a, b| {
-            a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal)
+            a.1.partial_cmp(&b.1)
+                .unwrap_or(Ordering::Equal)
                 .then(a.0.cmp(&b.0))
         });
         brute_force_result.sort_by(|a, b| {
-            a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal)
+            a.1.partial_cmp(&b.1)
+                .unwrap_or(Ordering::Equal)
                 .then(a.0.cmp(&b.0))
         });
-        
+
         println!("KD-tree result after sorting: {:?}", kdtree_result);
         println!("Brute force result after sorting: {:?}", brute_force_result);
-        
+
         // Results should have the same length
         assert_eq!(kdtree_result.len(), brute_force_result.len());
         assert_eq!(kdtree_result.len(), k);
-        
+
         // Results should be sorted by distance
         for i in 1..kdtree_result.len() {
-            assert!(kdtree_result[i-1].1 <= kdtree_result[i].1);
-            assert!(brute_force_result[i-1].1 <= brute_force_result[i].1);
+            assert!(kdtree_result[i - 1].1 <= kdtree_result[i].1);
+            assert!(brute_force_result[i - 1].1 <= brute_force_result[i].1);
         }
-        
+
         // Check that the distances match (within tolerance)
-        for (kdtree_neighbor, brute_neighbor) in kdtree_result.iter().zip(brute_force_result.iter()) {
+        for (kdtree_neighbor, brute_neighbor) in kdtree_result.iter().zip(brute_force_result.iter())
+        {
             assert!((kdtree_neighbor.1 - brute_neighbor.1).abs() < 1e-6);
         }
-        
+
         // For points with the same distance, we don't require the exact same indices
         // as long as the distances are correct, the implementation is working
-        println!("Test passed: Both methods found {} neighbors with correct distances", k);
+        println!(
+            "Test passed: Both methods found {} neighbors with correct distances",
+            k
+        );
     }
 
     #[test]
@@ -433,47 +472,54 @@ mod tests {
         let points = create_test_points();
         let kdtree = KdTree::new(&points).unwrap();
         let brute_force = BruteForceSearch::new(&points);
-        
+
         let query = Point3f::new(0.5, 0.5, 0.5);
         let radius = 1.5;
-        
+
         let mut kdtree_result = kdtree.find_radius_neighbors(&query, radius);
         let mut brute_force_result = brute_force.find_radius_neighbors(&query, radius);
-        
+
         // Sort by distance first, then by index for consistent comparison
         kdtree_result.sort_by(|a, b| {
-            a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal)
+            a.1.partial_cmp(&b.1)
+                .unwrap_or(Ordering::Equal)
                 .then(a.0.cmp(&b.0))
         });
         brute_force_result.sort_by(|a, b| {
-            a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal)
+            a.1.partial_cmp(&b.1)
+                .unwrap_or(Ordering::Equal)
                 .then(a.0.cmp(&b.0))
         });
-        
+
         // Results should have the same length
         assert_eq!(kdtree_result.len(), brute_force_result.len());
-        
+
         // Results should be sorted by distance
         for i in 1..kdtree_result.len() {
-            assert!(kdtree_result[i-1].1 <= kdtree_result[i].1);
-            assert!(brute_force_result[i-1].1 <= brute_force_result[i].1);
+            assert!(kdtree_result[i - 1].1 <= kdtree_result[i].1);
+            assert!(brute_force_result[i - 1].1 <= brute_force_result[i].1);
         }
-        
+
         // All distances should be within radius
         for (_, distance) in &kdtree_result {
             assert!(*distance <= radius);
         }
-        
+
         for (_, distance) in &brute_force_result {
             assert!(*distance <= radius);
         }
-        
+
         // Check that the distances match (within tolerance)
-        for (kdtree_neighbor, brute_neighbor) in kdtree_result.iter().zip(brute_force_result.iter()) {
+        for (kdtree_neighbor, brute_neighbor) in kdtree_result.iter().zip(brute_force_result.iter())
+        {
             assert!((kdtree_neighbor.1 - brute_neighbor.1).abs() < 1e-6);
         }
-        
-        println!("Test passed: Both methods found {} neighbors within radius {}", kdtree_result.len(), radius);
+
+        println!(
+            "Test passed: Both methods found {} neighbors within radius {}",
+            kdtree_result.len(),
+            radius
+        );
     }
 
     #[test]
@@ -481,21 +527,21 @@ mod tests {
         let points = create_test_points();
         let kdtree = KdTree::new(&points).unwrap();
         let _brute_force = BruteForceSearch::new(&points);
-        
+
         let query = Point3f::new(0.0, 0.0, 0.0);
-        
+
         // Test k = 0
         let result = kdtree.find_k_nearest(&query, 0);
         assert!(result.is_empty());
-        
+
         // Test k larger than number of points
         let result = kdtree.find_k_nearest(&query, 20);
         assert_eq!(result.len(), points.len());
-        
+
         // Test radius = 0
         let result = kdtree.find_radius_neighbors(&query, 0.0);
         assert!(result.is_empty());
-        
+
         // Test negative radius
         let result = kdtree.find_radius_neighbors(&query, -1.0);
         assert!(result.is_empty());
@@ -505,7 +551,7 @@ mod tests {
     fn test_random_points() {
         let mut rng = rand::thread_rng();
         let mut points = Vec::new();
-        
+
         // Generate 100 random points
         for _ in 0..100 {
             points.push(Point3f::new(
@@ -514,10 +560,10 @@ mod tests {
                 rng.gen_range(-10.0..10.0),
             ));
         }
-        
+
         let kdtree = KdTree::new(&points).unwrap();
         let brute_force = BruteForceSearch::new(&points);
-        
+
         // Test multiple random queries
         for _ in 0..10 {
             let query = Point3f::new(
@@ -525,48 +571,52 @@ mod tests {
                 rng.gen_range(-5.0..5.0),
                 rng.gen_range(-5.0..5.0),
             );
-            
+
             let k = rng.gen_range(1..=10);
             let radius = rng.gen_range(1.0..5.0);
-            
+
             let mut kdtree_knn = kdtree.find_k_nearest(&query, k);
             let mut brute_knn = brute_force.find_k_nearest(&query, k);
-            
+
             let mut kdtree_radius = kdtree.find_radius_neighbors(&query, radius);
             let mut brute_radius = brute_force.find_radius_neighbors(&query, radius);
-            
+
             // Sort by distance first, then by index for consistent comparison
             kdtree_knn.sort_by(|a, b| {
-                a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal)
+                a.1.partial_cmp(&b.1)
+                    .unwrap_or(Ordering::Equal)
                     .then(a.0.cmp(&b.0))
             });
             brute_knn.sort_by(|a, b| {
-                a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal)
+                a.1.partial_cmp(&b.1)
+                    .unwrap_or(Ordering::Equal)
                     .then(a.0.cmp(&b.0))
             });
-            
+
             kdtree_radius.sort_by(|a, b| {
-                a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal)
+                a.1.partial_cmp(&b.1)
+                    .unwrap_or(Ordering::Equal)
                     .then(a.0.cmp(&b.0))
             });
             brute_radius.sort_by(|a, b| {
-                a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal)
+                a.1.partial_cmp(&b.1)
+                    .unwrap_or(Ordering::Equal)
                     .then(a.0.cmp(&b.0))
             });
-            
+
             // Verify k-nearest neighbors consistency
             assert_eq!(kdtree_knn.len(), brute_knn.len());
             assert_eq!(kdtree_knn.len(), k.min(points.len()));
-            
+
             // Check that the distances match (within tolerance)
             let min_len = kdtree_knn.len().min(brute_knn.len());
             for i in 0..min_len {
                 assert!((kdtree_knn[i].1 - brute_knn[i].1).abs() < 1e-6);
             }
-            
+
             // Verify radius neighbors consistency
             assert_eq!(kdtree_radius.len(), brute_radius.len());
-            
+
             // Check that the distances match (within tolerance)
             let min_len = kdtree_radius.len().min(brute_radius.len());
             for i in 0..min_len {
@@ -579,7 +629,7 @@ mod tests {
     fn test_performance_comparison() {
         let mut rng = rand::thread_rng();
         let mut points = Vec::new();
-        
+
         // Generate 1000 random points for performance test
         for _ in 0..1000 {
             points.push(Point3f::new(
@@ -588,27 +638,27 @@ mod tests {
                 rng.gen_range(-10.0..10.0),
             ));
         }
-        
+
         let kdtree = KdTree::new(&points).unwrap();
         let brute_force = BruteForceSearch::new(&points);
-        
+
         let query = Point3f::new(0.0, 0.0, 0.0);
         let k = 10;
-        
+
         // Time KD-tree search
         let start = std::time::Instant::now();
         let _kdtree_result = kdtree.find_k_nearest(&query, k);
         let kdtree_time = start.elapsed();
-        
+
         // Time brute force search
         let start = std::time::Instant::now();
         let _brute_result = brute_force.find_k_nearest(&query, k);
         let brute_time = start.elapsed();
-        
+
         // KD-tree should be faster for larger datasets
         println!("KD-tree time: {:?}", kdtree_time);
         println!("Brute force time: {:?}", brute_time);
-        
+
         // For 1000 points, KD-tree should be significantly faster
         // Note: For small k values, brute force might actually be faster due to overhead
         // So we'll just verify both methods work correctly
@@ -638,13 +688,26 @@ mod tests {
         let mut kdtree_result = kdtree.find_k_nearest(&query, k);
         let mut brute_force_result = brute_force.find_k_nearest(&query, k);
 
-        kdtree_result.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal).then(a.0.cmp(&b.0)));
-        brute_force_result.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal).then(a.0.cmp(&b.0)));
+        kdtree_result.sort_by(|a, b| {
+            a.1.partial_cmp(&b.1)
+                .unwrap_or(Ordering::Equal)
+                .then(a.0.cmp(&b.0))
+        });
+        brute_force_result.sort_by(|a, b| {
+            a.1.partial_cmp(&b.1)
+                .unwrap_or(Ordering::Equal)
+                .then(a.0.cmp(&b.0))
+        });
 
         assert_eq!(kdtree_result.len(), brute_force_result.len());
         assert_eq!(kdtree_result.len(), k);
         for (kd, bf) in kdtree_result.iter().zip(brute_force_result.iter()) {
-            assert!((kd.1 - bf.1).abs() < 1e-6, "distance mismatch: kd={}, bf={}", kd.1, bf.1);
+            assert!(
+                (kd.1 - bf.1).abs() < 1e-6,
+                "distance mismatch: kd={}, bf={}",
+                kd.1,
+                bf.1
+            );
         }
     }
-} 
+}

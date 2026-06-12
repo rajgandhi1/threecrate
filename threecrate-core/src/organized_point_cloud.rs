@@ -62,7 +62,12 @@ impl<T> OrganizedPointCloud<T> {
     {
         let mut points = Vec::with_capacity(width * height);
         points.resize_with(width * height, || None);
-        Self { width, height, points, is_dense: false }
+        Self {
+            width,
+            height,
+            points,
+            is_dense: false,
+        }
     }
 
     /// Construct from a flat row-major buffer of `Option<T>`.
@@ -73,7 +78,12 @@ impl<T> OrganizedPointCloud<T> {
             return None;
         }
         let is_dense = points.iter().all(|p| p.is_some());
-        Some(Self { width, height, points, is_dense })
+        Some(Self {
+            width,
+            height,
+            points,
+            is_dense,
+        })
     }
 
     /// Total number of grid cells (`width * height`), including empty ones.
@@ -118,7 +128,9 @@ impl<T> OrganizedPointCloud<T> {
     /// Set a point at `(row, col)`. Returns `false` if the indices are out of bounds.
     /// Updates `is_dense` conservatively (set to `false` whenever a `None` is written).
     pub fn set(&mut self, row: usize, col: usize, value: Option<T>) -> bool {
-        let Some(i) = self.idx(row, col) else { return false };
+        let Some(i) = self.idx(row, col) else {
+            return false;
+        };
         if value.is_none() {
             self.is_dense = false;
         }
@@ -143,9 +155,10 @@ impl<T> OrganizedPointCloud<T> {
     /// Iterator over `(row, col, &T)` for all populated cells.
     pub fn iter_valid(&self) -> impl Iterator<Item = (usize, usize, &T)> {
         let width = self.width;
-        self.points.iter().enumerate().filter_map(move |(i, opt)| {
-            opt.as_ref().map(|p| (i / width, i % width, p))
-        })
+        self.points
+            .iter()
+            .enumerate()
+            .filter_map(move |(i, opt)| opt.as_ref().map(|p| (i / width, i % width, p)))
     }
 
     /// Recompute `is_dense` from the current cell contents.
@@ -199,13 +212,23 @@ impl OrganizedPointCloud<Point3f> {
                 points.push(Some(Point3f::new(x, y, z)));
             }
         }
-        Some(Self { width, height, points, is_dense: !any_invalid })
+        Some(Self {
+            width,
+            height,
+            points,
+            is_dense: !any_invalid,
+        })
     }
 }
 
 impl<T> Default for OrganizedPointCloud<T> {
     fn default() -> Self {
-        Self { width: 0, height: 0, points: Vec::new(), is_dense: true }
+        Self {
+            width: 0,
+            height: 0,
+            points: Vec::new(),
+            is_dense: true,
+        }
     }
 }
 

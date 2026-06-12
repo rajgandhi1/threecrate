@@ -12,11 +12,11 @@
 //! [`OusterPcapReader`] directly.
 
 use crate::registry::PointCloudReader as RegistryPointCloudReader;
-use threecrate_core::{PointCloud, Point3f, Result, Error};
-use std::path::Path;
+use byteorder::{LittleEndian, ReadBytesExt};
 use std::fs::File;
 use std::io::{Cursor, Read};
-use byteorder::{LittleEndian, ReadBytesExt};
+use std::path::Path;
+use threecrate_core::{Error, Point3f, PointCloud, Result};
 
 // ---------------------------------------------------------------------------
 // Byte-slice helpers
@@ -75,16 +75,21 @@ fn pcap_extract_udp_payloads(path: &Path, target_port: u16) -> Result<Vec<Vec<u8
     file.read_to_end(&mut data)?;
 
     if data.len() < 24 {
-        return Err(Error::InvalidData("PCAP file is too small to be valid".to_string()));
+        return Err(Error::InvalidData(
+            "PCAP file is too small to be valid".to_string(),
+        ));
     }
 
     let magic = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
     let is_le = match magic {
         PCAP_MAGIC_LE | PCAP_MAGIC_NS_LE => true,
         PCAP_MAGIC_BE | PCAP_MAGIC_NS_BE => false,
-        _ => return Err(Error::InvalidData(
-            format!("Not a valid PCAP file (magic = 0x{:08x})", magic)
-        )),
+        _ => {
+            return Err(Error::InvalidData(format!(
+                "Not a valid PCAP file (magic = 0x{:08x})",
+                magic
+            )))
+        }
     };
 
     let mut offset = 24usize; // skip 24-byte global header
@@ -93,9 +98,19 @@ fn pcap_extract_udp_payloads(path: &Path, target_port: u16) -> Result<Vec<Vec<u8
     while offset + 16 <= data.len() {
         // Per-packet record header (16 bytes): ts_sec, ts_usec, incl_len, orig_len
         let incl_len = if is_le {
-            u32::from_le_bytes([data[offset+8], data[offset+9], data[offset+10], data[offset+11]])
+            u32::from_le_bytes([
+                data[offset + 8],
+                data[offset + 9],
+                data[offset + 10],
+                data[offset + 11],
+            ])
         } else {
-            u32::from_be_bytes([data[offset+8], data[offset+9], data[offset+10], data[offset+11]])
+            u32::from_be_bytes([
+                data[offset + 8],
+                data[offset + 9],
+                data[offset + 10],
+                data[offset + 11],
+            ])
         } as usize;
 
         offset += 16;
@@ -167,16 +182,14 @@ const VELODYNE_CHANNELS_PER_BLOCK: usize = 32;
 
 /// Elevation angles (degrees) for VLP-16 by laser index 0-15.
 const VLP16_VERT: [f32; 16] = [
-    -15.0, 1.0, -13.0, 3.0, -11.0, 5.0, -9.0, 7.0,
-     -7.0, 9.0,  -5.0, 11.0, -3.0, 13.0, -1.0, 15.0,
+    -15.0, 1.0, -13.0, 3.0, -11.0, 5.0, -9.0, 7.0, -7.0, 9.0, -5.0, 11.0, -3.0, 13.0, -1.0, 15.0,
 ];
 
 /// Elevation angles (degrees) for HDL-32E by laser index 0-31.
 const HDL32E_VERT: [f32; 32] = [
-    -30.67,  -9.33, -29.33,  -8.00, -28.00,  -6.67, -26.67,  -5.33,
-    -25.33,  -4.00, -24.00,  -2.67, -22.67,  -1.33, -21.33,   0.00,
-    -20.00,   1.33, -18.67,   2.67, -17.33,   4.00, -16.00,   5.33,
-    -14.67,   6.67, -13.33,   8.00, -12.00,   9.33, -10.67,  10.67,
+    -30.67, -9.33, -29.33, -8.00, -28.00, -6.67, -26.67, -5.33, -25.33, -4.00, -24.00, -2.67,
+    -22.67, -1.33, -21.33, 0.00, -20.00, 1.33, -18.67, 2.67, -17.33, 4.00, -16.00, 5.33, -14.67,
+    6.67, -13.33, 8.00, -12.00, 9.33, -10.67, 10.67,
 ];
 
 /// Velodyne sensor model inferred from the factory byte at packet offset 1205.
@@ -338,19 +351,17 @@ const OUSTER_LIDAR_PORT: u16 = 7502;
 const OUSTER_ENCODER_TICKS: f32 = 90112.0; // encoder ticks per full revolution
 const OUSTER_COLUMNS_PER_PKT: usize = 16;
 const OUSTER_COL_HEADER_BYTES: usize = 16; // timestamp(8)+meas_id(2)+frame_id(2)+encoder(4)
-const OUSTER_COL_FOOTER_BYTES: usize = 4;  // status u32
+const OUSTER_COL_FOOTER_BYTES: usize = 4; // status u32
 const OUSTER_CHANNEL_BYTES: usize = 12;
 
 /// Default beam altitude angles (degrees) for Ouster OS1-64, top to bottom.
 const OS1_64_ALTITUDES: [f32; 64] = [
-    16.611, 16.084, 15.557, 15.029, 14.502, 13.975, 13.447, 12.920,
-    12.393, 11.865, 11.338, 10.811, 10.283,  9.756,  9.229,  8.701,
-     8.174,  7.647,  7.119,  6.592,  6.065,  5.537,  5.010,  4.483,
-     3.955,  3.428,  2.901,  2.373,  1.846,  1.319,  0.791,  0.264,
-    -0.264, -0.791, -1.319, -1.846, -2.373, -2.901, -3.428, -3.955,
-    -4.483, -5.010, -5.537, -6.065, -6.592, -7.119, -7.647, -8.174,
-    -8.701, -9.229, -9.756,-10.283,-10.811,-11.338,-11.865,-12.393,
-   -12.920,-13.447,-13.975,-14.502,-15.029,-15.557,-16.084,-16.611,
+    16.611, 16.084, 15.557, 15.029, 14.502, 13.975, 13.447, 12.920, 12.393, 11.865, 11.338, 10.811,
+    10.283, 9.756, 9.229, 8.701, 8.174, 7.647, 7.119, 6.592, 6.065, 5.537, 5.010, 4.483, 3.955,
+    3.428, 2.901, 2.373, 1.846, 1.319, 0.791, 0.264, -0.264, -0.791, -1.319, -1.846, -2.373,
+    -2.901, -3.428, -3.955, -4.483, -5.010, -5.537, -6.065, -6.592, -7.119, -7.647, -8.174, -8.701,
+    -9.229, -9.756, -10.283, -10.811, -11.338, -11.865, -12.393, -12.920, -13.447, -13.975,
+    -14.502, -15.029, -15.557, -16.084, -16.611,
 ];
 
 /// Reads Ouster OS-series LiDAR data from PCAP packet capture files.
@@ -398,9 +409,7 @@ impl OusterPcapReader {
 
     /// Create a reader with linearly-spaced altitude angles for a 128-beam sensor.
     pub fn os_128() -> Self {
-        let altitudes = (0..128)
-            .map(|i| 22.5 - (i as f32 / 127.0) * 45.0)
-            .collect();
+        let altitudes = (0..128).map(|i| 22.5 - (i as f32 / 127.0) * 45.0).collect();
         Self {
             columns_per_packet: OUSTER_COLUMNS_PER_PKT,
             pixels_per_column: 128,
@@ -507,7 +516,7 @@ const LVX_PKG_LENGTH_OFF: usize = 21;
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum LvxDataType {
     CartesianInt32 = 1, // x, y, z: i32 (mm) + reflectivity: u8 + tag: u8 = 14 bytes
-    Spherical      = 2, // depth: u32 (mm) + theta: u16 + phi: u16 + reflectivity: u8 + tag: u8 = 10 bytes
+    Spherical = 2, // depth: u32 (mm) + theta: u16 + phi: u16 + reflectivity: u8 + tag: u8 = 10 bytes
     CartesianFloat = 3, // x, y, z: f32 (m) + intensity: u8 + tag: u8 = 14 bytes
 }
 
@@ -535,7 +544,11 @@ fn lvx_spherical_to_xyz(depth_mm: u32, theta_cdeg: u16, phi_cdeg: u16) -> Point3
     let theta = (theta_cdeg as f32 * 0.01_f32).to_radians();
     let phi = (phi_cdeg as f32 * 0.01_f32).to_radians();
     let sin_t = theta.sin();
-    Point3f::new(r * sin_t * phi.cos(), r * sin_t * phi.sin(), r * theta.cos())
+    Point3f::new(
+        r * sin_t * phi.cos(),
+        r * sin_t * phi.sin(),
+        r * theta.cos(),
+    )
 }
 
 fn parse_lvx_point(dtype: LvxDataType, pt: &[u8]) -> Option<Point3f> {
@@ -602,14 +615,17 @@ impl LivoxLvxReader {
         // Private header: frame_duration(4) + device_count(1) + device_infos
         let ph = LVX_FILE_HEADER_SIZE;
         if ph + LVX_PRIV_HEADER_BASE > data.len() {
-            return Err(Error::InvalidData("LVX private header truncated".to_string()));
+            return Err(Error::InvalidData(
+                "LVX private header truncated".to_string(),
+            ));
         }
         let device_count = data[ph + 4] as usize;
-        let data_block_start =
-            ph + LVX_PRIV_HEADER_BASE + device_count * LVX_DEVICE_INFO_SIZE;
+        let data_block_start = ph + LVX_PRIV_HEADER_BASE + device_count * LVX_DEVICE_INFO_SIZE;
 
         if data_block_start > data.len() {
-            return Err(Error::InvalidData("LVX device info section truncated".to_string()));
+            return Err(Error::InvalidData(
+                "LVX device info section truncated".to_string(),
+            ));
         }
 
         let mut points = Vec::new();
@@ -708,7 +724,7 @@ const LVX2_PKT_DATA_LENGTH_OFF: usize = 7;
 enum Lvx2DataType {
     CartesianInt16 = 0, // x, y, z: i16 (10 mm units) + reflectivity: u8 + tag: u8 = 8 bytes
     CartesianInt32 = 1, // x, y, z: i32 (mm) + reflectivity: u8 + tag: u8 = 14 bytes
-    Spherical      = 2, // depth: u32 (mm) + theta: u16 + phi: u16 + reflectivity: u8 + tag: u8 = 10 bytes
+    Spherical = 2, // depth: u32 (mm) + theta: u16 + phi: u16 + reflectivity: u8 + tag: u8 = 10 bytes
 }
 
 impl Lvx2DataType {
@@ -788,13 +804,19 @@ impl LivoxLvx2Reader {
 
         let header_size = match read_u32_le(&data, LVX2_HEADER_SIZE_OFF) {
             Some(v) => v as usize,
-            None => return Err(Error::InvalidData("LVX2 header_size field missing".to_string())),
+            None => {
+                return Err(Error::InvalidData(
+                    "LVX2 header_size field missing".to_string(),
+                ))
+            }
         };
 
         let device_count = if LVX2_DEVICE_COUNT_OFF < data.len() {
             data[LVX2_DEVICE_COUNT_OFF] as usize
         } else {
-            return Err(Error::InvalidData("LVX2 device_count field missing".to_string()));
+            return Err(Error::InvalidData(
+                "LVX2 device_count field missing".to_string(),
+            ));
         };
 
         let data_block_start = header_size + device_count * LVX2_DEVICE_INFO_SIZE;

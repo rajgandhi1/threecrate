@@ -46,12 +46,7 @@ impl ValueFormatter for AllocationsFormatter {
         "allocations"
     }
 
-    fn scale_throughputs(
-        &self,
-        _: f64,
-        _: &criterion::Throughput,
-        _: &mut [f64],
-    ) -> &'static str {
+    fn scale_throughputs(&self, _: f64, _: &criterion::Throughput, _: &mut [f64]) -> &'static str {
         "allocations"
     }
 

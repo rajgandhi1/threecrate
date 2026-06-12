@@ -27,9 +27,7 @@ pub type ColoredNormalPointCloud3f = PointCloud<ColoredNormalPoint3f>;
 impl<T> PointCloud<T> {
     /// Create a new empty point cloud
     pub fn new() -> Self {
-        Self {
-            points: Vec::new(),
-        }
+        Self { points: Vec::new() }
     }
 
     /// Create a new point cloud with specified capacity
@@ -148,4 +146,4 @@ impl PointCloud<Point3f> {
             *point = transform.transform_point(point);
         }
     }
-} 
+}

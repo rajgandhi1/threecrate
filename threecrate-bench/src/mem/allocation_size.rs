@@ -41,7 +41,6 @@ impl Measurement for AllocationSize {
 
 struct AllocationSizeFormatter;
 
-
 impl ValueFormatter for AllocationSizeFormatter {
     fn scale_values(&self, typical_value: f64, values: &mut [f64]) -> &'static str {
         let magnitude = typical_value.log(2.0).floor() as i32 / 10;
@@ -56,16 +55,11 @@ impl ValueFormatter for AllocationSizeFormatter {
             2 => "MiB",
             3 => "GiB",
             4 => "TiB",
-            _ => "a lot of bytes"
+            _ => "a lot of bytes",
         }
     }
 
-    fn scale_throughputs(
-        &self,
-        _: f64,
-        _: &criterion::Throughput,
-        _: &mut [f64],
-    ) -> &'static str {
+    fn scale_throughputs(&self, _: f64, _: &criterion::Throughput, _: &mut [f64]) -> &'static str {
         "B"
     }
 

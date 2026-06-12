@@ -41,8 +41,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  Points processed : {}", stats.point_count);
     println!(
         "  Bounding box     : ({:.2},{:.2},{:.2}) – ({:.2},{:.2},{:.2})",
-        stats.min.x, stats.min.y, stats.min.z,
-        stats.max.x, stats.max.y, stats.max.z,
+        stats.min.x, stats.min.y, stats.min.z, stats.max.x, stats.max.y, stats.max.z,
     );
     println!(
         "  Mean position    : ({:.2},{:.2},{:.2})",
@@ -153,8 +152,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             );
             println!(
                 "  Bounding box: ({:.2},{:.2},{:.2}) – ({:.2},{:.2},{:.2})",
-                s.min.x, s.min.y, s.min.z,
-                s.max.x, s.max.y, s.max.z,
+                s.min.x, s.min.y, s.min.z, s.max.x, s.max.y, s.max.z,
             );
         }
         Err(e) => println!("  Note: PLY streaming unavailable – {e}"),

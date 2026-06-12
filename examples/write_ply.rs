@@ -1,17 +1,17 @@
 //! Example demonstrating PLY file writing capabilities
-//! 
+//!
 //! This example shows how to use the enhanced PLY writer to create PLY files
 //! in various formats (ASCII and binary) with configurable options including
 //! custom properties, comments, and property ordering.
 
 use std::env;
 use std::process;
-use threecrate_core::{PointCloud, TriangleMesh, Point3f, Vector3f};
-use threecrate_io::ply::{RobustPlyWriter, PlyWriteOptions, PlyValue, PlyFormat};
+use threecrate_core::{Point3f, PointCloud, TriangleMesh, Vector3f};
+use threecrate_io::ply::{PlyFormat, PlyValue, PlyWriteOptions, RobustPlyWriter};
 
 fn main() {
     let args: Vec<String> = env::args().collect();
-    
+
     if args.len() < 2 {
         eprintln!("Usage: {} <output_format> [output_file]", args[0]);
         eprintln!("Formats: ascii, binary_le, binary_be, all");
@@ -19,13 +19,13 @@ fn main() {
         eprintln!("Example: {} all", args[0]);
         process::exit(1);
     }
-    
+
     let format = &args[1];
     let output_file = args.get(2).map(|s| s.as_str()).unwrap_or("output.ply");
-    
+
     println!("🎨 PLY Writer Example");
     println!("====================");
-    
+
     match format.as_str() {
         "ascii" => write_ascii_example(output_file),
         "binary_le" => write_binary_le_example(output_file),
@@ -41,36 +41,66 @@ fn main() {
 
 fn write_ascii_example(output_file: &str) {
     println!("📝 Writing ASCII PLY example to: {}", output_file);
-    
+
     // Create a colorful cube point cloud
     let mut cloud = PointCloud::new();
     let cube_points = [
-        (-1.0, -1.0, -1.0), (1.0, -1.0, -1.0), (1.0, 1.0, -1.0), (-1.0, 1.0, -1.0),
-        (-1.0, -1.0, 1.0), (1.0, -1.0, 1.0), (1.0, 1.0, 1.0), (-1.0, 1.0, 1.0),
+        (-1.0, -1.0, -1.0),
+        (1.0, -1.0, -1.0),
+        (1.0, 1.0, -1.0),
+        (-1.0, 1.0, -1.0),
+        (-1.0, -1.0, 1.0),
+        (1.0, -1.0, 1.0),
+        (1.0, 1.0, 1.0),
+        (-1.0, 1.0, 1.0),
     ];
-    
+
     for (x, y, z) in cube_points {
         cloud.push(Point3f::new(x, y, z));
     }
-    
+
     // Create custom properties - colors and intensities
     let colors_red = vec![
-        PlyValue::UChar(255), PlyValue::UChar(0), PlyValue::UChar(0), PlyValue::UChar(255),
-        PlyValue::UChar(128), PlyValue::UChar(64), PlyValue::UChar(32), PlyValue::UChar(200),
+        PlyValue::UChar(255),
+        PlyValue::UChar(0),
+        PlyValue::UChar(0),
+        PlyValue::UChar(255),
+        PlyValue::UChar(128),
+        PlyValue::UChar(64),
+        PlyValue::UChar(32),
+        PlyValue::UChar(200),
     ];
     let colors_green = vec![
-        PlyValue::UChar(0), PlyValue::UChar(255), PlyValue::UChar(0), PlyValue::UChar(255),
-        PlyValue::UChar(64), PlyValue::UChar(128), PlyValue::UChar(32), PlyValue::UChar(200),
+        PlyValue::UChar(0),
+        PlyValue::UChar(255),
+        PlyValue::UChar(0),
+        PlyValue::UChar(255),
+        PlyValue::UChar(64),
+        PlyValue::UChar(128),
+        PlyValue::UChar(32),
+        PlyValue::UChar(200),
     ];
     let colors_blue = vec![
-        PlyValue::UChar(0), PlyValue::UChar(0), PlyValue::UChar(255), PlyValue::UChar(255),
-        PlyValue::UChar(32), PlyValue::UChar(32), PlyValue::UChar(128), PlyValue::UChar(200),
+        PlyValue::UChar(0),
+        PlyValue::UChar(0),
+        PlyValue::UChar(255),
+        PlyValue::UChar(255),
+        PlyValue::UChar(32),
+        PlyValue::UChar(32),
+        PlyValue::UChar(128),
+        PlyValue::UChar(200),
     ];
     let intensities = vec![
-        PlyValue::Float(1.0), PlyValue::Float(0.8), PlyValue::Float(0.6), PlyValue::Float(0.9),
-        PlyValue::Float(0.7), PlyValue::Float(0.5), PlyValue::Float(0.3), PlyValue::Float(0.4),
+        PlyValue::Float(1.0),
+        PlyValue::Float(0.8),
+        PlyValue::Float(0.6),
+        PlyValue::Float(0.9),
+        PlyValue::Float(0.7),
+        PlyValue::Float(0.5),
+        PlyValue::Float(0.3),
+        PlyValue::Float(0.4),
     ];
-    
+
     // Configure writer options
     let options = PlyWriteOptions::ascii()
         .with_comment("Colorful cube point cloud")
@@ -81,16 +111,23 @@ fn write_ascii_example(output_file: &str) {
         .with_custom_vertex_property("blue", colors_blue)
         .with_custom_vertex_property("intensity", intensities)
         .with_vertex_property_order(vec![
-            "x".to_string(), "y".to_string(), "z".to_string(),
-            "red".to_string(), "green".to_string(), "blue".to_string(),
-            "intensity".to_string()
+            "x".to_string(),
+            "y".to_string(),
+            "z".to_string(),
+            "red".to_string(),
+            "green".to_string(),
+            "blue".to_string(),
+            "intensity".to_string(),
         ]);
-    
+
     // Write the file
     match RobustPlyWriter::write_point_cloud(&cloud, output_file, &options) {
         Ok(()) => {
             println!("✅ Successfully wrote ASCII PLY file!");
-            println!("   📊 {} vertices with RGB colors and intensity", cloud.len());
+            println!(
+                "   📊 {} vertices with RGB colors and intensity",
+                cloud.len()
+            );
             println!("   💬 Includes comments and metadata");
             println!("   🎨 Custom property ordering applied");
         }
@@ -102,8 +139,11 @@ fn write_ascii_example(output_file: &str) {
 }
 
 fn write_binary_le_example(output_file: &str) {
-    println!("💾 Writing Binary Little Endian PLY example to: {}", output_file);
-    
+    println!(
+        "💾 Writing Binary Little Endian PLY example to: {}",
+        output_file
+    );
+
     // Create a triangle mesh with normals
     let vertices = vec![
         Point3f::new(0.0, 0.0, 0.0),
@@ -111,35 +151,39 @@ fn write_binary_le_example(output_file: &str) {
         Point3f::new(1.0, 1.8, 0.0),
         Point3f::new(1.0, 0.6, 1.5),
     ];
-    
+
     let faces = vec![
         [0, 1, 2], // base triangle
         [0, 1, 3], // side triangle 1
         [1, 2, 3], // side triangle 2
         [2, 0, 3], // side triangle 3
     ];
-    
+
     let normals = vec![
         Vector3f::new(0.0, 0.0, 1.0),
         Vector3f::new(0.0, 0.0, 1.0),
         Vector3f::new(0.0, 0.0, 1.0),
         Vector3f::new(0.577, 0.577, 0.577), // Normalized
     ];
-    
+
     let mut mesh = TriangleMesh::from_vertices_and_faces(vertices, faces);
     mesh.set_normals(normals);
-    
+
     // Configure binary writer options
     let options = PlyWriteOptions::binary_little_endian()
         .with_comment("Tetrahedron mesh with normals")
         .with_obj_info("Binary little endian format")
         .with_normals(true);
-    
+
     // Write the file
     match RobustPlyWriter::write_mesh(&mesh, output_file, &options) {
         Ok(()) => {
             println!("✅ Successfully wrote Binary Little Endian PLY file!");
-            println!("   🔺 {} vertices, {} faces", mesh.vertex_count(), mesh.face_count());
+            println!(
+                "   🔺 {} vertices, {} faces",
+                mesh.vertex_count(),
+                mesh.face_count()
+            );
             println!("   📐 Includes vertex normals");
             println!("   💾 Compact binary format");
         }
@@ -151,8 +195,11 @@ fn write_binary_le_example(output_file: &str) {
 }
 
 fn write_binary_be_example(output_file: &str) {
-    println!("💾 Writing Binary Big Endian PLY example to: {}", output_file);
-    
+    println!(
+        "💾 Writing Binary Big Endian PLY example to: {}",
+        output_file
+    );
+
     // Create a simple point cloud with custom properties
     let mut cloud = PointCloud::new();
     for i in 0..10 {
@@ -162,17 +209,19 @@ fn write_binary_be_example(output_file: &str) {
         let z = (i as f32) * 0.1;
         cloud.push(Point3f::new(x, y, z));
     }
-    
+
     // Add some custom properties
     let labels = (0..10).map(|i| PlyValue::Int(i)).collect();
-    let weights = (0..10).map(|i| PlyValue::Double((i as f64) * 0.1 + 0.5)).collect();
-    
+    let weights = (0..10)
+        .map(|i| PlyValue::Double((i as f64) * 0.1 + 0.5))
+        .collect();
+
     let options = PlyWriteOptions::binary_big_endian()
         .with_comment("Spiral point cloud")
         .with_obj_info("10 points in a spiral with labels and weights")
         .with_custom_vertex_property("label", labels)
         .with_custom_vertex_property("weight", weights);
-    
+
     // Write the file
     match RobustPlyWriter::write_point_cloud(&cloud, output_file, &options) {
         Ok(()) => {
@@ -191,7 +240,7 @@ fn write_binary_be_example(output_file: &str) {
 fn write_all_formats_example() {
     println!("🎯 Writing examples in all formats...");
     println!();
-    
+
     // Create a simple test mesh
     let vertices = vec![
         Point3f::new(-1.0, -1.0, 0.0),
@@ -204,32 +253,38 @@ fn write_all_formats_example() {
         Vector3f::new(0.0, 0.0, 1.0),
         Vector3f::new(0.0, 0.0, 1.0),
     ];
-    
+
     let mut mesh = TriangleMesh::from_vertices_and_faces(vertices, faces);
     mesh.set_normals(normals);
-    
+
     let formats = [
         (PlyFormat::Ascii, "triangle_ascii.ply", "ASCII"),
-        (PlyFormat::BinaryLittleEndian, "triangle_binary_le.ply", "Binary Little Endian"),
-        (PlyFormat::BinaryBigEndian, "triangle_binary_be.ply", "Binary Big Endian"),
+        (
+            PlyFormat::BinaryLittleEndian,
+            "triangle_binary_le.ply",
+            "Binary Little Endian",
+        ),
+        (
+            PlyFormat::BinaryBigEndian,
+            "triangle_binary_be.ply",
+            "Binary Big Endian",
+        ),
     ];
-    
+
     for (format, filename, format_name) in &formats {
         println!("📄 Writing {} format to: {}", format_name, filename);
-        
+
         let options = PlyWriteOptions {
             format: *format,
             comments: vec![
                 "Triangle mesh example".to_string(),
                 format!("Format: {}", format_name),
             ],
-            obj_info: vec![
-                "Simple triangle with normals".to_string(),
-            ],
+            obj_info: vec!["Simple triangle with normals".to_string()],
             include_normals: true,
             ..Default::default()
         };
-        
+
         match RobustPlyWriter::write_mesh(&mesh, filename, &options) {
             Ok(()) => {
                 // Get file size for comparison
@@ -244,7 +299,7 @@ fn write_all_formats_example() {
             }
         }
     }
-    
+
     println!();
     println!("📊 Format Comparison Summary:");
     println!("   📝 ASCII: Human-readable, larger file size, slower parsing");
@@ -262,28 +317,27 @@ fn write_all_formats_example() {
 mod tests {
     use super::*;
     use threecrate_io::ply::RobustPlyReader;
-    
+
     #[test]
     fn test_write_example_files() {
         // Test that we can write and read back files
         let temp_file = "test_example.ply";
-        
+
         // Create test data
         let mut cloud = PointCloud::new();
         cloud.push(Point3f::new(1.0, 2.0, 3.0));
         cloud.push(Point3f::new(4.0, 5.0, 6.0));
-        
-        let options = PlyWriteOptions::ascii()
-            .with_comment("Test file");
-        
+
+        let options = PlyWriteOptions::ascii().with_comment("Test file");
+
         // Write and verify
         RobustPlyWriter::write_point_cloud(&cloud, temp_file, &options).unwrap();
-        
+
         // Read back
         let ply_data = RobustPlyReader::read_ply_file(temp_file).unwrap();
         assert_eq!(ply_data.header.comments, vec!["Test file"]);
         assert_eq!(ply_data.elements.get("vertex").unwrap().len(), 2);
-        
+
         // Cleanup
         let _ = std::fs::remove_file(temp_file);
     }

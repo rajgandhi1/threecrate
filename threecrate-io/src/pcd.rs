@@ -3,15 +3,17 @@
 //! This module provides comprehensive PCD format reading and writing capabilities
 //! including ASCII and binary formats, with support for various field types.
 
-use crate::{PointCloudReader, PointCloudWriter};
-use crate::registry::{PointCloudReader as RegistryPointCloudReader, PointCloudWriter as RegistryPointCloudWriter};
-use threecrate_core::{PointCloud, Point3f, Result, Error};
-use std::path::Path;
-use std::fs::File;
-use std::io::{BufRead, BufReader, Read, Write};
-use std::collections::HashMap;
 #[cfg(feature = "io-mmap")]
 use crate::mmap::MmapReader;
+use crate::registry::{
+    PointCloudReader as RegistryPointCloudReader, PointCloudWriter as RegistryPointCloudWriter,
+};
+use crate::{PointCloudReader, PointCloudWriter};
+use std::collections::HashMap;
+use std::fs::File;
+use std::io::{BufRead, BufReader, Read, Write};
+use std::path::Path;
+use threecrate_core::{Error, Point3f, PointCloud, Result};
 
 /// PCD data format variants
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -96,7 +98,7 @@ impl RobustPcdReader {
     /// Read PCD file and return header and point data
     pub fn read_pcd_file<P: AsRef<Path>>(path: P) -> Result<(PcdHeader, Vec<PcdPoint>)> {
         let path = path.as_ref();
-        
+
         // Try memory-mapped reading for binary files if feature is enabled
         #[cfg(feature = "io-mmap")]
         {
@@ -104,7 +106,7 @@ impl RobustPcdReader {
                 return Ok((header, points));
             }
         }
-        
+
         // Fall back to standard buffered reading
         let file = File::open(path)?;
         let mut reader = BufReader::new(file);
@@ -115,17 +117,17 @@ impl RobustPcdReader {
     #[cfg(feature = "io-mmap")]
     fn try_read_pcd_mmap<P: AsRef<Path>>(path: P) -> Result<Option<(PcdHeader, Vec<PcdPoint>)>> {
         let path = path.as_ref();
-        
+
         // Check if we should use memory mapping
         if !crate::mmap::should_use_mmap(path) {
             return Ok(None);
         }
-        
+
         // First, read the header using standard I/O to determine format
         let file = File::open(path)?;
         let mut reader = BufReader::new(file);
         let header = Self::read_header(&mut reader)?;
-        
+
         // Only use mmap for binary formats
         match header.data_format {
             PcdDataFormat::Binary => {
@@ -134,29 +136,31 @@ impl RobustPcdReader {
                 let mut reader = BufReader::new(file);
                 let mut header_size = 0;
                 let mut line = String::new();
-                
+
                 loop {
                     line.clear();
                     let bytes_read = reader.read_line(&mut line)?;
                     if bytes_read == 0 {
-                        return Err(Error::InvalidData("Unexpected end of file in PCD header".to_string()));
+                        return Err(Error::InvalidData(
+                            "Unexpected end of file in PCD header".to_string(),
+                        ));
                     }
                     header_size += bytes_read;
-                    
+
                     let line = line.trim();
                     if line == "DATA binary" {
                         break;
                     }
                 }
-                
+
                 // Now use memory mapping for the data section
                 if let Some(mut mmap_reader) = MmapReader::new(path)? {
                     // Skip to the data section
                     mmap_reader.seek(header_size)?;
-                    
+
                     // Read points using memory mapping
                     let points = Self::read_binary_points_mmap(&mut mmap_reader, &header)?;
-                    
+
                     return Ok(Some((header, points)));
                 }
             }
@@ -165,13 +169,16 @@ impl RobustPcdReader {
                 return Ok(None);
             }
         }
-        
+
         Ok(None)
     }
 
     /// Read binary format points using memory mapping
     #[cfg(feature = "io-mmap")]
-    fn read_binary_points_mmap(reader: &mut MmapReader, header: &PcdHeader) -> Result<Vec<PcdPoint>> {
+    fn read_binary_points_mmap(
+        reader: &mut MmapReader,
+        header: &PcdHeader,
+    ) -> Result<Vec<PcdPoint>> {
         let mut points = Vec::with_capacity(header.width * header.height);
 
         for _ in 0..(header.width * header.height) {
@@ -190,7 +197,10 @@ impl RobustPcdReader {
 
     /// Read binary field values using memory mapping
     #[cfg(feature = "io-mmap")]
-    fn read_binary_field_values_mmap(reader: &mut MmapReader, field: &PcdField) -> Result<Vec<PcdValue>> {
+    fn read_binary_field_values_mmap(
+        reader: &mut MmapReader,
+        field: &PcdField,
+    ) -> Result<Vec<PcdValue>> {
         let mut field_values = Vec::with_capacity(field.count);
 
         for _ in 0..field.count {
@@ -237,7 +247,9 @@ impl RobustPcdReader {
             line.clear();
             let bytes_read = reader.read_line(&mut line)?;
             if bytes_read == 0 {
-                return Err(Error::InvalidData("Unexpected end of file in PCD header".to_string()));
+                return Err(Error::InvalidData(
+                    "Unexpected end of file in PCD header".to_string(),
+                ));
             }
 
             let line = line.trim();
@@ -265,7 +277,6 @@ impl RobustPcdReader {
                 continue;
             }
 
-
             match parts[0] {
                 "VERSION" => {
                     if parts.len() >= 2 {
@@ -278,7 +289,7 @@ impl RobustPcdReader {
                             fields.push(PcdField {
                                 name: field_name.to_string(),
                                 field_type: PcdFieldType::F32, // Will be updated by TYPE
-                                count: 1, // Will be updated by COUNT
+                                count: 1,                      // Will be updated by COUNT
                             });
                         }
                     }
@@ -286,8 +297,9 @@ impl RobustPcdReader {
                 "SIZE" => {
                     if parts.len() >= 2 {
                         for &size_str in &parts[1..] {
-                            size.push(size_str.parse::<usize>()
-                                .map_err(|_| Error::InvalidData(format!("Invalid SIZE value: {}", size_str)))?);
+                            size.push(size_str.parse::<usize>().map_err(|_| {
+                                Error::InvalidData(format!("Invalid SIZE value: {}", size_str))
+                            })?);
                         }
                     }
                 }
@@ -304,7 +316,12 @@ impl RobustPcdReader {
                                 ("U", 4) | ("U", _) => PcdFieldType::U32,
                                 ("F", 4) => PcdFieldType::F32,
                                 ("F", 8) | ("F", _) => PcdFieldType::F64,
-                                _ => return Err(Error::InvalidData(format!("Unknown field type/size combination: {}/{}", type_str, size))),
+                                _ => {
+                                    return Err(Error::InvalidData(format!(
+                                        "Unknown field type/size combination: {}/{}",
+                                        type_str, size
+                                    )))
+                                }
                             };
                             field_types.push(field_type);
                         }
@@ -313,35 +330,43 @@ impl RobustPcdReader {
                 "COUNT" => {
                     if parts.len() >= 2 {
                         for &count_str in &parts[1..] {
-                            count.push(count_str.parse::<usize>()
-                                .map_err(|_| Error::InvalidData(format!("Invalid COUNT value: {}", count_str)))?);
+                            count.push(count_str.parse::<usize>().map_err(|_| {
+                                Error::InvalidData(format!("Invalid COUNT value: {}", count_str))
+                            })?);
                         }
                     }
                 }
                 "WIDTH" => {
                     if parts.len() >= 2 {
-                        width = Some(parts[1].parse::<usize>()
-                            .map_err(|_| Error::InvalidData(format!("Invalid WIDTH value: {}", parts[1])))?);
+                        width = Some(parts[1].parse::<usize>().map_err(|_| {
+                            Error::InvalidData(format!("Invalid WIDTH value: {}", parts[1]))
+                        })?);
                     }
                 }
                 "HEIGHT" => {
                     if parts.len() >= 2 {
-                        height = Some(parts[1].parse::<usize>()
-                            .map_err(|_| Error::InvalidData(format!("Invalid HEIGHT value: {}", parts[1])))?);
+                        height = Some(parts[1].parse::<usize>().map_err(|_| {
+                            Error::InvalidData(format!("Invalid HEIGHT value: {}", parts[1]))
+                        })?);
                     }
                 }
                 "VIEWPOINT" => {
                     if parts.len() >= 8 {
                         for i in 0..7 {
-                            viewpoint[i] = parts[i + 1].parse::<f64>()
-                                .map_err(|_| Error::InvalidData(format!("Invalid VIEWPOINT value: {}", parts[i + 1])))?;
+                            viewpoint[i] = parts[i + 1].parse::<f64>().map_err(|_| {
+                                Error::InvalidData(format!(
+                                    "Invalid VIEWPOINT value: {}",
+                                    parts[i + 1]
+                                ))
+                            })?;
                         }
                     }
                 }
                 "POINTS" => {
                     if parts.len() >= 2 {
-                        points = Some(parts[1].parse::<usize>()
-                            .map_err(|_| Error::InvalidData(format!("Invalid POINTS value: {}", parts[1])))?);
+                        points = Some(parts[1].parse::<usize>().map_err(|_| {
+                            Error::InvalidData(format!("Invalid POINTS value: {}", parts[1]))
+                        })?);
                     }
                 }
                 _ => {
@@ -350,10 +375,14 @@ impl RobustPcdReader {
             }
         }
 
-        let version = version.ok_or_else(|| Error::InvalidData("Missing VERSION in PCD header".to_string()))?;
-        let width = width.ok_or_else(|| Error::InvalidData("Missing WIDTH in PCD header".to_string()))?;
-        let height = height.ok_or_else(|| Error::InvalidData("Missing HEIGHT in PCD header".to_string()))?;
-        let data_format = _data_format.ok_or_else(|| Error::InvalidData("Missing DATA format in PCD header".to_string()))?;
+        let version = version
+            .ok_or_else(|| Error::InvalidData("Missing VERSION in PCD header".to_string()))?;
+        let width =
+            width.ok_or_else(|| Error::InvalidData("Missing WIDTH in PCD header".to_string()))?;
+        let height =
+            height.ok_or_else(|| Error::InvalidData("Missing HEIGHT in PCD header".to_string()))?;
+        let data_format = _data_format
+            .ok_or_else(|| Error::InvalidData("Missing DATA format in PCD header".to_string()))?;
 
         // Update field definitions with type and count information
         if fields.len() == field_types.len() && fields.len() == count.len() {
@@ -362,13 +391,19 @@ impl RobustPcdReader {
                 field.count = count[i];
             }
         } else {
-            return Err(Error::InvalidData("Mismatch between FIELDS, TYPE, and COUNT declarations".to_string()));
+            return Err(Error::InvalidData(
+                "Mismatch between FIELDS, TYPE, and COUNT declarations".to_string(),
+            ));
         }
 
         // If POINTS is specified and different from WIDTH * HEIGHT, validate it
         if let Some(points) = points {
             if points != width * height {
-                return Err(Error::InvalidData(format!("POINTS ({}) doesn't match WIDTH * HEIGHT ({})", points, width * height)));
+                return Err(Error::InvalidData(format!(
+                    "POINTS ({}) doesn't match WIDTH * HEIGHT ({})",
+                    points,
+                    width * height
+                )));
             }
         }
 
@@ -387,9 +422,9 @@ impl RobustPcdReader {
         match header.data_format {
             PcdDataFormat::Ascii => Self::read_ascii_points(reader, header),
             PcdDataFormat::Binary => Self::read_binary_points(reader, header),
-            PcdDataFormat::BinaryCompressed => {
-                Err(Error::Unsupported("Binary compressed PCD format not yet supported".to_string()))
-            }
+            PcdDataFormat::BinaryCompressed => Err(Error::Unsupported(
+                "Binary compressed PCD format not yet supported".to_string(),
+            )),
         }
     }
 
@@ -440,31 +475,61 @@ impl RobustPcdReader {
     }
 
     /// Read ASCII field values
-    fn read_ascii_field_values(values: &[&str], value_idx: &mut usize, field: &PcdField) -> Result<Vec<PcdValue>> {
+    fn read_ascii_field_values(
+        values: &[&str],
+        value_idx: &mut usize,
+        field: &PcdField,
+    ) -> Result<Vec<PcdValue>> {
         let mut field_values = Vec::with_capacity(field.count);
 
         for _ in 0..field.count {
             if *value_idx >= values.len() {
-                return Err(Error::InvalidData("Not enough values in ASCII PCD line".to_string()));
+                return Err(Error::InvalidData(
+                    "Not enough values in ASCII PCD line".to_string(),
+                ));
             }
 
             let value = match field.field_type {
-                PcdFieldType::I8 => PcdValue::I8(values[*value_idx].parse::<i8>()
-                    .map_err(|_| Error::InvalidData(format!("Invalid I8 value: {}", values[*value_idx])))?),
-                PcdFieldType::U8 => PcdValue::U8(values[*value_idx].parse::<u8>()
-                    .map_err(|_| Error::InvalidData(format!("Invalid U8 value: {}", values[*value_idx])))?),
-                PcdFieldType::I16 => PcdValue::I16(values[*value_idx].parse::<i16>()
-                    .map_err(|_| Error::InvalidData(format!("Invalid I16 value: {}", values[*value_idx])))?),
-                PcdFieldType::U16 => PcdValue::U16(values[*value_idx].parse::<u16>()
-                    .map_err(|_| Error::InvalidData(format!("Invalid U16 value: {}", values[*value_idx])))?),
-                PcdFieldType::I32 => PcdValue::I32(values[*value_idx].parse::<i32>()
-                    .map_err(|_| Error::InvalidData(format!("Invalid I32 value: {}", values[*value_idx])))?),
-                PcdFieldType::U32 => PcdValue::U32(values[*value_idx].parse::<u32>()
-                    .map_err(|_| Error::InvalidData(format!("Invalid U32 value: {}", values[*value_idx])))?),
-                PcdFieldType::F32 => PcdValue::F32(values[*value_idx].parse::<f32>()
-                    .map_err(|_| Error::InvalidData(format!("Invalid F32 value: {}", values[*value_idx])))?),
-                PcdFieldType::F64 => PcdValue::F64(values[*value_idx].parse::<f64>()
-                    .map_err(|_| Error::InvalidData(format!("Invalid F64 value: {}", values[*value_idx])))?),
+                PcdFieldType::I8 => {
+                    PcdValue::I8(values[*value_idx].parse::<i8>().map_err(|_| {
+                        Error::InvalidData(format!("Invalid I8 value: {}", values[*value_idx]))
+                    })?)
+                }
+                PcdFieldType::U8 => {
+                    PcdValue::U8(values[*value_idx].parse::<u8>().map_err(|_| {
+                        Error::InvalidData(format!("Invalid U8 value: {}", values[*value_idx]))
+                    })?)
+                }
+                PcdFieldType::I16 => {
+                    PcdValue::I16(values[*value_idx].parse::<i16>().map_err(|_| {
+                        Error::InvalidData(format!("Invalid I16 value: {}", values[*value_idx]))
+                    })?)
+                }
+                PcdFieldType::U16 => {
+                    PcdValue::U16(values[*value_idx].parse::<u16>().map_err(|_| {
+                        Error::InvalidData(format!("Invalid U16 value: {}", values[*value_idx]))
+                    })?)
+                }
+                PcdFieldType::I32 => {
+                    PcdValue::I32(values[*value_idx].parse::<i32>().map_err(|_| {
+                        Error::InvalidData(format!("Invalid I32 value: {}", values[*value_idx]))
+                    })?)
+                }
+                PcdFieldType::U32 => {
+                    PcdValue::U32(values[*value_idx].parse::<u32>().map_err(|_| {
+                        Error::InvalidData(format!("Invalid U32 value: {}", values[*value_idx]))
+                    })?)
+                }
+                PcdFieldType::F32 => {
+                    PcdValue::F32(values[*value_idx].parse::<f32>().map_err(|_| {
+                        Error::InvalidData(format!("Invalid F32 value: {}", values[*value_idx]))
+                    })?)
+                }
+                PcdFieldType::F64 => {
+                    PcdValue::F64(values[*value_idx].parse::<f64>().map_err(|_| {
+                        Error::InvalidData(format!("Invalid F64 value: {}", values[*value_idx]))
+                    })?)
+                }
             };
 
             field_values.push(value);
@@ -475,7 +540,10 @@ impl RobustPcdReader {
     }
 
     /// Read binary field values
-    fn read_binary_field_values<R: Read>(reader: &mut R, field: &PcdField) -> Result<Vec<PcdValue>> {
+    fn read_binary_field_values<R: Read>(
+        reader: &mut R,
+        field: &PcdField,
+    ) -> Result<Vec<PcdValue>> {
         let mut field_values = Vec::with_capacity(field.count);
 
         for _ in 0..field.count {
@@ -529,20 +597,28 @@ impl RobustPcdReader {
     }
 
     /// Convert PCD data to PointCloud
-    pub fn pcd_to_point_cloud(_header: &PcdHeader, points: &[PcdPoint]) -> Result<PointCloud<Point3f>> {
+    pub fn pcd_to_point_cloud(
+        _header: &PcdHeader,
+        points: &[PcdPoint],
+    ) -> Result<PointCloud<Point3f>> {
         let mut cloud_points = Vec::with_capacity(points.len());
 
         for point in points {
             // Extract x, y, z coordinates
-            let x_values = point.get("x")
-                .ok_or_else(|| Error::InvalidData("Missing x coordinate in PCD point".to_string()))?;
-            let y_values = point.get("y")
-                .ok_or_else(|| Error::InvalidData("Missing y coordinate in PCD point".to_string()))?;
-            let z_values = point.get("z")
-                .ok_or_else(|| Error::InvalidData("Missing z coordinate in PCD point".to_string()))?;
+            let x_values = point.get("x").ok_or_else(|| {
+                Error::InvalidData("Missing x coordinate in PCD point".to_string())
+            })?;
+            let y_values = point.get("y").ok_or_else(|| {
+                Error::InvalidData("Missing y coordinate in PCD point".to_string())
+            })?;
+            let z_values = point.get("z").ok_or_else(|| {
+                Error::InvalidData("Missing z coordinate in PCD point".to_string())
+            })?;
 
             if x_values.is_empty() || y_values.is_empty() || z_values.is_empty() {
-                return Err(Error::InvalidData("Empty coordinate values in PCD point".to_string()));
+                return Err(Error::InvalidData(
+                    "Empty coordinate values in PCD point".to_string(),
+                ));
             }
 
             let x = Self::pcd_value_to_f64(&x_values[0])?;
@@ -578,7 +654,7 @@ impl RobustPcdWriter {
     pub fn write_point_cloud<P: AsRef<Path>>(
         cloud: &PointCloud<Point3f>,
         path: P,
-        options: &PcdWriteOptions
+        options: &PcdWriteOptions,
     ) -> Result<()> {
         let file = File::create(path)?;
         let mut writer = std::io::BufWriter::new(file);
@@ -589,7 +665,7 @@ impl RobustPcdWriter {
     pub fn write_point_cloud_to_writer<W: Write>(
         cloud: &PointCloud<Point3f>,
         writer: &mut W,
-        options: &PcdWriteOptions
+        options: &PcdWriteOptions,
     ) -> Result<()> {
         // Build PCD header
         let mut fields = vec![
@@ -618,7 +694,9 @@ impl RobustPcdWriter {
             fields,
             width: cloud.len(),
             height: 1,
-            viewpoint: options.viewpoint.unwrap_or([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]),
+            viewpoint: options
+                .viewpoint
+                .unwrap_or([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]),
             data_format: options.data_format,
         };
 
@@ -629,15 +707,19 @@ impl RobustPcdWriter {
         match options.data_format {
             PcdDataFormat::Ascii => Self::write_ascii_data(writer, cloud, &header),
             PcdDataFormat::Binary => Self::write_binary_data(writer, cloud, &header),
-            PcdDataFormat::BinaryCompressed => {
-                Err(Error::Unsupported("Binary compressed PCD format not yet supported".to_string()))
-            }
+            PcdDataFormat::BinaryCompressed => Err(Error::Unsupported(
+                "Binary compressed PCD format not yet supported".to_string(),
+            )),
         }
     }
 
     /// Write PCD header
     fn write_header<W: Write>(writer: &mut W, header: &PcdHeader) -> Result<()> {
-        writeln!(writer, "# .PCD v{} - Point Cloud Data file format", header.version)?;
+        writeln!(
+            writer,
+            "# .PCD v{} - Point Cloud Data file format",
+            header.version
+        )?;
         writeln!(writer, "VERSION {}", header.version)?;
         write!(writer, "FIELDS")?;
         for field in &header.fields {
@@ -676,9 +758,17 @@ impl RobustPcdWriter {
 
         writeln!(writer, "WIDTH {}", header.width)?;
         writeln!(writer, "HEIGHT {}", header.height)?;
-        writeln!(writer, "VIEWPOINT {} {} {} {} {} {} {}",
-                 header.viewpoint[0], header.viewpoint[1], header.viewpoint[2],
-                 header.viewpoint[3], header.viewpoint[4], header.viewpoint[5], header.viewpoint[6])?;
+        writeln!(
+            writer,
+            "VIEWPOINT {} {} {} {} {} {} {}",
+            header.viewpoint[0],
+            header.viewpoint[1],
+            header.viewpoint[2],
+            header.viewpoint[3],
+            header.viewpoint[4],
+            header.viewpoint[5],
+            header.viewpoint[6]
+        )?;
         writeln!(writer, "POINTS {}", header.width * header.height)?;
 
         let data_str = match header.data_format {
@@ -695,7 +785,7 @@ impl RobustPcdWriter {
     fn write_ascii_data<W: Write>(
         writer: &mut W,
         cloud: &PointCloud<Point3f>,
-        _header: &PcdHeader
+        _header: &PcdHeader,
     ) -> Result<()> {
         for point in cloud.iter() {
             // Write x, y, z
@@ -719,7 +809,7 @@ impl RobustPcdWriter {
     fn write_binary_data<W: Write>(
         writer: &mut W,
         cloud: &PointCloud<Point3f>,
-        _header: &PcdHeader
+        _header: &PcdHeader,
     ) -> Result<()> {
         for point in cloud.iter() {
             // Write x, y, z as f32 little endian
