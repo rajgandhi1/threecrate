@@ -1,8 +1,8 @@
 //! GPU-accelerated nearest neighbor search
 
-use threecrate_core::{Point3f, Result, Error};
 use crate::GpuContext;
 use bytemuck::{Pod, Zeroable};
+use threecrate_core::{Error, Point3f, Result};
 
 /// Parameters for nearest neighbor search
 #[repr(C)]
@@ -112,26 +112,29 @@ impl GpuContext {
         if points.is_empty() || query_points.is_empty() {
             return Ok(vec![Vec::new(); query_points.len()]);
         }
-        
+
         let k = k.min(32).max(1); // Limit k to reasonable bounds
-        
+
         // Convert points to GPU format with proper alignment
         let gpu_points: Vec<GpuPoint> = points
             .iter()
-            .map(|p| GpuPoint { position: [p.x, p.y, p.z], _padding: 0.0 })
+            .map(|p| GpuPoint {
+                position: [p.x, p.y, p.z],
+                _padding: 0.0,
+            })
             .collect();
-            
+
         let gpu_query_points: Vec<GpuPoint> = query_points
             .iter()
-            .map(|p| GpuPoint { position: [p.x, p.y, p.z], _padding: 0.0 })
+            .map(|p| GpuPoint {
+                position: [p.x, p.y, p.z],
+                _padding: 0.0,
+            })
             .collect();
 
         // Create buffers
-        let points_buffer = self.create_buffer_init(
-            "Points Buffer",
-            &gpu_points,
-            wgpu::BufferUsages::STORAGE,
-        );
+        let points_buffer =
+            self.create_buffer_init("Points Buffer", &gpu_points, wgpu::BufferUsages::STORAGE);
 
         let query_buffer = self.create_buffer_init(
             "Query Points Buffer",
@@ -152,11 +155,8 @@ impl GpuContext {
             _padding: 0,
         };
 
-        let params_buffer = self.create_buffer_init(
-            "Params Buffer",
-            &[params],
-            wgpu::BufferUsages::UNIFORM,
-        );
+        let params_buffer =
+            self.create_buffer_init("Params Buffer", &[params], wgpu::BufferUsages::UNIFORM);
 
         // Create shader with MAX_K constant
         let shader_source = NEAREST_NEIGHBOR_SHADER.replace("MAX_K", &k.to_string());
@@ -210,18 +210,22 @@ impl GpuContext {
         );
 
         // Create compute pipeline
-        let pipeline = self.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("Nearest Neighbor Pipeline"),
-            layout: Some(&self.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("Nearest Neighbor Pipeline Layout"),
-                bind_group_layouts: &[Some(&bind_group_layout)],
-                immediate_size: 0,
-            })),
-            module: &shader,
-            entry_point: Some("main"),
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-            cache: None,
-        });
+        let pipeline = self
+            .device
+            .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("Nearest Neighbor Pipeline"),
+                layout: Some(&self.device.create_pipeline_layout(
+                    &wgpu::PipelineLayoutDescriptor {
+                        label: Some("Nearest Neighbor Pipeline Layout"),
+                        bind_group_layouts: &[Some(&bind_group_layout)],
+                        immediate_size: 0,
+                    },
+                )),
+                module: &shader,
+                entry_point: Some("main"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                cache: None,
+            });
 
         // Create bind group
         let bind_group = self.create_bind_group(
@@ -248,9 +252,11 @@ impl GpuContext {
         );
 
         // Execute compute shader
-        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Nearest Neighbor Encoder"),
-        });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Nearest Neighbor Encoder"),
+            });
 
         {
             let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -293,7 +299,7 @@ impl GpuContext {
         if let Some(Ok(())) = receiver.receive().await {
             let data = buffer_slice.get_mapped_range();
             let raw_neighbors: Vec<[f32; 2]> = bytemuck::cast_slice(&data).to_vec();
-            
+
             let mut results = Vec::with_capacity(query_points.len());
             for i in 0..query_points.len() {
                 let mut neighbors = Vec::with_capacity(k);
@@ -303,7 +309,7 @@ impl GpuContext {
                         let neighbor = raw_neighbors[idx];
                         let point_idx = neighbor[0] as usize;
                         let distance = neighbor[1];
-                        
+
                         if point_idx < points.len() && distance < max_distance {
                             neighbors.push((point_idx, distance));
                         }
@@ -311,10 +317,10 @@ impl GpuContext {
                 }
                 results.push(neighbors);
             }
-            
+
             drop(data);
             staging_buffer.unmap();
-            
+
             Ok(results)
         } else {
             Err(Error::Gpu("Failed to read GPU results".to_string()))
@@ -329,7 +335,9 @@ pub async fn gpu_find_k_nearest(
     query: &Point3f,
     k: usize,
 ) -> Result<Vec<(usize, f32)>> {
-    let results = gpu_context.find_k_nearest_neighbors(points, &[*query], k, f32::INFINITY).await?;
+    let results = gpu_context
+        .find_k_nearest_neighbors(points, &[*query], k, f32::INFINITY)
+        .await?;
     Ok(results.into_iter().next().unwrap_or_default())
 }
 
@@ -340,7 +348,9 @@ pub async fn gpu_find_k_nearest_batch(
     query_points: &[Point3f],
     k: usize,
 ) -> Result<Vec<Vec<(usize, f32)>>> {
-    gpu_context.find_k_nearest_neighbors(points, query_points, k, f32::INFINITY).await
+    gpu_context
+        .find_k_nearest_neighbors(points, query_points, k, f32::INFINITY)
+        .await
 }
 
 /// GPU-accelerated radius-based nearest neighbor search
@@ -350,7 +360,9 @@ pub async fn gpu_find_radius_neighbors(
     query: &Point3f,
     radius: f32,
 ) -> Result<Vec<(usize, f32)>> {
-    let results = gpu_context.find_k_nearest_neighbors(points, &[*query], 32, radius).await?;
+    let results = gpu_context
+        .find_k_nearest_neighbors(points, &[*query], 32, radius)
+        .await?;
     Ok(results.into_iter().next().unwrap_or_default())
 }
 
@@ -358,8 +370,8 @@ pub async fn gpu_find_radius_neighbors(
 mod tests {
     use super::*;
     use crate::device::GpuContext;
-    use threecrate_core::Point3f;
     use approx::assert_relative_eq;
+    use threecrate_core::Point3f;
 
     /// Try to create a GPU context, return None if not available
     async fn try_create_gpu_context() -> Option<GpuContext> {
@@ -392,13 +404,13 @@ mod tests {
 
             let points = create_test_points();
             let query = Point3f::new(0.1, 0.1, 0.1);
-            
+
             let neighbors = gpu_find_k_nearest(&gpu, &points, &query, 3).await.unwrap();
-            
+
             assert_eq!(neighbors.len(), 3);
             assert_eq!(neighbors[0].0, 0); // Closest should be origin
             assert!(neighbors[0].1 < 0.2); // Distance should be small
-            
+
             println!("✓ GPU single nearest neighbor test passed");
         });
     }
@@ -411,23 +423,22 @@ mod tests {
             };
 
             let points = create_test_points();
-            let queries = vec![
-                Point3f::new(0.1, 0.1, 0.1),
-                Point3f::new(0.9, 0.1, 0.1),
-            ];
-            
-            let results = gpu_find_k_nearest_batch(&gpu, &points, &queries, 2).await.unwrap();
-            
+            let queries = vec![Point3f::new(0.1, 0.1, 0.1), Point3f::new(0.9, 0.1, 0.1)];
+
+            let results = gpu_find_k_nearest_batch(&gpu, &points, &queries, 2)
+                .await
+                .unwrap();
+
             assert_eq!(results.len(), 2);
             assert_eq!(results[0].len(), 2);
             assert_eq!(results[1].len(), 2);
-            
+
             // First query should find origin as closest
             assert_eq!(results[0][0].0, 0);
-            
+
             // Second query should find (1,0,0) as closest
             assert_eq!(results[1][0].0, 1);
-            
+
             println!("✓ GPU batch nearest neighbor test passed");
         });
     }
@@ -442,18 +453,23 @@ mod tests {
             let points = create_test_points();
             let query = Point3f::new(0.0, 0.0, 0.0);
             let radius = 1.5;
-            
-            let neighbors = gpu_find_radius_neighbors(&gpu, &points, &query, radius).await.unwrap();
-            
+
+            let neighbors = gpu_find_radius_neighbors(&gpu, &points, &query, radius)
+                .await
+                .unwrap();
+
             // Should find points within radius
             assert!(!neighbors.is_empty());
-            
+
             // All distances should be within radius
             for (_, distance) in &neighbors {
                 assert!(*distance <= radius);
             }
-            
-            println!("✓ GPU radius neighbors test passed: {} neighbors found", neighbors.len());
+
+            println!(
+                "✓ GPU radius neighbors test passed: {} neighbors found",
+                neighbors.len()
+            );
         });
     }
 
@@ -466,15 +482,15 @@ mod tests {
 
             let points = create_test_points();
             let query = Point3f::new(0.5, 0.5, 0.5);
-            
+
             let neighbors = gpu_find_k_nearest(&gpu, &points, &query, 1).await.unwrap();
-            
+
             assert_eq!(neighbors.len(), 1);
-            
+
             // Manually verify the nearest neighbor
             let mut min_dist = f32::INFINITY;
             let mut min_idx = 0;
-            
+
             for (i, point) in points.iter().enumerate() {
                 let dist = (query - *point).magnitude();
                 if dist < min_dist {
@@ -482,11 +498,11 @@ mod tests {
                     min_idx = i;
                 }
             }
-            
+
             assert_eq!(neighbors[0].0, min_idx);
             assert_relative_eq!(neighbors[0].1, min_dist, epsilon = 0.001);
-            
+
             println!("✓ GPU nearest neighbor accuracy test passed");
         });
     }
-} 
+}

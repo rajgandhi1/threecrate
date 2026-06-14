@@ -1,6 +1,8 @@
 // Test script to verify the complete marching cubes implementation
 use threecrate_core::Point3f;
-use threecrate_reconstruction::marching_cubes::{create_sphere_volume, marching_cubes, MarchingCubes, MarchingCubesConfig};
+use threecrate_reconstruction::marching_cubes::{
+    create_sphere_volume, marching_cubes, MarchingCubes, MarchingCubesConfig,
+};
 
 fn main() {
     println!("Testing Complete Marching Cubes Implementation");
@@ -78,8 +80,12 @@ fn main() {
     for iso_level in [-0.2, -0.1, 0.0, 0.1, 0.2] {
         match marching_cubes(&sphere_grid, iso_level) {
             Ok(mesh) => {
-                println!("  - iso_level {:.1}: {} vertices, {} faces",
-                    iso_level, mesh.vertex_count(), mesh.face_count());
+                println!(
+                    "  - iso_level {:.1}: {} vertices, {} faces",
+                    iso_level,
+                    mesh.vertex_count(),
+                    mesh.face_count()
+                );
             }
             Err(_) => {
                 println!("  - iso_level {:.1}: No surface found", iso_level);

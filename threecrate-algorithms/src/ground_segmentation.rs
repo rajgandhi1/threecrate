@@ -90,7 +90,9 @@ pub struct GroundSegmentationResult {
 fn validate_config(cfg: &PatchworkConfig) -> Result<()> {
     let nz = cfg.num_rings_per_zone.len();
     if nz == 0 {
-        return Err(Error::InvalidData("num_rings_per_zone must be non-empty".into()));
+        return Err(Error::InvalidData(
+            "num_rings_per_zone must be non-empty".into(),
+        ));
     }
     if cfg.zone_radii.len() != nz + 1 {
         return Err(Error::InvalidData(
@@ -103,16 +105,22 @@ fn validate_config(cfg: &PatchworkConfig) -> Result<()> {
         ));
     }
     if cfg.zone_radii.windows(2).any(|w| w[0] >= w[1]) {
-        return Err(Error::InvalidData("zone_radii must be strictly increasing".into()));
+        return Err(Error::InvalidData(
+            "zone_radii must be strictly increasing".into(),
+        ));
     }
     if cfg.dist_threshold <= 0.0 {
         return Err(Error::InvalidData("dist_threshold must be positive".into()));
     }
     if cfg.num_seed_points == 0 {
-        return Err(Error::InvalidData("num_seed_points must be at least 1".into()));
+        return Err(Error::InvalidData(
+            "num_seed_points must be at least 1".into(),
+        ));
     }
     if cfg.uprightness_threshold <= 0.0 || cfg.uprightness_threshold > 1.0 {
-        return Err(Error::InvalidData("uprightness_threshold must be in (0, 1]".into()));
+        return Err(Error::InvalidData(
+            "uprightness_threshold must be in (0, 1]".into(),
+        ));
     }
     Ok(())
 }
@@ -140,7 +148,11 @@ fn bucket_points(
     let mut patches: Vec<Vec<Vec<Vec<usize>>>> = (0..cfg.num_rings_per_zone.len())
         .map(|z| {
             (0..cfg.num_rings_per_zone[z])
-                .map(|_| (0..cfg.num_sectors_per_zone[z]).map(|_| Vec::new()).collect())
+                .map(|_| {
+                    (0..cfg.num_sectors_per_zone[z])
+                        .map(|_| Vec::new())
+                        .collect()
+                })
                 .collect()
         })
         .collect();
@@ -162,16 +174,14 @@ fn bucket_points(
         let r_inner = cfg.zone_radii[zone];
         let r_outer = cfg.zone_radii[zone + 1];
         let ring_width = (r_outer - r_inner) / cfg.num_rings_per_zone[zone] as f32;
-        let ring = (((r - r_inner) / ring_width) as usize)
-            .min(cfg.num_rings_per_zone[zone] - 1);
+        let ring = (((r - r_inner) / ring_width) as usize).min(cfg.num_rings_per_zone[zone] - 1);
 
         let mut theta = p.y.atan2(p.x);
         if theta < 0.0 {
             theta += 2.0 * PI;
         }
         let sector_width = 2.0 * PI / cfg.num_sectors_per_zone[zone] as f32;
-        let sector = ((theta / sector_width) as usize)
-            .min(cfg.num_sectors_per_zone[zone] - 1);
+        let sector = ((theta / sector_width) as usize).min(cfg.num_sectors_per_zone[zone] - 1);
 
         patches[zone][ring][sector].push(idx);
     }
@@ -389,7 +399,11 @@ pub fn patchwork_plus_plus(
         }
     }
 
-    Ok(GroundSegmentationResult { ground, nonground, labels })
+    Ok(GroundSegmentationResult {
+        ground,
+        nonground,
+        labels,
+    })
 }
 
 /// Convenience wrapper using default configuration with a given sensor height.
@@ -397,7 +411,10 @@ pub fn segment_ground(
     cloud: &PointCloud<Point3f>,
     sensor_height: f32,
 ) -> Result<GroundSegmentationResult> {
-    let config = PatchworkConfig { sensor_height, ..Default::default() };
+    let config = PatchworkConfig {
+        sensor_height,
+        ..Default::default()
+    };
     patchwork_plus_plus(cloud, config)
 }
 

@@ -3,8 +3,10 @@
 //! Demonstrates union, intersection, and difference on closed triangle meshes
 //! using BSP-tree CSG, as implemented for issue #96.
 
-use threecrate_core::{TriangleMesh, Point3f};
-use threecrate_algorithms::{mesh_union, mesh_intersection, mesh_difference, mesh_boolean, BooleanOp};
+use threecrate_algorithms::{
+    mesh_boolean, mesh_difference, mesh_intersection, mesh_union, BooleanOp,
+};
+use threecrate_core::{Point3f, TriangleMesh};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Mesh Boolean Operations Example ===\n");
@@ -12,28 +14,52 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cube_a = make_box(Point3f::new(0.0, 0.0, 0.0), Point3f::new(2.0, 2.0, 2.0));
     let cube_b = make_box(Point3f::new(1.0, 1.0, 1.0), Point3f::new(3.0, 3.0, 3.0));
 
-    println!("Cube A: {} verts, {} faces", cube_a.vertex_count(), cube_a.face_count());
-    println!("Cube B: {} verts, {} faces", cube_b.vertex_count(), cube_b.face_count());
+    println!(
+        "Cube A: {} verts, {} faces",
+        cube_a.vertex_count(),
+        cube_a.face_count()
+    );
+    println!(
+        "Cube B: {} verts, {} faces",
+        cube_b.vertex_count(),
+        cube_b.face_count()
+    );
     println!("(The two cubes overlap in the region [1,2]^3)\n");
 
     // 1. Union
     let union_mesh = mesh_union(&cube_a, &cube_b)?;
     println!("1. Union (A ∪ B):");
-    println!("   {} verts, {} faces", union_mesh.vertex_count(), union_mesh.face_count());
+    println!(
+        "   {} verts, {} faces",
+        union_mesh.vertex_count(),
+        union_mesh.face_count()
+    );
 
     // 2. Intersection
     let isect_mesh = mesh_intersection(&cube_a, &cube_b)?;
     println!("\n2. Intersection (A ∩ B):");
-    println!("   {} verts, {} faces", isect_mesh.vertex_count(), isect_mesh.face_count());
+    println!(
+        "   {} verts, {} faces",
+        isect_mesh.vertex_count(),
+        isect_mesh.face_count()
+    );
 
     // 3. Difference
     let diff_mesh = mesh_difference(&cube_a, &cube_b)?;
     println!("\n3. Difference (A − B):");
-    println!("   {} verts, {} faces", diff_mesh.vertex_count(), diff_mesh.face_count());
+    println!(
+        "   {} verts, {} faces",
+        diff_mesh.vertex_count(),
+        diff_mesh.face_count()
+    );
 
     // 4. Via the unified BooleanOp dispatch
     println!("\n4. Via mesh_boolean() dispatch:");
-    for op in [BooleanOp::Union, BooleanOp::Intersection, BooleanOp::Difference] {
+    for op in [
+        BooleanOp::Union,
+        BooleanOp::Intersection,
+        BooleanOp::Difference,
+    ] {
         let result = mesh_boolean(&cube_a, &cube_b, op)?;
         println!("   {:?}: {} faces", op, result.face_count());
     }
@@ -44,16 +70,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let u = mesh_union(&cube_a, &far_b)?;
     let i = mesh_intersection(&cube_a, &far_b)?;
     let d = mesh_difference(&cube_a, &far_b)?;
-    println!("   Union:        {} faces (both boxes preserved)", u.face_count());
-    println!("   Intersection: {} faces (empty – no overlap)", i.face_count());
+    println!(
+        "   Union:        {} faces (both boxes preserved)",
+        u.face_count()
+    );
+    println!(
+        "   Intersection: {} faces (empty – no overlap)",
+        i.face_count()
+    );
     println!("   Difference:   {} faces (A unchanged)", d.face_count());
 
     // 6. Empty mesh edge cases
     println!("\n6. Empty mesh edge cases:");
     let empty = TriangleMesh::new();
-    println!("   union(empty, A):        {} faces", mesh_union(&empty, &cube_a)?.face_count());
-    println!("   intersection(empty, A): {} faces", mesh_intersection(&empty, &cube_a)?.face_count());
-    println!("   difference(A, empty):   {} faces", mesh_difference(&cube_a, &empty)?.face_count());
+    println!(
+        "   union(empty, A):        {} faces",
+        mesh_union(&empty, &cube_a)?.face_count()
+    );
+    println!(
+        "   intersection(empty, A): {} faces",
+        mesh_intersection(&empty, &cube_a)?.face_count()
+    );
+    println!(
+        "   difference(A, empty):   {} faces",
+        mesh_difference(&cube_a, &empty)?.face_count()
+    );
 
     println!("\n=== Example completed successfully! ===");
     Ok(())
@@ -74,12 +115,18 @@ fn make_box(min: Point3f, max: Point3f) -> TriangleMesh {
         Point3f::new(x0, y1, z1), // 7
     ];
     let faces = vec![
-        [0, 2, 1], [0, 3, 2], // bottom
-        [4, 5, 6], [4, 6, 7], // top
-        [0, 1, 5], [0, 5, 4], // front
-        [3, 7, 6], [3, 6, 2], // back
-        [0, 4, 7], [0, 7, 3], // left
-        [1, 2, 6], [1, 6, 5], // right
+        [0, 2, 1],
+        [0, 3, 2], // bottom
+        [4, 5, 6],
+        [4, 6, 7], // top
+        [0, 1, 5],
+        [0, 5, 4], // front
+        [3, 7, 6],
+        [3, 6, 2], // back
+        [0, 4, 7],
+        [0, 7, 3], // left
+        [1, 2, 6],
+        [1, 6, 5], // right
     ];
     TriangleMesh::from_vertices_and_faces(verts, faces)
 }

@@ -25,8 +25,8 @@
 //! `0xAARRGGBB`.  Alpha is silently dropped when storing into `[u8; 3]`.
 
 use threecrate_core::{
-    ColoredNormalPoint3f, ColoredPoint3f, NormalPoint3f, OrganizedPointCloud, Point3f, PointCloud,
-    Result, Vector3f, Error,
+    ColoredNormalPoint3f, ColoredPoint3f, Error, NormalPoint3f, OrganizedPointCloud, Point3f,
+    PointCloud, Result, Vector3f,
 };
 
 // ---------------------------------------------------------------------------
@@ -111,29 +111,55 @@ fn read_field_f64(data: &[u8], base: usize, field: &PointField, big: bool) -> Re
         2 => Ok(data[off] as f64),
         3 => {
             let b: [u8; 2] = data[off..off + 2].try_into().unwrap();
-            Ok(if big { i16::from_be_bytes(b) } else { i16::from_le_bytes(b) } as f64)
+            Ok(if big {
+                i16::from_be_bytes(b)
+            } else {
+                i16::from_le_bytes(b)
+            } as f64)
         }
         4 => {
             let b: [u8; 2] = data[off..off + 2].try_into().unwrap();
-            Ok(if big { u16::from_be_bytes(b) } else { u16::from_le_bytes(b) } as f64)
+            Ok(if big {
+                u16::from_be_bytes(b)
+            } else {
+                u16::from_le_bytes(b)
+            } as f64)
         }
         5 => {
             let b: [u8; 4] = data[off..off + 4].try_into().unwrap();
-            Ok(if big { i32::from_be_bytes(b) } else { i32::from_le_bytes(b) } as f64)
+            Ok(if big {
+                i32::from_be_bytes(b)
+            } else {
+                i32::from_le_bytes(b)
+            } as f64)
         }
         6 => {
             let b: [u8; 4] = data[off..off + 4].try_into().unwrap();
-            Ok(if big { u32::from_be_bytes(b) } else { u32::from_le_bytes(b) } as f64)
+            Ok(if big {
+                u32::from_be_bytes(b)
+            } else {
+                u32::from_le_bytes(b)
+            } as f64)
         }
         7 => {
             let b: [u8; 4] = data[off..off + 4].try_into().unwrap();
-            Ok(if big { f32::from_be_bytes(b) } else { f32::from_le_bytes(b) } as f64)
+            Ok(if big {
+                f32::from_be_bytes(b)
+            } else {
+                f32::from_le_bytes(b)
+            } as f64)
         }
         8 => {
             let b: [u8; 8] = data[off..off + 8].try_into().unwrap();
-            Ok(if big { f64::from_be_bytes(b) } else { f64::from_le_bytes(b) })
+            Ok(if big {
+                f64::from_be_bytes(b)
+            } else {
+                f64::from_le_bytes(b)
+            })
         }
-        d => Err(Error::InvalidData(format!("unknown PointField datatype {d}"))),
+        d => Err(Error::InvalidData(format!(
+            "unknown PointField datatype {d}"
+        ))),
     }
 }
 
@@ -145,12 +171,20 @@ fn read_rgb_packed(data: &[u8], base: usize, field: &PointField, big: bool) -> R
         7 => {
             let b: [u8; 4] = data[off..off + 4].try_into().unwrap();
             // Reinterpret the float32 bits as uint32 — do NOT do arithmetic conversion.
-            let raw = if big { u32::from_be_bytes(b) } else { u32::from_le_bytes(b) };
+            let raw = if big {
+                u32::from_be_bytes(b)
+            } else {
+                u32::from_le_bytes(b)
+            };
             Ok(raw)
         }
         6 => {
             let b: [u8; 4] = data[off..off + 4].try_into().unwrap();
-            Ok(if big { u32::from_be_bytes(b) } else { u32::from_le_bytes(b) })
+            Ok(if big {
+                u32::from_be_bytes(b)
+            } else {
+                u32::from_le_bytes(b)
+            })
         }
         d => Err(Error::InvalidData(format!(
             "rgb/rgba field has unsupported datatype {d} (expected 6=uint32 or 7=float32)"
@@ -224,9 +258,7 @@ pub fn pointcloud2_to_colored(
         .ok_or_else(|| Error::InvalidData("PointCloud2 missing field 'z'".into()))?;
     let cf = find_field(&info.fields, "rgb")
         .or_else(|| find_field(&info.fields, "rgba"))
-        .ok_or_else(|| {
-            Error::InvalidData("PointCloud2 missing 'rgb' or 'rgba' field".into())
-        })?;
+        .ok_or_else(|| Error::InvalidData("PointCloud2 missing 'rgb' or 'rgba' field".into()))?;
 
     let ps = info.point_step as usize;
     let big = info.is_bigendian;
@@ -326,9 +358,7 @@ pub fn pointcloud2_to_colored_normals(
         .ok_or_else(|| Error::InvalidData("PointCloud2 missing field 'normal_z'".into()))?;
     let cf = find_field(&info.fields, "rgb")
         .or_else(|| find_field(&info.fields, "rgba"))
-        .ok_or_else(|| {
-            Error::InvalidData("PointCloud2 missing 'rgb' or 'rgba' field".into())
-        })?;
+        .ok_or_else(|| Error::InvalidData("PointCloud2 missing 'rgb' or 'rgba' field".into()))?;
 
     let ps = info.point_step as usize;
     let big = info.is_bigendian;
@@ -428,11 +458,7 @@ pub fn organized_xyz_to_pointcloud2(cloud: &OrganizedPointCloud<Point3f>) -> Poi
     }
     PointCloud2Data {
         info: PointCloud2Info {
-            fields: vec![
-                make_field("x", 0),
-                make_field("y", 4),
-                make_field("z", 8),
-            ],
+            fields: vec![make_field("x", 0), make_field("y", 4), make_field("z", 8)],
             point_step,
             row_step,
             width,
@@ -449,7 +475,12 @@ pub fn organized_xyz_to_pointcloud2(cloud: &OrganizedPointCloud<Point3f>) -> Poi
 // ---------------------------------------------------------------------------
 
 fn make_field(name: &str, offset: u32) -> PointField {
-    PointField { name: name.into(), offset, datatype: 7, count: 1 }
+    PointField {
+        name: name.into(),
+        offset,
+        datatype: 7,
+        count: 1,
+    }
 }
 
 fn make_info(fields: Vec<PointField>, point_step: u32, n: usize) -> PointCloud2Info {
@@ -561,9 +592,7 @@ pub fn normals_to_pointcloud2(cloud: &PointCloud<NormalPoint3f>) -> PointCloud2D
 ///
 /// Output fields: `x`(0), `y`(4), `z`(8), `normal_x`(12), `normal_y`(16),
 /// `normal_z`(20), `rgb`(24).  `point_step` = 28.
-pub fn colored_normals_to_pointcloud2(
-    cloud: &PointCloud<ColoredNormalPoint3f>,
-) -> PointCloud2Data {
+pub fn colored_normals_to_pointcloud2(cloud: &PointCloud<ColoredNormalPoint3f>) -> PointCloud2Data {
     let n = cloud.len();
     let point_step: u32 = 28;
     let mut data = Vec::with_capacity(n * point_step as usize);
@@ -608,9 +637,24 @@ mod tests {
     fn xyz_fields(point_step: u32) -> PointCloud2Info {
         PointCloud2Info {
             fields: vec![
-                PointField { name: "x".into(), offset: 0, datatype: 7, count: 1 },
-                PointField { name: "y".into(), offset: 4, datatype: 7, count: 1 },
-                PointField { name: "z".into(), offset: 8, datatype: 7, count: 1 },
+                PointField {
+                    name: "x".into(),
+                    offset: 0,
+                    datatype: 7,
+                    count: 1,
+                },
+                PointField {
+                    name: "y".into(),
+                    offset: 4,
+                    datatype: 7,
+                    count: 1,
+                },
+                PointField {
+                    name: "z".into(),
+                    offset: 8,
+                    datatype: 7,
+                    count: 1,
+                },
             ],
             point_step,
             row_step: point_step * 3,
@@ -682,9 +726,24 @@ mod tests {
 
         let info = PointCloud2Info {
             fields: vec![
-                PointField { name: "x".into(), offset: 0, datatype: 7, count: 1 },
-                PointField { name: "y".into(), offset: 4, datatype: 7, count: 1 },
-                PointField { name: "z".into(), offset: 8, datatype: 7, count: 1 },
+                PointField {
+                    name: "x".into(),
+                    offset: 0,
+                    datatype: 7,
+                    count: 1,
+                },
+                PointField {
+                    name: "y".into(),
+                    offset: 4,
+                    datatype: 7,
+                    count: 1,
+                },
+                PointField {
+                    name: "z".into(),
+                    offset: 8,
+                    datatype: 7,
+                    count: 1,
+                },
             ],
             point_step: 12,
             row_step: 12,
@@ -734,8 +793,14 @@ mod tests {
     #[test]
     fn rgb_round_trip() {
         let pts = vec![
-            ColoredPoint3f { position: Point3f::new(0.0, 0.0, 0.0), color: [255, 128, 0] },
-            ColoredPoint3f { position: Point3f::new(1.0, 1.0, 1.0), color: [0, 64, 200] },
+            ColoredPoint3f {
+                position: Point3f::new(0.0, 0.0, 0.0),
+                color: [255, 128, 0],
+            },
+            ColoredPoint3f {
+                position: Point3f::new(1.0, 1.0, 1.0),
+                color: [0, 64, 200],
+            },
         ];
         let cloud = PointCloud::from_points(pts.clone());
         let msg = colored_to_pointcloud2(&cloud);
@@ -775,7 +840,10 @@ mod tests {
         let result = pointcloud2_to_colored(&data, &info);
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
-        assert!(msg.contains("rgb") || msg.contains("rgba"), "unexpected error: {msg}");
+        assert!(
+            msg.contains("rgb") || msg.contains("rgba"),
+            "unexpected error: {msg}"
+        );
     }
 
     // ---- float64 xyz field ----
@@ -789,9 +857,24 @@ mod tests {
 
         let info = PointCloud2Info {
             fields: vec![
-                PointField { name: "x".into(), offset: 0, datatype: 8, count: 1 },
-                PointField { name: "y".into(), offset: 8, datatype: 8, count: 1 },
-                PointField { name: "z".into(), offset: 16, datatype: 8, count: 1 },
+                PointField {
+                    name: "x".into(),
+                    offset: 0,
+                    datatype: 8,
+                    count: 1,
+                },
+                PointField {
+                    name: "y".into(),
+                    offset: 8,
+                    datatype: 8,
+                    count: 1,
+                },
+                PointField {
+                    name: "z".into(),
+                    offset: 16,
+                    datatype: 8,
+                    count: 1,
+                },
             ],
             point_step: 24,
             row_step: 24,
@@ -847,10 +930,30 @@ mod tests {
 
         let info = PointCloud2Info {
             fields: vec![
-                PointField { name: "x".into(), offset: 0, datatype: 7, count: 1 },
-                PointField { name: "y".into(), offset: 4, datatype: 7, count: 1 },
-                PointField { name: "z".into(), offset: 8, datatype: 7, count: 1 },
-                PointField { name: "intensity".into(), offset: 16, datatype: 7, count: 1 },
+                PointField {
+                    name: "x".into(),
+                    offset: 0,
+                    datatype: 7,
+                    count: 1,
+                },
+                PointField {
+                    name: "y".into(),
+                    offset: 4,
+                    datatype: 7,
+                    count: 1,
+                },
+                PointField {
+                    name: "z".into(),
+                    offset: 8,
+                    datatype: 7,
+                    count: 1,
+                },
+                PointField {
+                    name: "intensity".into(),
+                    offset: 16,
+                    datatype: 7,
+                    count: 1,
+                },
             ],
             point_step: 20,
             row_step: 20,

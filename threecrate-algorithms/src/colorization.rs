@@ -25,7 +25,7 @@
 
 use nalgebra::Isometry3;
 use rayon::prelude::*;
-use threecrate_core::{ColoredPoint3f, Point3f, PointCloud, Result, Error};
+use threecrate_core::{ColoredPoint3f, Error, Point3f, PointCloud, Result};
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -62,10 +62,17 @@ impl<'a> RgbImageView<'a> {
         if data.len() < expected {
             return Err(Error::InvalidData(format!(
                 "RgbImageView: buffer too small — expected {} bytes for {}×{} RGB image, got {}",
-                expected, width, height, data.len()
+                expected,
+                width,
+                height,
+                data.len()
             )));
         }
-        Ok(Self { data, width, height })
+        Ok(Self {
+            data,
+            width,
+            height,
+        })
     }
 
     /// Sample pixel color using nearest-neighbour interpolation.
@@ -220,7 +227,13 @@ pub fn colorize_point_cloud(
         .map(|point| {
             let color = project_and_sample(point, image, intrinsics, world_to_camera, config);
             let hit = color != config.default_color;
-            (ColoredPoint3f { position: *point, color }, hit)
+            (
+                ColoredPoint3f {
+                    position: *point,
+                    color,
+                },
+                hit,
+            )
         })
         .collect();
 
@@ -228,7 +241,11 @@ pub fn colorize_point_cloud(
     let uncolored_count = colored_points.len() - colored_count;
     let cloud = PointCloud::from_points(colored_points.into_iter().map(|(p, _)| p).collect());
 
-    Ok(ColorizationResult { cloud, colored_count, uncolored_count })
+    Ok(ColorizationResult {
+        cloud,
+        colored_count,
+        uncolored_count,
+    })
 }
 
 /// Colorize a point cloud from multiple registered RGB images.
@@ -259,10 +276,22 @@ pub fn colorize_from_images(
             for (image, intrinsics, world_to_camera) in sources {
                 let color = project_and_sample(point, image, intrinsics, world_to_camera, config);
                 if color != config.default_color {
-                    return (ColoredPoint3f { position: *point, color }, true);
+                    return (
+                        ColoredPoint3f {
+                            position: *point,
+                            color,
+                        },
+                        true,
+                    );
                 }
             }
-            (ColoredPoint3f { position: *point, color: config.default_color }, false)
+            (
+                ColoredPoint3f {
+                    position: *point,
+                    color: config.default_color,
+                },
+                false,
+            )
         })
         .collect();
 
@@ -270,7 +299,11 @@ pub fn colorize_from_images(
     let uncolored_count = colored_points.len() - colored_count;
     let cloud = PointCloud::from_points(colored_points.into_iter().map(|(p, _)| p).collect());
 
-    Ok(ColorizationResult { cloud, colored_count, uncolored_count })
+    Ok(ColorizationResult {
+        cloud,
+        colored_count,
+        uncolored_count,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -318,7 +351,12 @@ mod tests {
 
     fn intrinsics_4x4() -> CameraIntrinsics {
         // For a 4×4 image, place the principal point at the centre (1.5, 1.5).
-        CameraIntrinsics { fx: 2.0, fy: 2.0, cx: 1.5, cy: 1.5 }
+        CameraIntrinsics {
+            fx: 2.0,
+            fy: 2.0,
+            cx: 1.5,
+            cy: 1.5,
+        }
     }
 
     #[test]
@@ -346,7 +384,10 @@ mod tests {
         let pose = identity_pose();
 
         let cloud = PointCloud::from_points(vec![Point3f::new(0.0, 0.0, -1.0)]);
-        let config = ColorizationConfig { default_color: [0, 0, 0], ..Default::default() };
+        let config = ColorizationConfig {
+            default_color: [0, 0, 0],
+            ..Default::default()
+        };
         let result = colorize_point_cloud(&cloud, &image, &intrinsics, &pose, &config).unwrap();
 
         assert_eq!(result.uncolored_count, 1);
@@ -362,7 +403,10 @@ mod tests {
         let pose = identity_pose();
 
         let cloud = PointCloud::from_points(vec![Point3f::new(1000.0, 0.0, 1.0)]);
-        let config = ColorizationConfig { default_color: [1, 2, 3], ..Default::default() };
+        let config = ColorizationConfig {
+            default_color: [1, 2, 3],
+            ..Default::default()
+        };
         let result = colorize_point_cloud(&cloud, &image, &intrinsics, &pose, &config).unwrap();
 
         assert_eq!(result.uncolored_count, 1);
@@ -382,10 +426,7 @@ mod tests {
 
         let cloud = PointCloud::from_points(vec![Point3f::new(0.0, 0.0, 1.0)]);
         let config = ColorizationConfig::default();
-        let sources = vec![
-            (img_red, intrinsics, pose),
-            (img_blue, intrinsics, pose),
-        ];
+        let sources = vec![(img_red, intrinsics, pose), (img_blue, intrinsics, pose)];
         let result = colorize_from_images(&cloud, &sources, &config).unwrap();
         assert_eq!(result.cloud.points[0].color, [255, 0, 0]);
     }
@@ -400,10 +441,8 @@ mod tests {
 
         // Camera at world position (1, 0, 0) looking down +Z.
         // world_to_camera = inverse of camera_to_world
-        let camera_to_world = Isometry3::from_parts(
-            Translation3::new(1.0, 0.0, 0.0),
-            UnitQuaternion::identity(),
-        );
+        let camera_to_world =
+            Isometry3::from_parts(Translation3::new(1.0, 0.0, 0.0), UnitQuaternion::identity());
         let world_to_camera = camera_to_world.inverse();
 
         // A point at (1, 0, 1) is directly in front of this camera.

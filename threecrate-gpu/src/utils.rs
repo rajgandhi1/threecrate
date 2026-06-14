@@ -10,4 +10,4 @@ pub fn create_compute_shader(_device: &wgpu::Device, _source: &str) -> Result<wg
         source: wgpu::ShaderSource::Wgsl(_source.into()),
     });
     Ok(module)
-} 
+}

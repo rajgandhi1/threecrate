@@ -2,11 +2,11 @@
 //!
 //! This example demonstrates basic usage of the threecrate library for point cloud processing.
 
-use threecrate_core::{PointCloud, Point3f, Vector3f};
-use threecrate_algorithms::{icp_point_to_point, icp_point_to_point_default};
-use nalgebra::{Isometry3, UnitQuaternion, Translation3};
-use std::f32::consts::PI;
+use nalgebra::{Isometry3, Translation3, UnitQuaternion};
 use rand::Rng;
+use std::f32::consts::PI;
+use threecrate_algorithms::{icp_point_to_point, icp_point_to_point_default};
+use threecrate_core::{Point3f, PointCloud, Vector3f};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("ThreeCrate Basic Usage Example");
@@ -40,7 +40,7 @@ fn basic_icp_example() -> Result<(), Box<dyn std::error::Error>> {
     // Create simple point clouds
     let mut source = PointCloud::new();
     let mut target = PointCloud::new();
-    
+
     // Create a simple cube pattern
     for x in 0..3 {
         for y in 0..3 {
@@ -62,8 +62,14 @@ fn basic_icp_example() -> Result<(), Box<dyn std::error::Error>> {
     println!("  Converged: {}", result.converged);
     println!("  Iterations: {}", result.iterations);
     println!("  Final MSE: {:.6}", result.mse);
-    println!("  Translation: {:?}", result.transformation.translation.vector);
-    println!("  Rotation angle: {:.6} radians", result.transformation.rotation.angle());
+    println!(
+        "  Translation: {:?}",
+        result.transformation.translation.vector
+    );
+    println!(
+        "  Rotation angle: {:.6} radians",
+        result.transformation.rotation.angle()
+    );
 
     Ok(())
 }
@@ -72,12 +78,16 @@ fn known_transform_example() -> Result<(), Box<dyn std::error::Error>> {
     // Create point clouds with a known transformation
     let mut source = PointCloud::new();
     let mut target = PointCloud::new();
-    
+
     // Known transformation
     let known_translation = Vector3f::new(2.0, -1.0, 0.5);
     let known_rotation = UnitQuaternion::from_axis_angle(&Vector3f::z_axis(), PI / 4.0);
     let known_transform = Isometry3::from_parts(
-        Translation3::new(known_translation.x, known_translation.y, known_translation.z),
+        Translation3::new(
+            known_translation.x,
+            known_translation.y,
+            known_translation.z,
+        ),
         known_rotation,
     );
 
@@ -119,7 +129,7 @@ fn noisy_icp_example() -> Result<(), Box<dyn std::error::Error>> {
     // Create point clouds with noise
     let mut source = PointCloud::new();
     let mut target = PointCloud::new();
-    
+
     let translation = Vector3f::new(1.5, 0.8, 0.3);
     let rotation = UnitQuaternion::from_axis_angle(&Vector3f::y_axis(), 0.2);
     let transform = Isometry3::from_parts(
@@ -179,7 +189,7 @@ fn convergence_example() -> Result<(), Box<dyn std::error::Error>> {
     // Test different convergence thresholds
     let mut source = PointCloud::new();
     let mut target = PointCloud::new();
-    
+
     // Create point clouds that should converge quickly
     for i in 0..100 {
         let point = Point3f::new(i as f32 * 0.1, (i * 2) as f32 * 0.1, 0.0);
@@ -194,17 +204,21 @@ fn convergence_example() -> Result<(), Box<dyn std::error::Error>> {
 
     // Test with different convergence thresholds
     let thresholds = [1e-3, 1e-4, 1e-5, 1e-6];
-    
+
     for &threshold in &thresholds {
         let result = icp_point_to_point(&source, &target, init, 50, threshold, None)?;
-        println!("  Threshold {:.0e}: {} iterations, MSE: {:.6}, Converged: {}", 
-                threshold, result.iterations, result.mse, result.converged);
+        println!(
+            "  Threshold {:.0e}: {} iterations, MSE: {:.6}, Converged: {}",
+            threshold, result.iterations, result.mse, result.converged
+        );
     }
 
     // Test with default parameters
     let result = icp_point_to_point_default(&source, &target, init, 50)?;
-    println!("  Default params: {} iterations, MSE: {:.6}, Converged: {}", 
-            result.iterations, result.mse, result.converged);
+    println!(
+        "  Default params: {} iterations, MSE: {:.6}, Converged: {}",
+        result.iterations, result.mse, result.converged
+    );
 
     Ok(())
-} 
+}

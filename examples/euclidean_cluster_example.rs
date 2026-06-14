@@ -3,12 +3,12 @@
 //! Demonstrates region-growing Euclidean cluster extraction on point clouds
 //! with multiple spatially-separated object blobs, as implemented for issue #95.
 
-use threecrate_core::{PointCloud, Point3f};
+use rand::prelude::*;
+use rand::thread_rng;
 use threecrate_algorithms::{
     extract_euclidean_clusters, extract_euclidean_clusters_parallel, EuclideanClusterConfig,
 };
-use rand::prelude::*;
-use rand::thread_rng;
+use threecrate_core::{Point3f, PointCloud};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Euclidean Cluster Extraction Example ===\n");
@@ -44,7 +44,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let result3 = extract_euclidean_clusters(&cloud3, &config3)?;
 
     println!("   Input points  : {}", cloud3.len());
-    println!("   Clusters found: {} (noise blobs filtered out)", result3.num_clusters());
+    println!(
+        "   Clusters found: {} (noise blobs filtered out)",
+        result3.num_clusters()
+    );
 
     // Example 4: Extract sub-clouds per cluster
     println!("\n4. Sub-cloud extraction per cluster:");
@@ -176,6 +179,10 @@ mod tests {
         let cloud = create_cloud_with_noise_blobs();
         let config = EuclideanClusterConfig::new(0.5, 200, 10_000);
         let result = extract_euclidean_clusters(&cloud, &config).unwrap();
-        assert_eq!(result.num_clusters(), 2, "Only the two large blobs should survive");
+        assert_eq!(
+            result.num_clusters(),
+            2,
+            "Only the two large blobs should survive"
+        );
     }
 }

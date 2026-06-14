@@ -1,8 +1,8 @@
 //! GPU-accelerated ICP
 
-use threecrate_core::{PointCloud, Result, Point3f, Vector3f};
 use crate::GpuContext;
-use nalgebra::{Isometry3, Matrix6, Vector6, UnitQuaternion, Translation3};
+use nalgebra::{Isometry3, Matrix6, Translation3, UnitQuaternion, Vector6};
+use threecrate_core::{Point3f, PointCloud, Result, Vector3f};
 
 const ICP_NEAREST_NEIGHBOR_SHADER: &str = r#"
 @group(0) @binding(0) var<storage, read> source_points: array<vec4<f32>>;
@@ -150,38 +150,40 @@ impl GpuContext {
     /// Execute multiple ICP operations in parallel batches
     pub async fn batch_icp_align(&self, jobs: &[BatchICPJob]) -> Result<Vec<BatchICPResult>> {
         let mut results = Vec::with_capacity(jobs.len());
-        
+
         // Process jobs in parallel batches to optimize GPU utilization
         const BATCH_SIZE: usize = 4; // Adjust based on GPU memory
-        
+
         for batch in jobs.chunks(BATCH_SIZE) {
             let batch_results = self.process_icp_batch(batch).await?;
             results.extend(batch_results);
         }
-        
+
         Ok(results)
     }
-    
+
     /// Process a batch of ICP jobs simultaneously
     async fn process_icp_batch(&self, jobs: &[BatchICPJob]) -> Result<Vec<BatchICPResult>> {
         let mut results = Vec::with_capacity(jobs.len());
-        
+
         // For now, process sequentially with optimized GPU operations
         // Future enhancement: true parallel execution with multiple command buffers
         for job in jobs {
-            let result = self.optimized_icp_align(
-                &job.source,
-                &job.target,
-                job.max_iterations,
-                job.convergence_threshold,
-                job.max_correspondence_distance,
-            ).await?;
+            let result = self
+                .optimized_icp_align(
+                    &job.source,
+                    &job.target,
+                    job.max_iterations,
+                    job.convergence_threshold,
+                    job.max_correspondence_distance,
+                )
+                .await?;
             results.push(result);
         }
-        
+
         Ok(results)
     }
-    
+
     /// Optimized ICP with GPU-accelerated SVD approximation
     async fn optimized_icp_align(
         &self,
@@ -192,62 +194,68 @@ impl GpuContext {
         max_correspondence_distance: f32,
     ) -> Result<BatchICPResult> {
         if source.is_empty() || target.is_empty() {
-            return Err(threecrate_core::Error::InvalidData("Empty point clouds".to_string()));
+            return Err(threecrate_core::Error::InvalidData(
+                "Empty point clouds".to_string(),
+            ));
         }
 
         let mut current_transform = Isometry3::identity();
         let mut transformed_source = source.clone();
         let mut final_error = f32::INFINITY;
         let mut iterations_used = 0;
-        
+
         for iteration in 0..max_iterations {
             iterations_used = iteration + 1;
-            
+
             // Find correspondences using GPU
-            let correspondences = self.find_correspondences(
-                &transformed_source.points,
-                &target.points,
-                max_correspondence_distance,
-            ).await?;
-            
+            let correspondences = self
+                .find_correspondences(
+                    &transformed_source.points,
+                    &target.points,
+                    max_correspondence_distance,
+                )
+                .await?;
+
             if correspondences.is_empty() {
                 break;
             }
-            
+
             // Compute transformation using GPU-accelerated methods
-            let (transform_delta, error) = self.compute_transformation_gpu(
-                &transformed_source.points, 
-                &target.points, 
-                &correspondences
-            ).await?;
-            
+            let (transform_delta, error) = self
+                .compute_transformation_gpu(
+                    &transformed_source.points,
+                    &target.points,
+                    &correspondences,
+                )
+                .await?;
+
             final_error = error;
-            
+
             // Update current transform
             current_transform = transform_delta * current_transform;
-            
+
             // Transform source points
             transformed_source = source.clone();
             for point in &mut transformed_source.points {
                 *point = current_transform.transform_point(point);
             }
-            
+
             // Check convergence
             let translation_norm = transform_delta.translation.vector.norm();
             let rotation_angle = transform_delta.rotation.angle();
-            
+
             if translation_norm < convergence_threshold && rotation_angle < convergence_threshold {
                 break;
             }
         }
-        
+
         Ok(BatchICPResult {
             transformation: current_transform,
             final_error,
             iterations: iterations_used,
         })
     }
-    
+
     /// GPU-accelerated transformation computation with centroid and covariance calculation
     async fn compute_transformation_gpu(
         &self,
@@ -258,53 +266,54 @@ impl GpuContext {
         if correspondences.is_empty() {
             return Ok((Isometry3::identity(), 0.0));
         }
-        
+
         // Convert to GPU format (vec4 alignment)
-        let source_data: Vec<[f32; 4]> = source_points
-            .iter()
-            .map(|p| [p.x, p.y, p.z, 0.0])
-            .collect();
-            
-        let target_data: Vec<[f32; 4]> = target_points
-            .iter()
-            .map(|p| [p.x, p.y, p.z, 0.0])
-            .collect();
-            
+        let source_data: Vec<[f32; 4]> =
+            source_points.iter().map(|p| [p.x, p.y, p.z, 0.0]).collect();
+
+        let target_data: Vec<[f32; 4]> =
+            target_points.iter().map(|p| [p.x, p.y, p.z, 0.0]).collect();
+
         let correspondence_indices: Vec<u32> = correspondences
             .iter()
             .map(|(_, target_idx, _)| *target_idx as u32)
             .collect();
-        
+
         // Create GPU buffers
-        let source_buffer = self.create_buffer_init("Source Points", &source_data, wgpu::BufferUsages::STORAGE);
-        let target_buffer = self.create_buffer_init("Target Points", &target_data, wgpu::BufferUsages::STORAGE);
-        let correspondence_buffer = self.create_buffer_init("Correspondences", &correspondence_indices, wgpu::BufferUsages::STORAGE);
-        
+        let source_buffer =
+            self.create_buffer_init("Source Points", &source_data, wgpu::BufferUsages::STORAGE);
+        let target_buffer =
+            self.create_buffer_init("Target Points", &target_data, wgpu::BufferUsages::STORAGE);
+        let correspondence_buffer = self.create_buffer_init(
+            "Correspondences",
+            &correspondence_indices,
+            wgpu::BufferUsages::STORAGE,
+        );
+
         // Step 1: Compute centroids on GPU
-        let centroids = self.compute_centroids_gpu(
-            &source_buffer,
-            &target_buffer,
-            &correspondence_buffer,
-            correspondences.len(),
-        ).await?;
-        
+        let centroids = self
+            .compute_centroids_gpu(
+                &source_buffer,
+                &target_buffer,
+                &correspondence_buffer,
+                correspondences.len(),
+            )
+            .await?;
+
         // Step 2: Compute covariance matrix on CPU for stability
-        let covariance = self.compute_covariance_cpu(
-            source_points,
-            target_points,
-            correspondences,
-            &centroids,
-        )?;
-        
+        let covariance =
+            self.compute_covariance_cpu(source_points, target_points, correspondences, &centroids)?;
+
         // Step 3: Perform SVD on CPU (could be moved to GPU with more complex implementation)
         let transformation = self.svd_to_transformation(&covariance, &centroids)?;
-        
+
         // Compute final error
-        let error = correspondences.iter().map(|(_, _, dist)| dist).sum::<f32>() / correspondences.len() as f32;
-        
+        let error = correspondences.iter().map(|(_, _, dist)| dist).sum::<f32>()
+            / correspondences.len() as f32;
+
         Ok((transformation, error))
     }
-    
+
     /// Compute centroids using GPU
     async fn compute_centroids_gpu(
         &self,
@@ -323,50 +332,143 @@ impl GpuContext {
             num_correspondences: num_correspondences as u32,
         };
 
-        let params_buffer = self.create_buffer_init("Centroid Params", &[params], wgpu::BufferUsages::UNIFORM);
-        let centroids_buffer = self.create_buffer("Centroids", 2 * std::mem::size_of::<[f32; 3]>() as u64, wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC);
+        let params_buffer =
+            self.create_buffer_init("Centroid Params", &[params], wgpu::BufferUsages::UNIFORM);
+        let centroids_buffer = self.create_buffer(
+            "Centroids",
+            2 * std::mem::size_of::<[f32; 3]>() as u64,
+            wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        );
 
         let shader = self.create_shader_module("Centroid Computation", ICP_CENTROID_SHADER);
-        
-        let bind_group_layout = self.create_bind_group_layout("Centroid Layout", &[
-            wgpu::BindGroupLayoutEntry { binding: 0, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false, min_binding_size: None }, count: None },
-            wgpu::BindGroupLayoutEntry { binding: 1, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false, min_binding_size: None }, count: None },
-            wgpu::BindGroupLayoutEntry { binding: 2, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false, min_binding_size: None }, count: None },
-            wgpu::BindGroupLayoutEntry { binding: 3, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: false }, has_dynamic_offset: false, min_binding_size: None }, count: None },
-            wgpu::BindGroupLayoutEntry { binding: 4, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None }, count: None },
-        ]);
 
-        let pipeline = self.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("Centroid Pipeline"),
-            layout: Some(&self.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("Centroid Layout"),
-                bind_group_layouts: &[Some(&bind_group_layout)],
-                immediate_size: 0,
-            })),
-            module: &shader,
-            entry_point: Some("main"),
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-            cache: None,
-        });
+        let bind_group_layout = self.create_bind_group_layout(
+            "Centroid Layout",
+            &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        );
 
-        let bind_group = self.create_bind_group("Centroid Bind Group", &bind_group_layout, &[
-            wgpu::BindGroupEntry { binding: 0, resource: source_buffer.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 1, resource: target_buffer.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 2, resource: correspondence_buffer.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 3, resource: centroids_buffer.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 4, resource: params_buffer.as_entire_binding() },
-        ]);
+        let pipeline = self
+            .device
+            .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("Centroid Pipeline"),
+                layout: Some(&self.device.create_pipeline_layout(
+                    &wgpu::PipelineLayoutDescriptor {
+                        label: Some("Centroid Layout"),
+                        bind_group_layouts: &[Some(&bind_group_layout)],
+                        immediate_size: 0,
+                    },
+                )),
+                module: &shader,
+                entry_point: Some("main"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                cache: None,
+            });
 
-        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("Centroid Computation") });
+        let bind_group = self.create_bind_group(
+            "Centroid Bind Group",
+            &bind_group_layout,
+            &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: source_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: target_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: correspondence_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: centroids_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: params_buffer.as_entire_binding(),
+                },
+            ],
+        );
+
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Centroid Computation"),
+            });
         {
-            let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("Centroid Pass"), timestamp_writes: None });
+            let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("Centroid Pass"),
+                timestamp_writes: None,
+            });
             compute_pass.set_pipeline(&pipeline);
             compute_pass.set_bind_group(0, &bind_group, &[]);
             compute_pass.dispatch_workgroups(1, 1, 1);
         }
 
-        let staging_buffer = self.create_buffer("Centroid Staging", 2 * std::mem::size_of::<[f32; 3]>() as u64, wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ);
-        encoder.copy_buffer_to_buffer(&centroids_buffer, 0, &staging_buffer, 0, 2 * std::mem::size_of::<[f32; 3]>() as u64);
+        let staging_buffer = self.create_buffer(
+            "Centroid Staging",
+            2 * std::mem::size_of::<[f32; 3]>() as u64,
+            wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        );
+        encoder.copy_buffer_to_buffer(
+            &centroids_buffer,
+            0,
+            &staging_buffer,
+            0,
+            2 * std::mem::size_of::<[f32; 3]>() as u64,
+        );
         self.queue.submit(std::iter::once(encoder.finish()));
 
         let buffer_slice = staging_buffer.slice(..);
@@ -384,10 +486,12 @@ impl GpuContext {
             staging_buffer.unmap();
             Ok(centroids)
         } else {
-            Err(threecrate_core::Error::Gpu("Failed to read centroid results".to_string()))
+            Err(threecrate_core::Error::Gpu(
+                "Failed to read centroid results".to_string(),
+            ))
         }
     }
-    
+
     /// Compute covariance matrix using GPU (simplified version without atomics for now)
     // CPU covariance as stable fallback
     fn compute_covariance_cpu(
@@ -409,28 +513,38 @@ impl GpuContext {
         }
         Ok(h)
     }
-    
+
     /// Convert covariance matrix to transformation using SVD
-    fn svd_to_transformation(&self, covariance: &nalgebra::Matrix3<f32>, centroids: &[[f32; 3]]) -> Result<Isometry3<f32>> {
-        let source_centroid = nalgebra::Vector3::new(centroids[0][0], centroids[0][1], centroids[0][2]);
-        let target_centroid = nalgebra::Vector3::new(centroids[1][0], centroids[1][1], centroids[1][2]);
-        
+    fn svd_to_transformation(
+        &self,
+        covariance: &nalgebra::Matrix3<f32>,
+        centroids: &[[f32; 3]],
+    ) -> Result<Isometry3<f32>> {
+        let source_centroid =
+            nalgebra::Vector3::new(centroids[0][0], centroids[0][1], centroids[0][2]);
+        let target_centroid =
+            nalgebra::Vector3::new(centroids[1][0], centroids[1][1], centroids[1][2]);
+
         // Compute SVD
         let svd = covariance.svd(true, true);
-        let u = svd.u.ok_or_else(|| threecrate_core::Error::Algorithm("SVD failed".to_string()))?;
-        let v_t = svd.v_t.ok_or_else(|| threecrate_core::Error::Algorithm("SVD failed".to_string()))?;
-        
+        let u = svd
+            .u
+            .ok_or_else(|| threecrate_core::Error::Algorithm("SVD failed".to_string()))?;
+        let v_t = svd
+            .v_t
+            .ok_or_else(|| threecrate_core::Error::Algorithm("SVD failed".to_string()))?;
+
         let mut rotation = v_t.transpose() * u.transpose();
-        
+
         // Ensure proper rotation (det = 1)
         if rotation.determinant() < 0.0 {
             let mut v_corrected = v_t.transpose();
             v_corrected.column_mut(2).scale_mut(-1.0);
             rotation = v_corrected * u.transpose();
         }
-        
+
         let translation = target_centroid - rotation * source_centroid;
-        
+
         Ok(Isometry3::from_parts(
             nalgebra::Translation3::from(translation),
             nalgebra::UnitQuaternion::from_matrix(&rotation),
@@ -446,16 +560,18 @@ impl GpuContext {
         convergence_threshold: f32,
         max_correspondence_distance: f32,
     ) -> Result<Isometry3<f32>> {
-        let result = self.optimized_icp_align(
-            source, 
-            target, 
-            max_iterations, 
-            convergence_threshold, 
-            max_correspondence_distance
-        ).await?;
+        let result = self
+            .optimized_icp_align(
+                source,
+                target,
+                max_iterations,
+                convergence_threshold,
+                max_correspondence_distance,
+            )
+            .await?;
         Ok(result.transformation)
     }
-    
+
     /// Find nearest neighbor correspondences using GPU
     async fn find_correspondences(
         &self,
@@ -464,28 +580,16 @@ impl GpuContext {
         max_distance: f32,
     ) -> Result<Vec<(usize, usize, f32)>> {
         // Convert points to GPU format
-        let source_data: Vec<[f32; 3]> = source_points
-            .iter()
-            .map(|p| [p.x, p.y, p.z])
-            .collect();
-            
-        let target_data: Vec<[f32; 3]> = target_points
-            .iter()
-            .map(|p| [p.x, p.y, p.z])
-            .collect();
+        let source_data: Vec<[f32; 3]> = source_points.iter().map(|p| [p.x, p.y, p.z]).collect();
+
+        let target_data: Vec<[f32; 3]> = target_points.iter().map(|p| [p.x, p.y, p.z]).collect();
 
         // Create buffers
-        let source_buffer = self.create_buffer_init(
-            "Source Points",
-            &source_data,
-            wgpu::BufferUsages::STORAGE,
-        );
+        let source_buffer =
+            self.create_buffer_init("Source Points", &source_data, wgpu::BufferUsages::STORAGE);
 
-        let target_buffer = self.create_buffer_init(
-            "Target Points", 
-            &target_data,
-            wgpu::BufferUsages::STORAGE,
-        );
+        let target_buffer =
+            self.create_buffer_init("Target Points", &target_data, wgpu::BufferUsages::STORAGE);
 
         let correspondences_buffer = self.create_buffer(
             "Correspondences",
@@ -513,15 +617,12 @@ impl GpuContext {
             max_distance,
         };
 
-        let params_buffer = self.create_buffer_init(
-            "ICP Params",
-            &[params],
-            wgpu::BufferUsages::UNIFORM,
-        );
+        let params_buffer =
+            self.create_buffer_init("ICP Params", &[params], wgpu::BufferUsages::UNIFORM);
 
         // Create shader and pipeline
         let shader = self.create_shader_module("ICP Nearest Neighbor", ICP_NEAREST_NEIGHBOR_SHADER);
-        
+
         let bind_group_layout = self.create_bind_group_layout(
             "ICP Correspondence",
             &[
@@ -578,18 +679,22 @@ impl GpuContext {
             ],
         );
 
-        let pipeline = self.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("ICP Correspondence"),
-            layout: Some(&self.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("ICP Pipeline Layout"),
-                bind_group_layouts: &[Some(&bind_group_layout)],
-                immediate_size: 0,
-            })),
-            module: &shader,
-            entry_point: Some("main"),
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-            cache: None,
-        });
+        let pipeline = self
+            .device
+            .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("ICP Correspondence"),
+                layout: Some(&self.device.create_pipeline_layout(
+                    &wgpu::PipelineLayoutDescriptor {
+                        label: Some("ICP Pipeline Layout"),
+                        bind_group_layouts: &[Some(&bind_group_layout)],
+                        immediate_size: 0,
+                    },
+                )),
+                module: &shader,
+                entry_point: Some("main"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                cache: None,
+            });
 
         let bind_group = self.create_bind_group(
             "ICP Correspondence",
@@ -619,9 +724,11 @@ impl GpuContext {
         );
 
         // Execute compute shader
-        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("ICP Correspondence"),
-        });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("ICP Correspondence"),
+            });
 
         {
             let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -668,10 +775,10 @@ impl GpuContext {
         // Map and read correspondences
         let corr_slice = correspondences_staging.slice(..);
         let dist_slice = distances_staging.slice(..);
-        
+
         let (corr_sender, corr_receiver) = futures_intrusive::channel::shared::oneshot_channel();
         let (dist_sender, dist_receiver) = futures_intrusive::channel::shared::oneshot_channel();
-        
+
         corr_slice.map_async(wgpu::MapMode::Read, move |v| corr_sender.send(v).unwrap());
         dist_slice.map_async(wgpu::MapMode::Read, move |v| dist_sender.send(v).unwrap());
 
@@ -680,13 +787,15 @@ impl GpuContext {
             timeout: None,
         });
 
-        if let (Some(Ok(())), Some(Ok(()))) = (corr_receiver.receive().await, dist_receiver.receive().await) {
+        if let (Some(Ok(())), Some(Ok(()))) =
+            (corr_receiver.receive().await, dist_receiver.receive().await)
+        {
             let corr_data = corr_slice.get_mapped_range();
             let dist_data = dist_slice.get_mapped_range();
-            
+
             let correspondences: Vec<u32> = bytemuck::cast_slice(&corr_data).to_vec();
             let distances: Vec<f32> = bytemuck::cast_slice(&dist_data).to_vec();
-            
+
             let result: Vec<(usize, usize, f32)> = correspondences
                 .into_iter()
                 .zip(distances.into_iter())
@@ -694,15 +803,17 @@ impl GpuContext {
                 .filter(|(_, (_, distance))| *distance < max_distance)
                 .map(|(i, (target_idx, distance))| (i, target_idx as usize, distance))
                 .collect();
-            
+
             drop(corr_data);
             drop(dist_data);
             correspondences_staging.unmap();
             distances_staging.unmap();
-            
+
             Ok(result)
         } else {
-            Err(threecrate_core::Error::Gpu("Failed to read GPU correspondence results".to_string()))
+            Err(threecrate_core::Error::Gpu(
+                "Failed to read GPU correspondence results".to_string(),
+            ))
         }
     }
 }
@@ -731,7 +842,9 @@ impl GpuContext {
         max_correspondence_distance: f32,
     ) -> Result<GpuPointToPlaneICPResult> {
         if source.is_empty() || target.is_empty() {
-            return Err(threecrate_core::Error::InvalidData("Empty point clouds".to_string()));
+            return Err(threecrate_core::Error::InvalidData(
+                "Empty point clouds".to_string(),
+            ));
         }
         if target_normals.len() != target.points.len() {
             return Err(threecrate_core::Error::InvalidData(
@@ -767,15 +880,22 @@ impl GpuContext {
             }
 
             // Gather matched points and normals
-            let valid_source: Vec<Point3f> =
-                correspondences.iter().map(|(si, _, _)| transformed_source.points[*si]).collect();
-            let valid_target: Vec<Point3f> =
-                correspondences.iter().map(|(_, ti, _)| target.points[*ti]).collect();
-            let valid_normals: Vec<Vector3f> =
-                correspondences.iter().map(|(_, ti, _)| target_normals[*ti]).collect();
+            let valid_source: Vec<Point3f> = correspondences
+                .iter()
+                .map(|(si, _, _)| transformed_source.points[*si])
+                .collect();
+            let valid_target: Vec<Point3f> = correspondences
+                .iter()
+                .map(|(_, ti, _)| target.points[*ti])
+                .collect();
+            let valid_normals: Vec<Vector3f> = correspondences
+                .iter()
+                .map(|(_, ti, _)| target_normals[*ti])
+                .collect();
 
             // Linearized point-to-plane optimization (6×6 system on CPU)
-            let delta = Self::solve_point_to_plane_cpu(&valid_source, &valid_target, &valid_normals)?;
+            let delta =
+                Self::solve_point_to_plane_cpu(&valid_source, &valid_target, &valid_normals)?;
 
             current_transform = delta * current_transform;
 
@@ -796,7 +916,8 @@ impl GpuContext {
 
             final_error = mse;
 
-            if translation_change < convergence_threshold && rotation_change < convergence_threshold {
+            if translation_change < convergence_threshold && rotation_change < convergence_threshold
+            {
                 converged = true;
                 break;
             }
@@ -834,11 +955,11 @@ impl GpuContext {
         let x = if let Some(chol) = ata.cholesky() {
             chol.solve(&atb)
         } else {
-            ata.lu()
-                .solve(&atb)
-                .ok_or_else(|| threecrate_core::Error::Algorithm(
+            ata.lu().solve(&atb).ok_or_else(|| {
+                threecrate_core::Error::Algorithm(
                     "Point-to-plane GPU system is ill-conditioned".to_string(),
-                ))?
+                )
+            })?
         };
 
         let rot_x = UnitQuaternion::from_axis_angle(&nalgebra::Vector3::x_axis(), x[0]);
@@ -861,7 +982,15 @@ pub async fn gpu_icp(
     convergence_threshold: f32,
     max_correspondence_distance: f32,
 ) -> Result<Isometry3<f32>> {
-    gpu_context.icp_align(source, target, max_iterations, convergence_threshold, max_correspondence_distance).await
+    gpu_context
+        .icp_align(
+            source,
+            target,
+            max_iterations,
+            convergence_threshold,
+            max_correspondence_distance,
+        )
+        .await
 }
 
 /// Execute batch ICP operations on multiple point cloud pairs

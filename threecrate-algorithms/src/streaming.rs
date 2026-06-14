@@ -51,9 +51,9 @@
 //! ```
 
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{sync_channel, SyncSender, TrySendError};
+use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 use threecrate_core::{Error, Point3f, PointCloud, Result};
@@ -84,7 +84,9 @@ pub trait StreamingPipeline<T> {
 
     /// Estimated number of bytes currently held by this pipeline stage.
     /// Default returns `0`; override to expose real memory usage.
-    fn memory_bytes(&self) -> usize { 0 }
+    fn memory_bytes(&self) -> usize {
+        0
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -112,7 +114,9 @@ pub struct RunOptions {
 }
 
 impl Default for RunOptions {
-    fn default() -> Self { Self { skip_errors: false } }
+    fn default() -> Self {
+        Self { skip_errors: false }
+    }
 }
 
 /// Drive `pipeline` by reading from `source` in chunks of `chunk_size` items.
@@ -218,7 +222,10 @@ pub struct StreamingVoxelFilter {
 impl StreamingVoxelFilter {
     /// Create a new streaming voxel filter.
     pub fn new(config: StreamingVoxelFilterConfig) -> Self {
-        Self { config, voxels: HashMap::new() }
+        Self {
+            config,
+            voxels: HashMap::new(),
+        }
     }
 
     #[inline]
@@ -232,7 +239,9 @@ impl StreamingVoxelFilter {
     }
 
     /// Number of occupied voxels accumulated so far.
-    pub fn voxel_count(&self) -> usize { self.voxels.len() }
+    pub fn voxel_count(&self) -> usize {
+        self.voxels.len()
+    }
 }
 
 impl StreamingPipeline<Point3f> for StreamingVoxelFilter {
@@ -259,7 +268,11 @@ impl StreamingPipeline<Point3f> for StreamingVoxelFilter {
             .values()
             .map(|(sum, count)| {
                 let n = *count as f64;
-                Point3f::new((sum[0] / n) as f32, (sum[1] / n) as f32, (sum[2] / n) as f32)
+                Point3f::new(
+                    (sum[0] / n) as f32,
+                    (sum[1] / n) as f32,
+                    (sum[2] / n) as f32,
+                )
             })
             .collect();
         Ok(PointCloud::from_points(points))
@@ -312,7 +325,9 @@ impl StreamingStatistics {
 }
 
 impl Default for StreamingStatistics {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl StreamingPipeline<Point3f> for StreamingStatistics {
@@ -351,7 +366,9 @@ impl StreamingPipeline<Point3f> for StreamingStatistics {
         })
     }
 
-    fn memory_bytes(&self) -> usize { std::mem::size_of::<Self>() }
+    fn memory_bytes(&self) -> usize {
+        std::mem::size_of::<Self>()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -368,16 +385,22 @@ pub struct StreamingCollector {
 
 impl StreamingCollector {
     /// Create a new collector.
-    pub fn new() -> Self { Self { points: Vec::new() } }
+    pub fn new() -> Self {
+        Self { points: Vec::new() }
+    }
 
     /// Create a collector with pre-allocated capacity.
     pub fn with_capacity(cap: usize) -> Self {
-        Self { points: Vec::with_capacity(cap) }
+        Self {
+            points: Vec::with_capacity(cap),
+        }
     }
 }
 
 impl Default for StreamingCollector {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl StreamingPipeline<Point3f> for StreamingCollector {
@@ -404,9 +427,7 @@ impl StreamingPipeline<Point3f> for StreamingCollector {
 /// Wrap a `PointCloud` as a streaming source of `Result<Point3f>`.
 ///
 /// Useful for testing pipelines without a file on disk.
-pub fn cloud_as_stream(
-    cloud: &PointCloud<Point3f>,
-) -> impl Iterator<Item = Result<Point3f>> + '_ {
+pub fn cloud_as_stream(cloud: &PointCloud<Point3f>) -> impl Iterator<Item = Result<Point3f>> + '_ {
     cloud.points.iter().copied().map(Ok)
 }
 
@@ -540,10 +561,20 @@ impl<T: Send + 'static, O: Send + 'static> RealtimePipeline<T, O> {
         let flush_timeout = config.flush_timeout;
 
         let join_handle = thread::spawn(move || {
-            realtime_worker(receiver, pipeline, chunk_size, flush_timeout, metrics_worker)
+            realtime_worker(
+                receiver,
+                pipeline,
+                chunk_size,
+                flush_timeout,
+                metrics_worker,
+            )
         });
 
-        Self { sender: Some(sender), metrics, join_handle: Some(join_handle) }
+        Self {
+            sender: Some(sender),
+            metrics,
+            join_handle: Some(join_handle),
+        }
     }
 
     /// Send an item, blocking until queue space is available (backpressure).
@@ -769,7 +800,11 @@ mod tests {
         run_pipeline(&mut filter, cloud_as_stream(&cloud), 1).unwrap();
         let out = filter.finalize().unwrap();
 
-        assert_eq!(out.len(), 1, "points in the same voxel across chunks should merge");
+        assert_eq!(
+            out.len(),
+            1,
+            "points in the same voxel across chunks should merge"
+        );
         assert!((out.points[0].x - 0.5).abs() < 1e-5);
     }
 
@@ -818,11 +853,7 @@ mod tests {
     #[test]
     fn test_chunk_size_zero_fails() {
         let mut collector = StreamingCollector::new();
-        let result = run_pipeline(
-            &mut collector,
-            std::iter::empty::<Result<Point3f>>(),
-            0,
-        );
+        let result = run_pipeline(&mut collector, std::iter::empty::<Result<Point3f>>(), 0);
         assert!(result.is_err());
     }
 
@@ -839,7 +870,11 @@ mod tests {
 
     #[test]
     fn test_realtime_basic_round_trip() {
-        let config = BackpressureConfig { max_queue_depth: 32, chunk_size: 8, flush_timeout: None };
+        let config = BackpressureConfig {
+            max_queue_depth: 32,
+            chunk_size: 8,
+            flush_timeout: None,
+        };
         let rt = RealtimePipeline::new(StreamingCollector::new(), config);
         for i in 0..50_u32 {
             rt.send(Point3f::new(i as f32, 0.0, 0.0)).unwrap();
@@ -867,19 +902,31 @@ mod tests {
     #[test]
     fn test_realtime_voxel_filter() {
         let filter = StreamingVoxelFilter::new(StreamingVoxelFilterConfig { voxel_size: 1.0 });
-        let config = BackpressureConfig { max_queue_depth: 64, chunk_size: 16, flush_timeout: None };
+        let config = BackpressureConfig {
+            max_queue_depth: 64,
+            chunk_size: 16,
+            flush_timeout: None,
+        };
         let rt = RealtimePipeline::new(filter, config);
         for i in 0..100_u32 {
             rt.send(Point3f::new(i as f32 * 0.1, 0.0, 0.0)).unwrap();
         }
         let cloud = rt.finish().unwrap();
-        assert!(cloud.len() <= 10, "expected ≤10 voxels, got {}", cloud.len());
+        assert!(
+            cloud.len() <= 10,
+            "expected ≤10 voxels, got {}",
+            cloud.len()
+        );
         assert!(!cloud.is_empty());
     }
 
     #[test]
     fn test_realtime_metrics_queued_count() {
-        let config = BackpressureConfig { max_queue_depth: 64, chunk_size: 32, flush_timeout: None };
+        let config = BackpressureConfig {
+            max_queue_depth: 64,
+            chunk_size: 32,
+            flush_timeout: None,
+        };
         let rt = RealtimePipeline::new(StreamingCollector::new(), config);
         for i in 0..20_u32 {
             rt.send(Point3f::new(i as f32, 0.0, 0.0)).unwrap();
@@ -892,7 +939,11 @@ mod tests {
 
     #[test]
     fn test_realtime_try_send_accepts_when_space() {
-        let config = BackpressureConfig { max_queue_depth: 16, chunk_size: 8, flush_timeout: None };
+        let config = BackpressureConfig {
+            max_queue_depth: 16,
+            chunk_size: 8,
+            flush_timeout: None,
+        };
         let rt = RealtimePipeline::new(StreamingCollector::new(), config);
         let accepted = rt.try_send(Point3f::new(1.0, 0.0, 0.0)).unwrap();
         assert!(accepted, "should accept item when queue has space");
@@ -936,9 +987,17 @@ mod tests {
         let latch_release = Arc::clone(&latch);
 
         // chunk_size=1: every item triggers process_chunk → first one blocks.
-        let config = BackpressureConfig { max_queue_depth: 1, chunk_size: 1, flush_timeout: None };
+        let config = BackpressureConfig {
+            max_queue_depth: 1,
+            chunk_size: 1,
+            flush_timeout: None,
+        };
         let rt = RealtimePipeline::new(
-            LatchedCollector { latch, inner: StreamingCollector::new(), blocked: false },
+            LatchedCollector {
+                latch,
+                inner: StreamingCollector::new(),
+                blocked: false,
+            },
             config,
         );
 
@@ -957,7 +1016,10 @@ mod tests {
                 dropped += 1;
             }
         }
-        assert!(dropped > 0, "expected at least one drop with max_queue_depth=1");
+        assert!(
+            dropped > 0,
+            "expected at least one drop with max_queue_depth=1"
+        );
 
         // Release the latch so the worker can finish processing.
         let (lock, cv) = &*latch_release;
@@ -974,7 +1036,11 @@ mod tests {
 
     #[test]
     fn test_realtime_drop_without_finish() {
-        let config = BackpressureConfig { max_queue_depth: 16, chunk_size: 4, flush_timeout: None };
+        let config = BackpressureConfig {
+            max_queue_depth: 16,
+            chunk_size: 4,
+            flush_timeout: None,
+        };
         let rt = RealtimePipeline::new(StreamingCollector::new(), config);
         for i in 0..10_u32 {
             rt.send(Point3f::new(i as f32, 0.0, 0.0)).unwrap();

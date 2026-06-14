@@ -91,15 +91,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let img_blue = RgbImageView::new(&blue_data, 64, 64)?;
 
     // Camera B: positioned 2 units to the right in world space.
-    let cam_b_to_world = Isometry3::from_parts(
-        Translation3::new(2.0, 0.0, 0.0),
-        UnitQuaternion::identity(),
-    );
+    let cam_b_to_world =
+        Isometry3::from_parts(Translation3::new(2.0, 0.0, 0.0), UnitQuaternion::identity());
     let world_to_cam_b = cam_b_to_world.inverse();
 
     let sources = vec![
-        (image, intrinsics, world_to_camera),        // Camera A (quadrant image)
-        (img_blue, intrinsics, world_to_cam_b),      // Camera B (solid blue, fallback)
+        (image, intrinsics, world_to_camera), // Camera A (quadrant image)
+        (img_blue, intrinsics, world_to_cam_b), // Camera B (solid blue, fallback)
     ];
     let multi_result = colorize_from_images(&cloud, &sources, &config)?;
     println!(
@@ -111,8 +109,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 8. Custom default color for uncolored points.
     // ------------------------------------------------------------------
     let partial_cloud = PointCloud::from_points(vec![
-        Point3f::new(0.0, 0.0, 2.0),   // in view
-        Point3f::new(0.0, 0.0, -5.0),  // behind camera
+        Point3f::new(0.0, 0.0, 2.0),    // in view
+        Point3f::new(0.0, 0.0, -5.0),   // behind camera
         Point3f::new(1000.0, 0.0, 2.0), // far off to the side
     ]);
     let partial_img_data = make_solid_image(64, 64, [255, 128, 0]).0;
@@ -129,7 +127,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &custom_config,
     )?;
     println!("\nPartial coverage (3 points, 1 in-view, 2 out-of-view):");
-    println!("  colored={}, uncolored={}", partial_result.colored_count, partial_result.uncolored_count);
+    println!(
+        "  colored={}, uncolored={}",
+        partial_result.colored_count, partial_result.uncolored_count
+    );
     for pt in &partial_result.cloud.points {
         println!(
             "  ({:6.1},{:6.1},{:6.1}) → {:?}",
@@ -167,10 +168,10 @@ fn make_quadrant_image(width: u32, height: u32) -> (Vec<u8>, u32, u32) {
     for y in 0..height {
         for x in 0..width {
             let color: [u8; 3] = match (x < hw, y < hh) {
-                (true,  true)  => [220,  50,  50], // top-left     – red
-                (false, true)  => [ 50, 180,  50], // top-right    – green
-                (true,  false) => [ 50,  50, 220], // bottom-left  – blue
-                (false, false) => [220, 200,  50], // bottom-right – yellow
+                (true, true) => [220, 50, 50],    // top-left     – red
+                (false, true) => [50, 180, 50],   // top-right    – green
+                (true, false) => [50, 50, 220],   // bottom-left  – blue
+                (false, false) => [220, 200, 50], // bottom-right – yellow
             };
             data.extend_from_slice(&color);
         }
@@ -180,6 +181,11 @@ fn make_quadrant_image(width: u32, height: u32) -> (Vec<u8>, u32, u32) {
 
 /// Create a solid-color image.
 fn make_solid_image(width: u32, height: u32, color: [u8; 3]) -> (Vec<u8>, u32, u32) {
-    let data = color.iter().copied().cycle().take((width * height * 3) as usize).collect();
+    let data = color
+        .iter()
+        .copied()
+        .cycle()
+        .take((width * height * 3) as usize)
+        .collect();
     (data, width, height)
 }

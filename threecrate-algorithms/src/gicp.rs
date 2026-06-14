@@ -7,9 +7,11 @@
 //!
 //! Used in: LOAM, LIO-SAM, and most modern LiDAR odometry pipelines.
 
-use rayon::prelude::*;
 use nalgebra::{Matrix3, Matrix6, Translation3, UnitQuaternion, Vector6};
-use threecrate_core::{Error, Isometry3, NearestNeighborSearch, Point3f, PointCloud, Result, Vector3f};
+use rayon::prelude::*;
+use threecrate_core::{
+    Error, Isometry3, NearestNeighborSearch, Point3f, PointCloud, Result, Vector3f,
+};
 
 use crate::nearest_neighbor::KdTree;
 use crate::registration::ICPResult;
@@ -49,11 +51,7 @@ impl Default for GicpConfig {
 /// Skew-symmetric ("cross-product") matrix of a 3-D vector.
 #[inline]
 fn skew_sym(v: &nalgebra::Vector3<f32>) -> Matrix3<f32> {
-    Matrix3::new(
-         0.0, -v.z,  v.y,
-         v.z,  0.0, -v.x,
-        -v.y,  v.x,  0.0,
-    )
+    Matrix3::new(0.0, -v.z, v.y, v.z, 0.0, -v.x, -v.y, v.x, 0.0)
 }
 
 /// Estimate per-point 3×3 covariance matrices from k nearest neighbours.
@@ -139,7 +137,10 @@ pub fn gicp(
         return Err(Error::InvalidData(format!(
             "GICP: clouds must have at least {} points for reliable covariance estimation \
              (k_correspondences={}); got source={}, target={}",
-            min_k, config.k_correspondences, source.len(), target.len()
+            min_k,
+            config.k_correspondences,
+            source.len(),
+            target.len()
         )));
     }
     // Reject degenerate clouds where all points lie on a plane or line — GICP
@@ -153,7 +154,9 @@ pub fn gicp(
                 max[ax] = max[ax].max(p.coords[ax]);
             }
         }
-        let min_extent = (0..3).map(|ax| max[ax] - min[ax]).fold(f32::INFINITY, f32::min);
+        let min_extent = (0..3)
+            .map(|ax| max[ax] - min[ax])
+            .fold(f32::INFINITY, f32::min);
         if min_extent < 1e-4 {
             return Err(Error::InvalidData(format!(
                 "GICP: {label} point cloud appears to be coplanar or collinear \
@@ -176,8 +179,11 @@ pub fn gicp(
 
     for iteration in 0..config.max_iterations {
         // Transform source points with the current estimate.
-        let transformed_source: Vec<Point3f> =
-            source.points.iter().map(|p| current_transform * p).collect();
+        let transformed_source: Vec<Point3f> = source
+            .points
+            .iter()
+            .map(|p| current_transform * p)
+            .collect();
 
         // Rotation matrix for covariance transformation.
         let r_mat = *current_transform.rotation.to_rotation_matrix().matrix();
@@ -191,8 +197,10 @@ pub fn gicp(
         let mut mse_sum = 0.0f32;
         let mut corr_pairs: Vec<(usize, usize)> = Vec::new();
 
-        for (src_idx, (ts, c_s)) in
-            transformed_source.iter().zip(source_covs.iter()).enumerate()
+        for (src_idx, (ts, c_s)) in transformed_source
+            .iter()
+            .zip(source_covs.iter())
+            .enumerate()
         {
             let neighbours = target_tree.find_k_nearest(ts, 1);
             if neighbours.is_empty() {
@@ -267,10 +275,8 @@ pub fn gicp(
         let delta_rot = UnitQuaternion::from_axis_angle(&Vector3f::z_axis(), delta[2])
             * UnitQuaternion::from_axis_angle(&Vector3f::y_axis(), delta[1])
             * UnitQuaternion::from_axis_angle(&Vector3f::x_axis(), delta[0]);
-        let delta_iso = Isometry3::from_parts(
-            Translation3::new(delta[3], delta[4], delta[5]),
-            delta_rot,
-        );
+        let delta_iso =
+            Isometry3::from_parts(Translation3::new(delta[3], delta[4], delta[5]), delta_rot);
         current_transform = delta_iso * current_transform;
 
         // Convergence check.
@@ -317,7 +323,11 @@ mod tests {
             let y = 1.0 - (i as f32 / (n as f32 - 1.0).max(1.0)) * 2.0;
             let r = (1.0 - y * y).max(0.0_f32).sqrt();
             let theta = golden * i as f32;
-            cloud.push(Point3f::new(theta.cos() * r * radius, y * radius, theta.sin() * r * radius));
+            cloud.push(Point3f::new(
+                theta.cos() * r * radius,
+                y * radius,
+                theta.sin() * r * radius,
+            ));
         }
         cloud
     }
@@ -325,7 +335,10 @@ mod tests {
     #[test]
     fn gicp_identity_converges() {
         let cloud = make_sphere(100, 3.0);
-        let config = GicpConfig { max_iterations: 30, ..Default::default() };
+        let config = GicpConfig {
+            max_iterations: 30,
+            ..Default::default()
+        };
         let result = gicp(&cloud, &cloud, Isometry3::identity(), config).unwrap();
         assert!(result.converged, "should converge for identical clouds");
         assert!(result.mse < 1e-4, "mse={}", result.mse);
@@ -359,14 +372,20 @@ mod tests {
     #[test]
     fn gicp_zero_iterations_errors() {
         let cloud = make_sphere(30, 1.0);
-        let config = GicpConfig { max_iterations: 0, ..Default::default() };
+        let config = GicpConfig {
+            max_iterations: 0,
+            ..Default::default()
+        };
         assert!(gicp(&cloud, &cloud, Isometry3::identity(), config).is_err());
     }
 
     #[test]
     fn gicp_result_fields_populated() {
         let cloud = make_sphere(60, 2.0);
-        let config = GicpConfig { max_iterations: 10, ..Default::default() };
+        let config = GicpConfig {
+            max_iterations: 10,
+            ..Default::default()
+        };
         let result = gicp(&cloud, &cloud, Isometry3::identity(), config).unwrap();
         assert!(result.iterations > 0);
         assert!(!result.correspondences.is_empty());
@@ -390,9 +409,7 @@ mod tests {
         let source = make_sphere(300, 3.0);
         let angle = 2_f32.to_radians();
         let rot = UnitQuaternion::from_axis_angle(&Vector3f::z_axis(), angle);
-        let target = PointCloud::from_points(
-            source.points.iter().map(|p| rot * p).collect(),
-        );
+        let target = PointCloud::from_points(source.points.iter().map(|p| rot * p).collect());
 
         let config = GicpConfig {
             max_iterations: 60,
@@ -418,9 +435,7 @@ mod tests {
         let true_angle = 8_f32.to_radians();
         let init_angle = 6_f32.to_radians(); // ← provided by odometry / IMU
         let true_rot = UnitQuaternion::from_axis_angle(&Vector3f::z_axis(), true_angle);
-        let target = PointCloud::from_points(
-            source.points.iter().map(|p| true_rot * p).collect(),
-        );
+        let target = PointCloud::from_points(source.points.iter().map(|p| true_rot * p).collect());
         let init = Isometry3::from_parts(
             Translation3::identity(),
             UnitQuaternion::from_axis_angle(&Vector3f::z_axis(), init_angle),
@@ -452,9 +467,7 @@ mod tests {
             Translation3::new(true_shift.x, true_shift.y, true_shift.z),
             true_rot,
         );
-        let target = PointCloud::from_points(
-            source.points.iter().map(|p| true_iso * p).collect(),
-        );
+        let target = PointCloud::from_points(source.points.iter().map(|p| true_iso * p).collect());
 
         // Initial guess: 80% of the rotation, 80% of the translation.
         let init = Isometry3::from_parts(
@@ -490,12 +503,17 @@ mod tests {
         let noise_half = 0.05_f32;
         // Deterministic noise via a simple LCG so tests are reproducible.
         let target = PointCloud::from_points(
-            source.points.iter().enumerate().map(|(i, p)| {
-                let t = (i as f32 * 1.6180339887_f32).sin() * noise_half;
-                let u = (i as f32 * 2.7182818284_f32).cos() * noise_half;
-                let v = (i as f32 * 3.1415926535_f32).sin() * noise_half;
-                Point3f::new(p.x + t, p.y + u, p.z + v)
-            }).collect(),
+            source
+                .points
+                .iter()
+                .enumerate()
+                .map(|(i, p)| {
+                    let t = (i as f32 * 1.6180339887_f32).sin() * noise_half;
+                    let u = (i as f32 * 2.7182818284_f32).cos() * noise_half;
+                    let v = (i as f32 * 3.1415926535_f32).sin() * noise_half;
+                    Point3f::new(p.x + t, p.y + u, p.z + v)
+                })
+                .collect(),
         );
 
         let config = GicpConfig {

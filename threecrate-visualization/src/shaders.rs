@@ -74,4 +74,4 @@ void main() {
     float light = max(0.1, dot(normalize(v_normal), normalize(light_dir)));
     f_color = vec4(v_color * light, 1.0);
 }
-"#; 
+"#;

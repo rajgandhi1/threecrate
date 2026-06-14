@@ -7,16 +7,16 @@ use thiserror::Error;
 pub enum IoError {
     #[error("File not found: {path}")]
     FileNotFound { path: String },
-    
+
     #[error("Invalid file format: {format}")]
     InvalidFormat { format: String },
-    
+
     #[error("Parse error: {message}")]
     ParseError { message: String },
-    
+
     #[error("Write error: {message}")]
     WriteError { message: String },
-    
+
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
-} 
+}

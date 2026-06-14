@@ -58,7 +58,8 @@ fn is_binary_stl(path: &Path) -> Result<bool> {
 
     file.seek(SeekFrom::Start(BINARY_HEADER_SIZE as u64))?;
     let triangle_count = file.read_u32::<LittleEndian>()? as u64;
-    let expected_size = BINARY_HEADER_SIZE as u64 + 4 + triangle_count * BINARY_TRIANGLE_SIZE as u64;
+    let expected_size =
+        BINARY_HEADER_SIZE as u64 + 4 + triangle_count * BINARY_TRIANGLE_SIZE as u64;
 
     if expected_size == file_size {
         return Ok(true);
@@ -123,7 +124,12 @@ impl MeshBuilder {
     }
 
     fn into_mesh(self) -> TriangleMesh {
-        let MeshBuilder { vertices, face_normals, faces, .. } = self;
+        let MeshBuilder {
+            vertices,
+            face_normals,
+            faces,
+            ..
+        } = self;
         let mut mesh = TriangleMesh::from_vertices_and_faces(vertices, faces);
 
         // Derive per-vertex normals by averaging adjacent face normals.
@@ -167,7 +173,8 @@ fn read_binary_stl(path: &Path) -> Result<TriangleMesh> {
 
     let mut builder = MeshBuilder::new();
     for i in 0..triangle_count {
-        let nx = reader.read_f32::<LittleEndian>()
+        let nx = reader
+            .read_f32::<LittleEndian>()
             .map_err(|_| Error::InvalidData(format!("Failed to read normal of triangle {}", i)))?;
         let ny = reader.read_f32::<LittleEndian>()?;
         let nz = reader.read_f32::<LittleEndian>()?;
@@ -194,15 +201,15 @@ fn parse_vec3(parts: &[&str], line_num: usize, what: &str) -> Result<(f32, f32, 
             what, line_num
         )));
     }
-    let x = parts[0].parse::<f32>().map_err(|_| {
-        Error::InvalidData(format!("Invalid {} x at line {}", what, line_num))
-    })?;
-    let y = parts[1].parse::<f32>().map_err(|_| {
-        Error::InvalidData(format!("Invalid {} y at line {}", what, line_num))
-    })?;
-    let z = parts[2].parse::<f32>().map_err(|_| {
-        Error::InvalidData(format!("Invalid {} z at line {}", what, line_num))
-    })?;
+    let x = parts[0]
+        .parse::<f32>()
+        .map_err(|_| Error::InvalidData(format!("Invalid {} x at line {}", what, line_num)))?;
+    let y = parts[1]
+        .parse::<f32>()
+        .map_err(|_| Error::InvalidData(format!("Invalid {} y at line {}", what, line_num)))?;
+    let z = parts[2]
+        .parse::<f32>()
+        .map_err(|_| Error::InvalidData(format!("Invalid {} z at line {}", what, line_num)))?;
     Ok((x, y, z))
 }
 
@@ -398,7 +405,15 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("tet.stl");
 
-        write_stl(&mesh, &path, &StlWriteOptions { binary: true, ..Default::default() }).unwrap();
+        write_stl(
+            &mesh,
+            &path,
+            &StlWriteOptions {
+                binary: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
         assert!(is_binary_stl(&path).unwrap());
 
         let read = read_stl(&path).unwrap();
@@ -415,7 +430,10 @@ mod tests {
         write_stl(
             &mesh,
             &path,
-            &StlWriteOptions { binary: false, ..Default::default() },
+            &StlWriteOptions {
+                binary: false,
+                ..Default::default()
+            },
         )
         .unwrap();
         assert!(!is_binary_stl(&path).unwrap());

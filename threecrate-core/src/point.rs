@@ -1,8 +1,8 @@
 //! Point types and related functionality
 
+use bytemuck::{Pod, Zeroable};
 use nalgebra::{Point3, Vector3};
 use serde::{Deserialize, Serialize};
-use bytemuck::{Pod, Zeroable};
 
 /// A 3D point with floating point coordinates
 pub type Point3f = Point3<f32>;
@@ -76,4 +76,4 @@ impl Default for ColoredNormalPoint3f {
             color: [255, 255, 255],
         }
     }
-} 
+}

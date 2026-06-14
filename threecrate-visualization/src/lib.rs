@@ -1,5 +1,5 @@
 //! Visualization and rendering for 3D data
-//! 
+//!
 //! This crate provides real-time visualization capabilities for point clouds
 //! and meshes using wgpu and winit:
 //! - Interactive 3D viewer with UI controls
@@ -9,13 +9,13 @@
 //! - Algorithm parameter controls
 
 pub mod camera;
-pub mod shaders;
 pub mod interactive_viewer;
+pub mod shaders;
 
 pub use camera::*;
 pub use interactive_viewer::*;
 
-use threecrate_core::{PointCloud, TriangleMesh, Result, Point3f};
+use threecrate_core::{Point3f, PointCloud, Result, TriangleMesh};
 
 /// Show a point cloud in an interactive viewer
 pub fn show_point_cloud(cloud: &PointCloud<Point3f>) -> Result<()> {
@@ -29,4 +29,4 @@ pub fn show_mesh(mesh: &TriangleMesh) -> Result<()> {
     let mut viewer = InteractiveViewer::new()?;
     viewer.set_mesh(mesh);
     viewer.run()
-} 
+}

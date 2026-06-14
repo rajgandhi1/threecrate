@@ -125,14 +125,62 @@ impl OctreeNode {
         let d = self.depth + 1;
 
         let children = [
-            OctreeNode::new(BBox { min: [mn[0], mn[1], mn[2]], max: [c[0], c[1], c[2]] }, d),
-            OctreeNode::new(BBox { min: [c[0], mn[1], mn[2]], max: [mx[0], c[1], c[2]] }, d),
-            OctreeNode::new(BBox { min: [mn[0], c[1], mn[2]], max: [c[0], mx[1], c[2]] }, d),
-            OctreeNode::new(BBox { min: [c[0], c[1], mn[2]], max: [mx[0], mx[1], c[2]] }, d),
-            OctreeNode::new(BBox { min: [mn[0], mn[1], c[2]], max: [c[0], c[1], mx[2]] }, d),
-            OctreeNode::new(BBox { min: [c[0], mn[1], c[2]], max: [mx[0], c[1], mx[2]] }, d),
-            OctreeNode::new(BBox { min: [mn[0], c[1], c[2]], max: [c[0], mx[1], mx[2]] }, d),
-            OctreeNode::new(BBox { min: [c[0], c[1], c[2]], max: [mx[0], mx[1], mx[2]] }, d),
+            OctreeNode::new(
+                BBox {
+                    min: [mn[0], mn[1], mn[2]],
+                    max: [c[0], c[1], c[2]],
+                },
+                d,
+            ),
+            OctreeNode::new(
+                BBox {
+                    min: [c[0], mn[1], mn[2]],
+                    max: [mx[0], c[1], c[2]],
+                },
+                d,
+            ),
+            OctreeNode::new(
+                BBox {
+                    min: [mn[0], c[1], mn[2]],
+                    max: [c[0], mx[1], c[2]],
+                },
+                d,
+            ),
+            OctreeNode::new(
+                BBox {
+                    min: [c[0], c[1], mn[2]],
+                    max: [mx[0], mx[1], c[2]],
+                },
+                d,
+            ),
+            OctreeNode::new(
+                BBox {
+                    min: [mn[0], mn[1], c[2]],
+                    max: [c[0], c[1], mx[2]],
+                },
+                d,
+            ),
+            OctreeNode::new(
+                BBox {
+                    min: [c[0], mn[1], c[2]],
+                    max: [mx[0], c[1], mx[2]],
+                },
+                d,
+            ),
+            OctreeNode::new(
+                BBox {
+                    min: [mn[0], c[1], c[2]],
+                    max: [c[0], mx[1], mx[2]],
+                },
+                d,
+            ),
+            OctreeNode::new(
+                BBox {
+                    min: [c[0], c[1], c[2]],
+                    max: [mx[0], mx[1], mx[2]],
+                },
+                d,
+            ),
         ];
         self.children = Some(Box::new(children));
     }
@@ -163,11 +211,8 @@ impl OctreeNode {
 
         // Consider subdividing
         if self.vertex_indices.len() > 1 && self.depth < max_depth {
-            let cluster_error = compute_cluster_quadric_error(
-                &self.vertex_indices,
-                positions,
-                quadrics,
-            );
+            let cluster_error =
+                compute_cluster_quadric_error(&self.vertex_indices, positions, quadrics);
             if cluster_error > error_threshold {
                 self.subdivide();
                 let verts = std::mem::take(&mut self.vertex_indices);
@@ -209,10 +254,22 @@ fn compute_plane(v0: &Point3f, v1: &Point3f, v2: &Point3f) -> Vector4<f64> {
 fn plane_to_quadric(p: &Vector4<f64>) -> Matrix4<f64> {
     let (a, b, c, d) = (p[0], p[1], p[2], p[3]);
     Matrix4::new(
-        a * a, a * b, a * c, a * d,
-        a * b, b * b, b * c, b * d,
-        a * c, b * c, c * c, c * d,
-        a * d, b * d, c * d, d * d,
+        a * a,
+        a * b,
+        a * c,
+        a * d,
+        a * b,
+        b * b,
+        b * c,
+        b * d,
+        a * c,
+        b * c,
+        c * c,
+        c * d,
+        a * d,
+        b * d,
+        c * d,
+        d * d,
     )
 }
 
@@ -702,10 +759,12 @@ impl ClusteringSimplifier {
         let remapped_faces: Vec<[usize; 3]> = new_faces
             .iter()
             .filter_map(|f| {
-                match (old_to_new.get(&f[0]), old_to_new.get(&f[1]), old_to_new.get(&f[2])) {
-                    (Some(&a), Some(&b), Some(&c)) if a != b && b != c && c != a => {
-                        Some([a, b, c])
-                    }
+                match (
+                    old_to_new.get(&f[0]),
+                    old_to_new.get(&f[1]),
+                    old_to_new.get(&f[2]),
+                ) {
+                    (Some(&a), Some(&b), Some(&c)) if a != b && b != c && c != a => Some([a, b, c]),
                     _ => None,
                 }
             })
@@ -825,11 +884,7 @@ mod tests {
             for x in 0..size {
                 let fx = x as f32 / (size - 1) as f32 * std::f32::consts::PI;
                 let fy = y as f32 / (size - 1) as f32 * std::f32::consts::PI;
-                vertices.push(Point3::new(
-                    x as f32,
-                    y as f32,
-                    (fx.sin() * fy.sin()) * 2.0,
-                ));
+                vertices.push(Point3::new(x as f32, y as f32, (fx.sin() * fy.sin()) * 2.0));
             }
         }
         let mut faces = Vec::new();

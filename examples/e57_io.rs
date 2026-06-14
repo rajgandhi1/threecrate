@@ -68,10 +68,7 @@ fn main() {
         // Round-trip write via registry (high-level)
         let out2 = PathBuf::from(env::temp_dir()).join("threecrate_demo2.e57");
         write_point_cloud(&loaded, &out2).expect("Failed to write via registry");
-        println!(
-            "Registry write successful: {}",
-            out2.display()
-        );
+        println!("Registry write successful: {}", out2.display());
 
         let _ = std::fs::remove_file(&out_path);
         let _ = std::fs::remove_file(&out2);

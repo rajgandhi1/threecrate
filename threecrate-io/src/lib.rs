@@ -1,63 +1,71 @@
 //! I/O operations for point clouds and meshes
-//! 
+//!
 //! This crate provides functionality to read and write various 3D file formats
 //! including PLY, OBJ, and other common point cloud and mesh formats.
 
-pub mod ply;
+#[cfg(feature = "compression")]
+pub mod compression;
+#[cfg(feature = "e57")]
+pub mod e57;
+pub mod error;
+pub mod lidar;
+pub mod mesh_attributes;
+#[cfg(feature = "io-mmap")]
+pub mod mmap;
 pub mod obj;
-pub mod stl;
 #[cfg(feature = "las_laz")]
 pub mod pasture;
 pub mod pcd;
-pub mod xyz_csv;
-#[cfg(feature = "e57")]
-pub mod e57;
+pub mod ply;
+pub mod registry;
 #[cfg(feature = "ros2")]
 pub mod ros2;
 #[cfg(feature = "rosbag")]
 pub mod rosbag;
-pub mod lidar;
-pub mod error;
-pub mod registry;
-pub mod mesh_attributes;
 pub mod serialization;
-#[cfg(feature = "io-mmap")]
-pub mod mmap;
-#[cfg(feature = "compression")]
-pub mod compression;
+pub mod stl;
+pub mod xyz_csv;
 
 #[cfg(test)]
 pub mod tests;
 
-pub use error::*;
-pub use ply::{RobustPlyReader, RobustPlyWriter, PlyWriteOptions, PlyFormat, PlyValue};
-pub use obj::{RobustObjReader, RobustObjWriter, ObjData, ObjWriteOptions, Material, FaceVertex, Face, Group};
-pub use stl::{StlReader, StlWriter, StlWriteOptions, read_stl, write_stl};
-pub use pcd::{RobustPcdReader, RobustPcdWriter, PcdWriteOptions, PcdDataFormat, PcdFieldType, PcdHeader, PcdValue};
-pub use xyz_csv::{XyzCsvReader, XyzCsvWriter, XyzCsvStreamingReader, XyzCsvWriteOptions, XyzCsvSchema, XyzCsvPoint, Delimiter, ColumnType};
+#[cfg(feature = "compression")]
+pub use compression::{draco_decode, draco_encode, DracoCompressorPipeline, DracoConfig};
 #[cfg(feature = "e57")]
-pub use e57::{RobustE57Reader, RobustE57Writer, E57WriteOptions};
+pub use e57::{E57WriteOptions, RobustE57Reader, RobustE57Writer};
+pub use error::*;
+pub use lidar::{
+    LivoxLvx2Reader, LivoxLvxReader, OusterPcapReader, VelodyneKittiBinReader, VelodyneModel,
+    VelodynePcapReader,
+};
+pub use mesh_attributes::{ExtendedTriangleMesh, MeshAttributeOptions, MeshMetadata, Tangent, UV};
+pub use obj::{
+    Face, FaceVertex, Group, Material, ObjData, ObjWriteOptions, RobustObjReader, RobustObjWriter,
+};
+pub use pcd::{
+    PcdDataFormat, PcdFieldType, PcdHeader, PcdValue, PcdWriteOptions, RobustPcdReader,
+    RobustPcdWriter,
+};
+pub use ply::{PlyFormat, PlyValue, PlyWriteOptions, RobustPlyReader, RobustPlyWriter};
+pub use registry::{FormatHandler, IoRegistry};
 #[cfg(feature = "ros2")]
 pub use ros2::{
-    PointField, PointCloud2Info, PointCloud2Data,
-    pointcloud2_to_xyz, pointcloud2_to_colored, pointcloud2_to_normals,
-    pointcloud2_to_colored_normals, pointcloud2_to_organized_xyz,
-    xyz_to_pointcloud2, colored_to_pointcloud2, normals_to_pointcloud2,
-    colored_normals_to_pointcloud2, organized_xyz_to_pointcloud2,
+    colored_normals_to_pointcloud2, colored_to_pointcloud2, normals_to_pointcloud2,
+    organized_xyz_to_pointcloud2, pointcloud2_to_colored, pointcloud2_to_colored_normals,
+    pointcloud2_to_normals, pointcloud2_to_organized_xyz, pointcloud2_to_xyz, xyz_to_pointcloud2,
+    PointCloud2Data, PointCloud2Info, PointField,
 };
-pub use registry::{IoRegistry, FormatHandler};
-#[cfg(feature = "compression")]
-pub use compression::{DracoConfig, DracoCompressorPipeline, draco_encode, draco_decode};
-pub use mesh_attributes::{ExtendedTriangleMesh, MeshAttributeOptions, MeshMetadata, Tangent, UV};
-pub use serialization::{SerializationOptions, AttributePreservingReader, AttributePreservingWriter};
-pub use lidar::{
-    VelodyneModel, VelodyneKittiBinReader, VelodynePcapReader,
-    OusterPcapReader,
-    LivoxLvxReader, LivoxLvx2Reader,
+pub use serialization::{
+    AttributePreservingReader, AttributePreservingWriter, SerializationOptions,
+};
+pub use stl::{read_stl, write_stl, StlReader, StlWriteOptions, StlWriter};
+pub use xyz_csv::{
+    ColumnType, Delimiter, XyzCsvPoint, XyzCsvReader, XyzCsvSchema, XyzCsvStreamingReader,
+    XyzCsvWriteOptions, XyzCsvWriter,
 };
 
-use threecrate_core::{PointCloud, TriangleMesh, Result, Point3f};
 use std::path::Path;
+use threecrate_core::{Point3f, PointCloud, Result, TriangleMesh};
 
 // Legacy traits for backward compatibility
 /// Trait for reading point clouds from files
@@ -67,7 +75,10 @@ pub trait PointCloudReader {
 
 /// Trait for writing point clouds to files
 pub trait PointCloudWriter {
-    fn write_point_cloud<P: AsRef<std::path::Path>>(cloud: &PointCloud<Point3f>, path: P) -> Result<()>;
+    fn write_point_cloud<P: AsRef<std::path::Path>>(
+        cloud: &PointCloud<Point3f>,
+        path: P,
+    ) -> Result<()>;
 }
 
 /// Trait for reading meshes from files
@@ -84,13 +95,13 @@ pub trait MeshWriter {
 lazy_static::lazy_static! {
     static ref IO_REGISTRY: IoRegistry = {
         let mut registry = IoRegistry::new();
-        
+
         // Register PLY format handlers
         registry.register_point_cloud_handler("ply", Box::new(ply::PlyReader));
         registry.register_mesh_handler("ply", Box::new(ply::PlyReader));
         registry.register_point_cloud_writer("ply", Box::new(ply::PlyWriter));
         registry.register_mesh_writer("ply", Box::new(ply::PlyWriter));
-        
+
         // Register OBJ format handlers
         registry.register_mesh_handler("obj", Box::new(obj::ObjReader));
         registry.register_mesh_writer("obj", Box::new(obj::ObjWriter));
@@ -98,7 +109,7 @@ lazy_static::lazy_static! {
         // Register STL format handlers
         registry.register_mesh_handler("stl", Box::new(stl::StlReader));
         registry.register_mesh_writer("stl", Box::new(stl::StlWriter));
-        
+
         // Register pasture format handlers (when feature is enabled)
         #[cfg(feature = "las_laz")]
         {
@@ -109,7 +120,7 @@ lazy_static::lazy_static! {
         }
         registry.register_point_cloud_handler("pcd", Box::new(pcd::PcdReader));
         registry.register_point_cloud_writer("pcd", Box::new(pcd::PcdWriter));
-        
+
         // Register XYZ/CSV format handlers
         registry.register_point_cloud_handler("xyz", Box::new(xyz_csv::XyzCsvReader));
         registry.register_point_cloud_handler("csv", Box::new(xyz_csv::XyzCsvReader));
@@ -147,48 +158,40 @@ lazy_static::lazy_static! {
 /// Auto-detect format and read point cloud using the unified registry
 pub fn read_point_cloud<P: AsRef<Path>>(path: P) -> Result<PointCloud<Point3f>> {
     let path = path.as_ref();
-    let extension = path.extension()
-        .and_then(|s| s.to_str())
-        .ok_or_else(|| threecrate_core::Error::UnsupportedFormat(
-            "No file extension found".to_string()
-        ))?;
-    
+    let extension = path.extension().and_then(|s| s.to_str()).ok_or_else(|| {
+        threecrate_core::Error::UnsupportedFormat("No file extension found".to_string())
+    })?;
+
     IO_REGISTRY.read_point_cloud(path, extension)
 }
 
 /// Auto-detect format and read mesh using the unified registry
 pub fn read_mesh<P: AsRef<Path>>(path: P) -> Result<TriangleMesh> {
     let path = path.as_ref();
-    let extension = path.extension()
-        .and_then(|s| s.to_str())
-        .ok_or_else(|| threecrate_core::Error::UnsupportedFormat(
-            "No file extension found".to_string()
-        ))?;
-    
+    let extension = path.extension().and_then(|s| s.to_str()).ok_or_else(|| {
+        threecrate_core::Error::UnsupportedFormat("No file extension found".to_string())
+    })?;
+
     IO_REGISTRY.read_mesh(path, extension)
 }
 
 /// Write point cloud with format auto-detection using the unified registry
 pub fn write_point_cloud<P: AsRef<Path>>(cloud: &PointCloud<Point3f>, path: P) -> Result<()> {
     let path = path.as_ref();
-    let extension = path.extension()
-        .and_then(|s| s.to_str())
-        .ok_or_else(|| threecrate_core::Error::UnsupportedFormat(
-            "No file extension found".to_string()
-        ))?;
-    
+    let extension = path.extension().and_then(|s| s.to_str()).ok_or_else(|| {
+        threecrate_core::Error::UnsupportedFormat("No file extension found".to_string())
+    })?;
+
     IO_REGISTRY.write_point_cloud(cloud, path, extension)
 }
 
 /// Write mesh with format auto-detection using the unified registry
 pub fn write_mesh<P: AsRef<Path>>(mesh: &TriangleMesh, path: P) -> Result<()> {
     let path = path.as_ref();
-    let extension = path.extension()
-        .and_then(|s| s.to_str())
-        .ok_or_else(|| threecrate_core::Error::UnsupportedFormat(
-            "No file extension found".to_string()
-        ))?;
-    
+    let extension = path.extension().and_then(|s| s.to_str()).ok_or_else(|| {
+        threecrate_core::Error::UnsupportedFormat("No file extension found".to_string())
+    })?;
+
     IO_REGISTRY.write_mesh(mesh, path, extension)
 }
 
@@ -198,21 +201,21 @@ pub fn get_io_registry() -> &'static IoRegistry {
 }
 
 /// Streaming point cloud reader for large files
-/// 
+///
 /// This function returns an iterator that reads points one by one without loading
 /// the entire file into memory. Useful for processing very large point cloud files.
-/// 
+///
 /// # Arguments
 /// * `path` - Path to the point cloud file
 /// * `chunk_size` - Optional chunk size for internal buffering (default: 1000)
-/// 
+///
 /// # Returns
 /// An iterator over `Result<Point3f>` where each item is either a point or an error
-/// 
+///
 /// # Example
 /// ```rust
 /// use threecrate_io::read_point_cloud_iter;
-/// 
+///
 /// // Note: This will fail if the file doesn't exist, but demonstrates the API
 /// match read_point_cloud_iter("large_cloud.ply", Some(5000)) {
 ///     Ok(iter) => {
@@ -228,16 +231,14 @@ pub fn get_io_registry() -> &'static IoRegistry {
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn read_point_cloud_iter<P: AsRef<Path>>(
-    path: P, 
-    chunk_size: Option<usize>
+    path: P,
+    chunk_size: Option<usize>,
 ) -> Result<Box<dyn Iterator<Item = Result<Point3f>> + Send + Sync>> {
     let path = path.as_ref();
-    let extension = path.extension()
-        .and_then(|s| s.to_str())
-        .ok_or_else(|| threecrate_core::Error::UnsupportedFormat(
-            "No file extension found".to_string()
-        ))?;
-    
+    let extension = path.extension().and_then(|s| s.to_str()).ok_or_else(|| {
+        threecrate_core::Error::UnsupportedFormat("No file extension found".to_string())
+    })?;
+
     match extension {
         "ply" => {
             let iter = ply::PlyStreamingReader::new(path, chunk_size.unwrap_or(1000))?;
@@ -251,28 +252,29 @@ pub fn read_point_cloud_iter<P: AsRef<Path>>(
             let iter = xyz_csv::XyzCsvStreamingReader::new(path, chunk_size.unwrap_or(1000))?;
             Ok(Box::new(iter))
         }
-        _ => Err(threecrate_core::Error::UnsupportedFormat(
-            format!("Streaming not supported for format: {}", extension)
-        ))
+        _ => Err(threecrate_core::Error::UnsupportedFormat(format!(
+            "Streaming not supported for format: {}",
+            extension
+        ))),
     }
 }
 
 /// Streaming mesh reader for large files
-/// 
+///
 /// This function returns an iterator that reads mesh faces one by one without loading
 /// the entire file into memory. Useful for processing very large mesh files.
-/// 
+///
 /// # Arguments
 /// * `path` - Path to the mesh file
 /// * `chunk_size` - Optional chunk size for internal buffering (default: 1000)
-/// 
+///
 /// # Returns
 /// An iterator over `Result<[usize; 3]>` where each item is either a face or an error
-/// 
+///
 /// # Example
 /// ```rust
 /// use threecrate_io::read_mesh_iter;
-/// 
+///
 /// // Note: This will fail if the file doesn't exist, but demonstrates the API
 /// match read_mesh_iter("large_mesh.obj", Some(5000)) {
 ///     Ok(iter) => {
@@ -288,16 +290,14 @@ pub fn read_point_cloud_iter<P: AsRef<Path>>(
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn read_mesh_iter<P: AsRef<Path>>(
-    path: P, 
-    chunk_size: Option<usize>
+    path: P,
+    chunk_size: Option<usize>,
 ) -> Result<Box<dyn Iterator<Item = Result<[usize; 3]>> + Send + Sync>> {
     let path = path.as_ref();
-    let extension = path.extension()
-        .and_then(|s| s.to_str())
-        .ok_or_else(|| threecrate_core::Error::UnsupportedFormat(
-            "No file extension found".to_string()
-        ))?;
-    
+    let extension = path.extension().and_then(|s| s.to_str()).ok_or_else(|| {
+        threecrate_core::Error::UnsupportedFormat("No file extension found".to_string())
+    })?;
+
     match extension {
         "ply" => {
             let iter = ply::PlyMeshStreamingReader::new(path, chunk_size.unwrap_or(1000))?;
@@ -307,11 +307,11 @@ pub fn read_mesh_iter<P: AsRef<Path>>(
             let iter = obj::ObjMeshStreamingReader::new(path, chunk_size.unwrap_or(1000))?;
             Ok(Box::new(iter))
         }
-        _ => Err(threecrate_core::Error::UnsupportedFormat(
-            format!("Streaming not supported for format: {}", extension)
-        ))
+        _ => Err(threecrate_core::Error::UnsupportedFormat(format!(
+            "Streaming not supported for format: {}",
+            extension
+        ))),
     }
 }
 
 // Legacy tests moved to tests/ module
-

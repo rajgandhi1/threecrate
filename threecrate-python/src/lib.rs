@@ -6,45 +6,34 @@ use numpy::{
 use pyo3::exceptions::{PyIndexError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use threecrate_algorithms::{
-    estimate_normals as tc_estimate_normals, extract_euclidean_clusters,
-    icp_point_to_plane as tc_icp_point_to_plane, icp_point_to_point_default,
+    colorize_point_cloud as tc_colorize_point_cloud, estimate_normals as tc_estimate_normals,
+    extract_euclidean_clusters,
+    features::{extract_fpfh_features_with_normals, FpfhConfig, FPFH_DIM},
     gicp::{gicp as tc_gicp, GicpConfig},
-    kiss_icp::{kiss_icp as tc_kiss_icp, KissIcpConfig},
-    radius_outlier_removal, segment_plane as tc_segment_plane,
-    smooth_hc, smooth_laplacian, smooth_taubin, statistical_outlier_removal, voxel_grid_filter,
-    HcSmoothingConfig, LaplacianSmoothingConfig, TaubinSmoothingConfig,
     global_registration as tc_global_registration,
     global_registration_with_normals as tc_global_registration_with_normals,
-    GlobalRegistrationConfig,
-    ndt_registration as tc_ndt_registration,
-    NdtConfig,
-    mesh_union as tc_mesh_union,
-    mesh_intersection as tc_mesh_intersection,
-    mesh_difference as tc_mesh_difference,
-    features::{extract_fpfh_features_with_normals, FpfhConfig, FPFH_DIM},
-    CameraIntrinsics, RgbImageView, ColorizationConfig,
-    colorize_point_cloud as tc_colorize_point_cloud,
-    KdTree as TcKdTree,
+    icp_point_to_plane as tc_icp_point_to_plane, icp_point_to_point_default,
+    kiss_icp::{kiss_icp as tc_kiss_icp, KissIcpConfig},
+    mesh_difference as tc_mesh_difference, mesh_intersection as tc_mesh_intersection,
+    mesh_union as tc_mesh_union, ndt_registration as tc_ndt_registration, radius_outlier_removal,
+    segment_plane as tc_segment_plane, smooth_hc, smooth_laplacian, smooth_taubin,
+    statistical_outlier_removal, voxel_grid_filter, CameraIntrinsics, ColorizationConfig,
+    GlobalRegistrationConfig, HcSmoothingConfig, KdTree as TcKdTree, LaplacianSmoothingConfig,
+    NdtConfig, RgbImageView, TaubinSmoothingConfig,
 };
 use threecrate_core::{
-    ColoredNormalPoint3f, ColoredPoint3f, NormalPoint3f, NearestNeighborSearch,
-    Point3f, PointCloud, TriangleMesh, Vector3f,
+    ColoredNormalPoint3f, ColoredPoint3f, NearestNeighborSearch, NormalPoint3f, Point3f,
+    PointCloud, TriangleMesh, Vector3f,
 };
 use threecrate_io::{
-    read_mesh as rs_read_mesh, read_point_cloud as rs_read_pc, write_mesh as rs_write_mesh,
-    write_point_cloud as rs_write_pc,
-    ros2::{
-        self as tc_ros2,
-        PointCloud2Info,
-        PointField as Ros2PointField,
-    },
+    read_mesh as rs_read_mesh, read_point_cloud as rs_read_pc,
+    ros2::{self as tc_ros2, PointCloud2Info, PointField as Ros2PointField},
+    write_mesh as rs_write_mesh, write_point_cloud as rs_write_pc,
 };
 use threecrate_reconstruction::{
-    auto_reconstruct, poisson_reconstruction_default,
-    ball_pivoting_reconstruction as tc_ball_pivoting,
-    alpha_shape_reconstruction as tc_alpha_shape,
-    delaunay_triangulation as tc_delaunay,
-    moving_least_squares as tc_moving_least_squares,
+    alpha_shape_reconstruction as tc_alpha_shape, auto_reconstruct,
+    ball_pivoting_reconstruction as tc_ball_pivoting, delaunay_triangulation as tc_delaunay,
+    moving_least_squares as tc_moving_least_squares, poisson_reconstruction_default,
 };
 use threecrate_simplification::{MeshSimplifier, QuadricErrorSimplifier};
 
@@ -96,10 +85,10 @@ fn numpy_to_isometry(arr: Option<Bound<'_, PyAny>>) -> PyResult<Isometry3<f32>> 
             return Err(PyValueError::new_err("init_transform must be a 4×4 array"));
         }
         [
-            [a[[0,0]], a[[0,1]], a[[0,2]], a[[0,3]]],
-            [a[[1,0]], a[[1,1]], a[[1,2]], a[[1,3]]],
-            [a[[2,0]], a[[2,1]], a[[2,2]], a[[2,3]]],
-            [a[[3,0]], a[[3,1]], a[[3,2]], a[[3,3]]],
+            [a[[0, 0]], a[[0, 1]], a[[0, 2]], a[[0, 3]]],
+            [a[[1, 0]], a[[1, 1]], a[[1, 2]], a[[1, 3]]],
+            [a[[2, 0]], a[[2, 1]], a[[2, 2]], a[[2, 3]]],
+            [a[[3, 0]], a[[3, 1]], a[[3, 2]], a[[3, 3]]],
         ]
     } else if let Ok(a) = arr.downcast::<PyArray2<f64>>() {
         let a = a.readonly();
@@ -108,21 +97,39 @@ fn numpy_to_isometry(arr: Option<Bound<'_, PyAny>>) -> PyResult<Isometry3<f32>> 
             return Err(PyValueError::new_err("init_transform must be a 4×4 array"));
         }
         [
-            [a[[0,0]] as f32, a[[0,1]] as f32, a[[0,2]] as f32, a[[0,3]] as f32],
-            [a[[1,0]] as f32, a[[1,1]] as f32, a[[1,2]] as f32, a[[1,3]] as f32],
-            [a[[2,0]] as f32, a[[2,1]] as f32, a[[2,2]] as f32, a[[2,3]] as f32],
-            [a[[3,0]] as f32, a[[3,1]] as f32, a[[3,2]] as f32, a[[3,3]] as f32],
+            [
+                a[[0, 0]] as f32,
+                a[[0, 1]] as f32,
+                a[[0, 2]] as f32,
+                a[[0, 3]] as f32,
+            ],
+            [
+                a[[1, 0]] as f32,
+                a[[1, 1]] as f32,
+                a[[1, 2]] as f32,
+                a[[1, 3]] as f32,
+            ],
+            [
+                a[[2, 0]] as f32,
+                a[[2, 1]] as f32,
+                a[[2, 2]] as f32,
+                a[[2, 3]] as f32,
+            ],
+            [
+                a[[3, 0]] as f32,
+                a[[3, 1]] as f32,
+                a[[3, 2]] as f32,
+                a[[3, 3]] as f32,
+            ],
         ]
     } else {
         return Err(PyValueError::new_err(
-            "init_transform must be a 4×4 numpy array (float32 or float64)"
+            "init_transform must be a 4×4 numpy array (float32 or float64)",
         ));
     };
 
     let rot = nalgebra::Matrix3::new(
-        m[0][0], m[0][1], m[0][2],
-        m[1][0], m[1][1], m[1][2],
-        m[2][0], m[2][1], m[2][2],
+        m[0][0], m[0][1], m[0][2], m[1][0], m[1][1], m[1][2], m[2][0], m[2][1], m[2][2],
     );
     let rotation = nalgebra::UnitQuaternion::from_matrix(&rot);
     let translation = nalgebra::Translation3::new(m[0][3], m[1][3], m[2][3]);
@@ -135,7 +142,9 @@ fn numpy1d_to_point(arr: &Bound<'_, PyAny>) -> PyResult<Point3f> {
         let a = a.readonly();
         let a = a.as_array();
         if a.len() != 3 {
-            return Err(PyValueError::new_err("Query point must be a 1D array of length 3"));
+            return Err(PyValueError::new_err(
+                "Query point must be a 1D array of length 3",
+            ));
         }
         return Ok(Point3f::new(a[0], a[1], a[2]));
     }
@@ -143,12 +152,14 @@ fn numpy1d_to_point(arr: &Bound<'_, PyAny>) -> PyResult<Point3f> {
         let a = a.readonly();
         let a = a.as_array();
         if a.len() != 3 {
-            return Err(PyValueError::new_err("Query point must be a 1D array of length 3"));
+            return Err(PyValueError::new_err(
+                "Query point must be a 1D array of length 3",
+            ));
         }
         return Ok(Point3f::new(a[0] as f32, a[1] as f32, a[2] as f32));
     }
     Err(PyValueError::new_err(
-        "Query point must be a 1D float numpy array of length 3 (float32 or float64)"
+        "Query point must be a 1D float numpy array of length 3 (float32 or float64)",
     ))
 }
 
@@ -160,11 +171,14 @@ fn read_nx3_points(arr: &Bound<'_, PyAny>) -> PyResult<Vec<Point3f>> {
         let shape = a.shape();
         if shape.len() != 2 || shape[1] != 3 {
             return Err(PyValueError::new_err(format!(
-                "Array must have shape (N, 3), got shape {:?} with dtype float32", shape
+                "Array must have shape (N, 3), got shape {:?} with dtype float32",
+                shape
             )));
         }
         let n = shape[0];
-        return Ok((0..n).map(|i| Point3f::new(a[[i, 0]], a[[i, 1]], a[[i, 2]])).collect());
+        return Ok((0..n)
+            .map(|i| Point3f::new(a[[i, 0]], a[[i, 1]], a[[i, 2]]))
+            .collect());
     }
     if let Ok(a) = arr.downcast::<PyArray2<f64>>() {
         let a = a.readonly();
@@ -172,16 +186,17 @@ fn read_nx3_points(arr: &Bound<'_, PyAny>) -> PyResult<Vec<Point3f>> {
         let shape = a.shape();
         if shape.len() != 2 || shape[1] != 3 {
             return Err(PyValueError::new_err(format!(
-                "Array must have shape (N, 3), got shape {:?} with dtype float64", shape
+                "Array must have shape (N, 3), got shape {:?} with dtype float64",
+                shape
             )));
         }
         let n = shape[0];
-        return Ok((0..n).map(|i| Point3f::new(
-            a[[i, 0]] as f32, a[[i, 1]] as f32, a[[i, 2]] as f32,
-        )).collect());
+        return Ok((0..n)
+            .map(|i| Point3f::new(a[[i, 0]] as f32, a[[i, 1]] as f32, a[[i, 2]] as f32))
+            .collect());
     }
     Err(PyValueError::new_err(
-        "Expected a numpy array of shape (N, 3) with dtype float32 or float64"
+        "Expected a numpy array of shape (N, 3) with dtype float32 or float64",
     ))
 }
 
@@ -195,7 +210,8 @@ fn read_mx3_faces(arr: &Bound<'_, PyAny>) -> PyResult<Vec<[usize; 3]>> {
                 let shape = a.shape();
                 if shape.len() != 2 || shape[1] != 3 {
                     return Err(PyValueError::new_err(format!(
-                        "Faces array must have shape (M, 3), got {:?}", shape
+                        "Faces array must have shape (M, 3), got {:?}",
+                        shape
                     )));
                 }
                 let m = shape[0];
@@ -210,7 +226,7 @@ fn read_mx3_faces(arr: &Bound<'_, PyAny>) -> PyResult<Vec<[usize; 3]>> {
     try_downcast!(u64);
     try_downcast!(i64);
     Err(PyValueError::new_err(
-        "Faces array must be (M, 3) integer numpy array (int32, int64, uint32, or uint64)"
+        "Faces array must be (M, 3) integer numpy array (int32, int64, uint32, or uint64)",
     ))
 }
 
@@ -238,10 +254,14 @@ impl PyPointCloud {
     #[pyo3(signature = (arr=None))]
     fn new(arr: Option<Bound<'_, PyAny>>) -> PyResult<Self> {
         match arr {
-            None => Ok(Self { inner: PointCloud::new() }),
+            None => Ok(Self {
+                inner: PointCloud::new(),
+            }),
             Some(a) => {
                 let points = read_nx3_points(&a)?;
-                Ok(Self { inner: PointCloud::from_points(points) })
+                Ok(Self {
+                    inner: PointCloud::from_points(points),
+                })
             }
         }
     }
@@ -250,7 +270,9 @@ impl PyPointCloud {
     #[staticmethod]
     fn from_numpy(arr: &Bound<'_, PyAny>) -> PyResult<Self> {
         let points = read_nx3_points(arr)?;
-        Ok(Self { inner: PointCloud::from_points(points) })
+        Ok(Self {
+            inner: PointCloud::from_points(points),
+        })
     }
 
     /// Return the point positions as a numpy array of shape (N, 3) float32.
@@ -298,7 +320,9 @@ impl PyPointCloud {
     fn __add__(&self, other: &PyPointCloud) -> PyPointCloud {
         let mut points = self.inner.points.clone();
         points.extend_from_slice(&other.inner.points);
-        PyPointCloud { inner: PointCloud::from_points(points) }
+        PyPointCloud {
+            inner: PointCloud::from_points(points),
+        }
     }
 
     /// Numpy array protocol — allows `numpy.asarray(cloud)` to return (N, 3) float32.
@@ -354,7 +378,9 @@ impl PyNormalPointCloud {
                 normal: Vector3f::new(n.x, n.y, n.z),
             })
             .collect();
-        Ok(Self { inner: PointCloud::from_points(points) })
+        Ok(Self {
+            inner: PointCloud::from_points(points),
+        })
     }
 
     /// Return point positions as a numpy array of shape (N, 3) float32.
@@ -706,11 +732,7 @@ impl PyKdTree {
     /// -------
     /// tuple[list[int], list[float]]
     ///     ``(indices, distances)`` ordered nearest first.
-    fn knn(
-        &self,
-        query: &Bound<'_, PyAny>,
-        k: usize,
-    ) -> PyResult<(Vec<usize>, Vec<f32>)> {
+    fn knn(&self, query: &Bound<'_, PyAny>, k: usize) -> PyResult<(Vec<usize>, Vec<f32>)> {
         let q = numpy1d_to_point(query)?;
         let results = self.inner.find_k_nearest(&q, k);
         Ok((
@@ -804,10 +826,7 @@ fn remove_radius_outliers(
 /// `poisson_reconstruct()`.
 #[pyfunction]
 #[pyo3(name = "estimate_normals", signature = (cloud, k_neighbors = 10))]
-fn py_estimate_normals(
-    cloud: &PyPointCloud,
-    k_neighbors: usize,
-) -> PyResult<PyNormalPointCloud> {
+fn py_estimate_normals(cloud: &PyPointCloud, k_neighbors: usize) -> PyResult<PyNormalPointCloud> {
     tc_estimate_normals(&cloud.inner, k_neighbors)
         .map(|c| PyNormalPointCloud { inner: c })
         .map_err(to_py_err)
@@ -951,16 +970,25 @@ fn icp_point_to_plane(
 ) -> PyResult<PyIcpResult> {
     let init = numpy_to_isometry(init_transform)?;
     let source_cloud = PointCloud::from_points(
-        source.inner.points.iter()
+        source
+            .inner
+            .points
+            .iter()
             .map(|p| Point3f::new(p.x, p.y, p.z))
             .collect(),
     );
     let target_cloud = PointCloud::from_points(
-        target.inner.points.iter()
+        target
+            .inner
+            .points
+            .iter()
             .map(|p| Point3f::new(p.position.x, p.position.y, p.position.z))
             .collect(),
     );
-    let target_normals: Vec<Vector3f> = target.inner.points.iter()
+    let target_normals: Vec<Vector3f> = target
+        .inner
+        .points
+        .iter()
         .map(|p| Vector3f::new(p.normal.x, p.normal.y, p.normal.z))
         .collect();
     tc_icp_point_to_plane(
@@ -1200,7 +1228,10 @@ fn extract_fpfh_features<'py>(
     k_neighbors: usize,
 ) -> PyResult<Bound<'py, PyArray2<f32>>> {
     let cloud_n = tc_estimate_normals(&cloud.inner, k_neighbors).map_err(to_py_err)?;
-    let config = FpfhConfig { search_radius, k_neighbors };
+    let config = FpfhConfig {
+        search_radius,
+        k_neighbors,
+    };
     let descs = extract_fpfh_features_with_normals(&cloud_n, &config).map_err(to_py_err)?;
 
     let n = descs.len();
@@ -1312,10 +1343,7 @@ fn mesh_union(mesh_a: &PyTriangleMesh, mesh_b: &PyTriangleMesh) -> PyResult<PyTr
 ///     mesh_a: First input mesh.
 ///     mesh_b: Second input mesh.
 #[pyfunction]
-fn mesh_intersection(
-    mesh_a: &PyTriangleMesh,
-    mesh_b: &PyTriangleMesh,
-) -> PyResult<PyTriangleMesh> {
+fn mesh_intersection(mesh_a: &PyTriangleMesh, mesh_b: &PyTriangleMesh) -> PyResult<PyTriangleMesh> {
     tc_mesh_intersection(&mesh_a.inner, &mesh_b.inner)
         .map(|m| PyTriangleMesh { inner: m })
         .map_err(to_py_err)
@@ -1330,10 +1358,7 @@ fn mesh_intersection(
 ///     mesh_a: Minuend mesh.
 ///     mesh_b: Subtrahend mesh.
 #[pyfunction]
-fn mesh_difference(
-    mesh_a: &PyTriangleMesh,
-    mesh_b: &PyTriangleMesh,
-) -> PyResult<PyTriangleMesh> {
+fn mesh_difference(mesh_a: &PyTriangleMesh, mesh_b: &PyTriangleMesh) -> PyResult<PyTriangleMesh> {
     tc_mesh_difference(&mesh_a.inner, &mesh_b.inner)
         .map(|m| PyTriangleMesh { inner: m })
         .map_err(to_py_err)
@@ -1488,10 +1513,7 @@ fn poisson_reconstruct(cloud: &PyNormalPointCloud) -> PyResult<PyTriangleMesh> {
 ///     radius: Ball radius in point-cloud units (default 0.1).
 #[pyfunction]
 #[pyo3(signature = (cloud, radius = 0.1))]
-fn ball_pivoting_reconstruct(
-    cloud: &PyPointCloud,
-    radius: f32,
-) -> PyResult<PyTriangleMesh> {
+fn ball_pivoting_reconstruct(cloud: &PyPointCloud, radius: f32) -> PyResult<PyTriangleMesh> {
     tc_ball_pivoting(&cloud.inner, radius)
         .map(|m| PyTriangleMesh { inner: m })
         .map_err(to_py_err)
@@ -1508,10 +1530,7 @@ fn ball_pivoting_reconstruct(
 ///     alpha: Shape parameter (default 1.0). Lower = tighter fit.
 #[pyfunction]
 #[pyo3(signature = (cloud, alpha = 1.0))]
-fn alpha_shape_reconstruct(
-    cloud: &PyPointCloud,
-    alpha: f32,
-) -> PyResult<PyTriangleMesh> {
+fn alpha_shape_reconstruct(cloud: &PyPointCloud, alpha: f32) -> PyResult<PyTriangleMesh> {
     tc_alpha_shape(&cloud.inner, alpha)
         .map(|m| PyTriangleMesh { inner: m })
         .map_err(to_py_err)
@@ -1617,7 +1636,9 @@ fn concatenate(clouds: Vec<PyRef<PyPointCloud>>) -> PyPointCloud {
         .iter()
         .flat_map(|c| c.inner.points.iter().copied())
         .collect();
-    PyPointCloud { inner: PointCloud::from_points(points) }
+    PyPointCloud {
+        inner: PointCloud::from_points(points),
+    }
 }
 
 /// Apply a 4×4 rigid transform to every point in a cloud.
@@ -1648,7 +1669,9 @@ fn transform_point_cloud(
         .iter()
         .map(|p| iso.transform_point(p))
         .collect();
-    Ok(PyPointCloud { inner: PointCloud::from_points(points) })
+    Ok(PyPointCloud {
+        inner: PointCloud::from_points(points),
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -1773,13 +1796,15 @@ impl PyColoredPointCloud {
         let shape = c.shape();
         if shape.len() != 2 || shape[1] != 3 {
             return Err(PyValueError::new_err(format!(
-                "colors must have shape (N, 3), got {:?}", shape
+                "colors must have shape (N, 3), got {:?}",
+                shape
             )));
         }
         if pos.len() != shape[0] {
             return Err(PyValueError::new_err(format!(
                 "positions and colors must have the same length ({} vs {})",
-                pos.len(), shape[0]
+                pos.len(),
+                shape[0]
             )));
         }
         let points = pos
@@ -1790,7 +1815,9 @@ impl PyColoredPointCloud {
                 color: [c[[i, 0]], c[[i, 1]], c[[i, 2]]],
             })
             .collect();
-        Ok(Self { inner: PointCloud::from_points(points) })
+        Ok(Self {
+            inner: PointCloud::from_points(points),
+        })
     }
 
     /// Point positions as a numpy array of shape (N, 3) float32.
@@ -1865,12 +1892,13 @@ impl PyColoredNormalPointCloud {
         let shape = c.shape();
         if shape.len() != 2 || shape[1] != 3 {
             return Err(PyValueError::new_err(format!(
-                "colors must have shape (N, 3), got {:?}", shape
+                "colors must have shape (N, 3), got {:?}",
+                shape
             )));
         }
         if pos.len() != nrm.len() || pos.len() != shape[0] {
             return Err(PyValueError::new_err(
-                "positions, normals, and colors must all have the same length"
+                "positions, normals, and colors must all have the same length",
             ));
         }
         let points = pos
@@ -1883,7 +1911,9 @@ impl PyColoredNormalPointCloud {
                 color: [c[[i, 0]], c[[i, 1]], c[[i, 2]]],
             })
             .collect();
-        Ok(Self { inner: PointCloud::from_points(points) })
+        Ok(Self {
+            inner: PointCloud::from_points(points),
+        })
     }
 
     /// Point positions as a numpy array of shape (N, 3) float32.
@@ -2012,9 +2042,7 @@ impl PyPointCloud2Data {
     fn __repr__(&self) -> String {
         format!(
             "PointCloud2Data({}×{} points, point_step={})",
-            self.inner.info.width,
-            self.inner.info.height,
-            self.inner.info.point_step,
+            self.inner.info.width, self.inner.info.height, self.inner.info.point_step,
         )
     }
 }
@@ -2130,7 +2158,9 @@ fn pointcloud2_to_colored_normals(
 /// Returns a `PointCloud2Data` with 12-byte point step (x, y, z as float32).
 #[pyfunction]
 fn xyz_to_pointcloud2(cloud: &PyPointCloud) -> PyPointCloud2Data {
-    PyPointCloud2Data { inner: tc_ros2::xyz_to_pointcloud2(&cloud.inner) }
+    PyPointCloud2Data {
+        inner: tc_ros2::xyz_to_pointcloud2(&cloud.inner),
+    }
 }
 
 /// Serialise a `NormalPointCloud` to `PointCloud2` format.
@@ -2138,7 +2168,9 @@ fn xyz_to_pointcloud2(cloud: &PyPointCloud) -> PyPointCloud2Data {
 /// Returns a `PointCloud2Data` with 24-byte point step.
 #[pyfunction]
 fn normals_to_pointcloud2(cloud: &PyNormalPointCloud) -> PyPointCloud2Data {
-    PyPointCloud2Data { inner: tc_ros2::normals_to_pointcloud2(&cloud.inner) }
+    PyPointCloud2Data {
+        inner: tc_ros2::normals_to_pointcloud2(&cloud.inner),
+    }
 }
 
 /// Serialise a `ColoredPointCloud` to `PointCloud2` format.
@@ -2146,7 +2178,9 @@ fn normals_to_pointcloud2(cloud: &PyNormalPointCloud) -> PyPointCloud2Data {
 /// Returns a `PointCloud2Data` with 16-byte point step.
 #[pyfunction]
 fn colored_to_pointcloud2(cloud: &PyColoredPointCloud) -> PyPointCloud2Data {
-    PyPointCloud2Data { inner: tc_ros2::colored_to_pointcloud2(&cloud.inner) }
+    PyPointCloud2Data {
+        inner: tc_ros2::colored_to_pointcloud2(&cloud.inner),
+    }
 }
 
 /// Serialise a `ColoredNormalPointCloud` to `PointCloud2` format.
@@ -2154,7 +2188,9 @@ fn colored_to_pointcloud2(cloud: &PyColoredPointCloud) -> PyPointCloud2Data {
 /// Returns a `PointCloud2Data` with 28-byte point step.
 #[pyfunction]
 fn colored_normals_to_pointcloud2(cloud: &PyColoredNormalPointCloud) -> PyPointCloud2Data {
-    PyPointCloud2Data { inner: tc_ros2::colored_normals_to_pointcloud2(&cloud.inner) }
+    PyPointCloud2Data {
+        inner: tc_ros2::colored_normals_to_pointcloud2(&cloud.inner),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2162,8 +2198,8 @@ fn colored_normals_to_pointcloud2(cloud: &PyColoredNormalPointCloud) -> PyPointC
 // ---------------------------------------------------------------------------
 
 use threecrate_algorithms::streaming::{
-    BackpressureConfig, RealtimePipeline, RealtimeMetrics,
-    StreamingCollector, StreamingVoxelFilter, StreamingVoxelFilterConfig,
+    BackpressureConfig, RealtimeMetrics, RealtimePipeline, StreamingCollector,
+    StreamingVoxelFilter, StreamingVoxelFilterConfig,
 };
 
 /// Snapshot of real-time pipeline metrics.
@@ -2177,19 +2213,27 @@ pub struct PyRealtimeMetrics {
 impl PyRealtimeMetrics {
     /// Total items successfully placed in the queue.
     #[getter]
-    fn items_queued(&self) -> u64 { self.inner.items_queued }
+    fn items_queued(&self) -> u64 {
+        self.inner.items_queued
+    }
 
     /// Total items dequeued and processed by the background worker.
     #[getter]
-    fn items_processed(&self) -> u64 { self.inner.items_processed }
+    fn items_processed(&self) -> u64 {
+        self.inner.items_processed
+    }
 
     /// Items dropped because the queue was full (via `try_send`).
     #[getter]
-    fn items_dropped(&self) -> u64 { self.inner.items_dropped }
+    fn items_dropped(&self) -> u64 {
+        self.inner.items_dropped
+    }
 
     /// Estimated current queue depth (`items_queued − items_processed`).
     #[getter]
-    fn estimated_queue_depth(&self) -> u64 { self.inner.estimated_queue_depth }
+    fn estimated_queue_depth(&self) -> u64 {
+        self.inner.estimated_queue_depth
+    }
 
     fn __repr__(&self) -> String {
         format!(
@@ -2392,7 +2436,9 @@ impl PyRealtimeVoxelFilter {
             chunk_size,
             flush_timeout: flush_timeout_ms.map(std::time::Duration::from_millis),
         };
-        Ok(Self { inner: Some(RealtimePipeline::new(filter, config)) })
+        Ok(Self {
+            inner: Some(RealtimePipeline::new(filter, config)),
+        })
     }
 
     /// Send a single XYZ point, blocking if the queue is full (backpressure).

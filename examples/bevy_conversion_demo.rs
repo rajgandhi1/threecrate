@@ -37,12 +37,16 @@ fn main() {
     println!("Step 3: Adding vertex colors...");
     let colors = vec![[255u8, 100, 50]; triangle_mesh.vertex_count()];
     triangle_mesh.set_colors(colors);
-    println!("✓ Added {} vertex colors (orange)", triangle_mesh.vertex_count());
+    println!(
+        "✓ Added {} vertex colors (orange)",
+        triangle_mesh.vertex_count()
+    );
     println!();
 
     // Step 4: Convert to Bevy Mesh
     println!("Step 4: Converting to Bevy Mesh...");
-    let bevy_mesh = triangle_mesh.to_bevy_mesh()
+    let bevy_mesh = triangle_mesh
+        .to_bevy_mesh()
         .expect("Failed to convert to Bevy mesh");
     println!("✓ Conversion successful!");
     println!();
@@ -52,8 +56,14 @@ fn main() {
     println!("  Type: bevy::prelude::Mesh");
     println!("  Primitive Topology: TriangleList");
     println!("  Vertex count : {}", bevy_mesh.count_vertices());
-    println!("  Has normals  : {}", bevy_mesh.attribute(Mesh::ATTRIBUTE_NORMAL).is_some());
-    println!("  Has colors   : {}", bevy_mesh.attribute(Mesh::ATTRIBUTE_COLOR).is_some());
+    println!(
+        "  Has normals  : {}",
+        bevy_mesh.attribute(Mesh::ATTRIBUTE_NORMAL).is_some()
+    );
+    println!(
+        "  Has colors   : {}",
+        bevy_mesh.attribute(Mesh::ATTRIBUTE_COLOR).is_some()
+    );
     println!("  Has indices  : {}", bevy_mesh.indices().is_some());
     println!();
 
@@ -85,8 +95,8 @@ fn main() {
 
 #[cfg(feature = "bevy_interop")]
 mod demo {
-    use bevy::prelude::*;
     use bevy::input::mouse::{MouseMotion, MouseWheel};
+    use bevy::prelude::*;
 
     #[derive(Resource)]
     pub struct ConvertedMesh(pub Mesh);
@@ -284,7 +294,10 @@ mod demo {
 }
 
 #[cfg(feature = "bevy_interop")]
-fn make_cube_mesh(center: threecrate_core::Point3f, half_size: f32) -> threecrate_core::TriangleMesh {
+fn make_cube_mesh(
+    center: threecrate_core::Point3f,
+    half_size: f32,
+) -> threecrate_core::TriangleMesh {
     use threecrate_core::{Point3f, TriangleMesh, Vector3f};
 
     let (cx, cy, cz) = (center.x, center.y, center.z);

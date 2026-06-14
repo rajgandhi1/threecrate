@@ -1,26 +1,26 @@
 //! Interactive 3D viewer with UI controls
-//! 
+//!
 //! This module provides a simplified interactive viewer for 3D data
 
 use std::sync::Arc;
 use winit::{
     application::ApplicationHandler,
-    event::{WindowEvent, ElementState, MouseButton},
-    event_loop::{EventLoop, ActiveEventLoop},
-    window::{Window, WindowId},
-    keyboard::Key,
     dpi::PhysicalPosition,
+    event::{ElementState, MouseButton, WindowEvent},
+    event_loop::{ActiveEventLoop, EventLoop},
+    keyboard::Key,
+    window::{Window, WindowId},
 };
 
-use threecrate_core::{PointCloud, TriangleMesh, Result, Point3f, ColoredPoint3f, Error};
-use threecrate_gpu::{
-    PointCloudRenderer, RenderConfig, PointVertex,
-    MeshRenderer, MeshRenderConfig, ShadingMode, PbrMaterial, MeshLightingParams, mesh_to_gpu_mesh,
-};
-use threecrate_algorithms::{ICPResult, PlaneSegmentationResult};
 use crate::camera::Camera;
+use threecrate_algorithms::{ICPResult, PlaneSegmentationResult};
+use threecrate_core::{ColoredPoint3f, Error, Point3f, PointCloud, Result, TriangleMesh};
+use threecrate_gpu::{
+    mesh_to_gpu_mesh, MeshLightingParams, MeshRenderConfig, MeshRenderer, PbrMaterial,
+    PointCloudRenderer, PointVertex, RenderConfig, ShadingMode,
+};
 
-use nalgebra::{Vector3, Point3};
+use nalgebra::{Point3, Vector3};
 
 /// Types of data that can be displayed
 #[derive(Debug, Clone)]
@@ -179,7 +179,11 @@ impl InteractiveViewer {
     pub fn set_mesh(&mut self, mesh: &TriangleMesh) {
         self.current_data = ViewData::Mesh(mesh.clone());
         self.vertices_dirty = true;
-        println!("Set mesh with {} vertices and {} faces", mesh.vertices.len(), mesh.faces.len());
+        println!(
+            "Set mesh with {} vertices and {} faces",
+            mesh.vertices.len(),
+            mesh.faces.len()
+        );
     }
 
     /// Set the shading mode used when rendering meshes.
@@ -204,7 +208,12 @@ impl InteractiveViewer {
         println!("Starting threecrate Interactive Viewer...");
 
         // Create event loop
-        let event_loop = EventLoop::new().map_err(|e| Error::Io(std::io::Error::new(std::io::ErrorKind::Other, format!("Failed to create event loop: {}", e))))?;
+        let event_loop = EventLoop::new().map_err(|e| {
+            Error::Io(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("Failed to create event loop: {}", e),
+            ))
+        })?;
 
         // Create application handler
         let mut app = ViewerApp {
@@ -217,7 +226,12 @@ impl InteractiveViewer {
         };
 
         // Run the event loop
-        event_loop.run_app(&mut app).map_err(|e| Error::Io(std::io::Error::new(std::io::ErrorKind::Other, format!("Event loop error: {}", e))))?;
+        event_loop.run_app(&mut app).map_err(|e| {
+            Error::Io(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("Event loop error: {}", e),
+            ))
+        })?;
 
         Ok(())
     }
@@ -264,23 +278,24 @@ impl ApplicationHandler for ViewerApp {
 
             // Leak the Arc to get a 'static reference
             // This is safe because the window will live for the duration of the program
-            let window_ref: &'static Window = unsafe {
-                std::mem::transmute::<&Window, &'static Window>(window.as_ref())
-            };
+            let window_ref: &'static Window =
+                unsafe { std::mem::transmute::<&Window, &'static Window>(window.as_ref()) };
 
             // Initialize renderers using the static reference
             let pc_config = RenderConfig::default();
-            let point_renderer = match pollster::block_on(PointCloudRenderer::new(window_ref, pc_config)) {
-                Ok(r) => r,
-                Err(e) => {
-                    eprintln!("Failed to create point cloud renderer: {}", e);
-                    event_loop.exit();
-                    return;
-                }
-            };
+            let point_renderer =
+                match pollster::block_on(PointCloudRenderer::new(window_ref, pc_config)) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        eprintln!("Failed to create point cloud renderer: {}", e);
+                        event_loop.exit();
+                        return;
+                    }
+                };
 
             let mesh_config = MeshRenderConfig::default();
-            let mesh_renderer = match pollster::block_on(MeshRenderer::new(window_ref, mesh_config)) {
+            let mesh_renderer = match pollster::block_on(MeshRenderer::new(window_ref, mesh_config))
+            {
                 Ok(r) => r,
                 Err(e) => {
                     eprintln!("Failed to create mesh renderer: {}", e);
@@ -307,9 +322,15 @@ impl ApplicationHandler for ViewerApp {
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
-        let Some(window) = &self.window else { return; };
-        let Some(point_renderer) = &mut self.point_renderer else { return; };
-        let Some(mesh_renderer) = &mut self.mesh_renderer else { return; };
+        let Some(window) = &self.window else {
+            return;
+        };
+        let Some(point_renderer) = &mut self.point_renderer else {
+            return;
+        };
+        let Some(mesh_renderer) = &mut self.mesh_renderer else {
+            return;
+        };
 
         match event {
             WindowEvent::CloseRequested => {
@@ -320,17 +341,15 @@ impl ApplicationHandler for ViewerApp {
                 mesh_renderer.resize(new_size);
                 self.viewer.camera.aspect_ratio = new_size.width as f32 / new_size.height as f32;
             }
-            WindowEvent::MouseInput { state, button, .. } => {
-                match button {
-                    MouseButton::Left => {
-                        self.viewer.mouse_pressed = state == ElementState::Pressed;
-                    }
-                    MouseButton::Right => {
-                        self.viewer.right_mouse_pressed = state == ElementState::Pressed;
-                    }
-                    _ => {}
+            WindowEvent::MouseInput { state, button, .. } => match button {
+                MouseButton::Left => {
+                    self.viewer.mouse_pressed = state == ElementState::Pressed;
                 }
-            }
+                MouseButton::Right => {
+                    self.viewer.right_mouse_pressed = state == ElementState::Pressed;
+                }
+                _ => {}
+            },
             WindowEvent::CursorMoved { position, .. } => {
                 if let Some(last_pos) = self.viewer.last_mouse_pos {
                     let delta_x = position.x - last_pos.x;
@@ -339,10 +358,14 @@ impl ApplicationHandler for ViewerApp {
                     if self.viewer.mouse_pressed {
                         match self.viewer.camera_mode {
                             CameraMode::Orbit => {
-                                self.viewer.camera.orbit(delta_x as f32 * 0.01, delta_y as f32 * 0.01);
+                                self.viewer
+                                    .camera
+                                    .orbit(delta_x as f32 * 0.01, delta_y as f32 * 0.01);
                             }
                             CameraMode::Pan => {
-                                self.viewer.camera.pan(delta_x as f32 * 0.01, delta_y as f32 * 0.01);
+                                self.viewer
+                                    .camera
+                                    .pan(delta_x as f32 * 0.01, delta_y as f32 * 0.01);
                             }
                             _ => {}
                         }
@@ -394,28 +417,44 @@ impl ApplicationHandler for ViewerApp {
                                 // Ambient strength  [ decrease  ] increase
                                 "[" => {
                                     self.viewer.lighting_params.ambient_strength =
-                                        (self.viewer.lighting_params.ambient_strength - 0.01).max(0.0);
+                                        (self.viewer.lighting_params.ambient_strength - 0.01)
+                                            .max(0.0);
                                     self.viewer.lighting_dirty = true;
-                                    println!("Ambient strength: {:.3}", self.viewer.lighting_params.ambient_strength);
+                                    println!(
+                                        "Ambient strength: {:.3}",
+                                        self.viewer.lighting_params.ambient_strength
+                                    );
                                 }
                                 "]" => {
                                     self.viewer.lighting_params.ambient_strength =
-                                        (self.viewer.lighting_params.ambient_strength + 0.01).min(1.0);
+                                        (self.viewer.lighting_params.ambient_strength + 0.01)
+                                            .min(1.0);
                                     self.viewer.lighting_dirty = true;
-                                    println!("Ambient strength: {:.3}", self.viewer.lighting_params.ambient_strength);
+                                    println!(
+                                        "Ambient strength: {:.3}",
+                                        self.viewer.lighting_params.ambient_strength
+                                    );
                                 }
                                 // Light intensity  - decrease  = increase
                                 "-" => {
                                     self.viewer.lighting_params.light_intensity =
-                                        (self.viewer.lighting_params.light_intensity - 0.1).max(0.0);
+                                        (self.viewer.lighting_params.light_intensity - 0.1)
+                                            .max(0.0);
                                     self.viewer.lighting_dirty = true;
-                                    println!("Light intensity: {:.2}", self.viewer.lighting_params.light_intensity);
+                                    println!(
+                                        "Light intensity: {:.2}",
+                                        self.viewer.lighting_params.light_intensity
+                                    );
                                 }
                                 "=" => {
                                     self.viewer.lighting_params.light_intensity =
-                                        (self.viewer.lighting_params.light_intensity + 0.1).min(10.0);
+                                        (self.viewer.lighting_params.light_intensity + 0.1)
+                                            .min(10.0);
                                     self.viewer.lighting_dirty = true;
-                                    println!("Light intensity: {:.2}", self.viewer.lighting_params.light_intensity);
+                                    println!(
+                                        "Light intensity: {:.2}",
+                                        self.viewer.lighting_params.light_intensity
+                                    );
                                 }
                                 _ => {}
                             }
@@ -449,10 +488,30 @@ impl ApplicationHandler for ViewerApp {
                                 let color = [1.0, 1.0, 1.0];
                                 let normal = [0.0, 0.0, 1.0];
 
-                                let v1 = PointVertex::from_point(&Point3f::new(pos[0] - size, pos[1] - size, pos[2]), color, 16.0, normal);
-                                let v2 = PointVertex::from_point(&Point3f::new(pos[0] + size, pos[1] - size, pos[2]), color, 16.0, normal);
-                                let v3 = PointVertex::from_point(&Point3f::new(pos[0] + size, pos[1] + size, pos[2]), color, 16.0, normal);
-                                let v4 = PointVertex::from_point(&Point3f::new(pos[0] - size, pos[1] + size, pos[2]), color, 16.0, normal);
+                                let v1 = PointVertex::from_point(
+                                    &Point3f::new(pos[0] - size, pos[1] - size, pos[2]),
+                                    color,
+                                    16.0,
+                                    normal,
+                                );
+                                let v2 = PointVertex::from_point(
+                                    &Point3f::new(pos[0] + size, pos[1] - size, pos[2]),
+                                    color,
+                                    16.0,
+                                    normal,
+                                );
+                                let v3 = PointVertex::from_point(
+                                    &Point3f::new(pos[0] + size, pos[1] + size, pos[2]),
+                                    color,
+                                    16.0,
+                                    normal,
+                                );
+                                let v4 = PointVertex::from_point(
+                                    &Point3f::new(pos[0] - size, pos[1] + size, pos[2]),
+                                    color,
+                                    16.0,
+                                    normal,
+                                );
 
                                 vertices.push(v1);
                                 vertices.push(v2);
@@ -475,10 +534,30 @@ impl ApplicationHandler for ViewerApp {
                                 ];
                                 let normal = [0.0, 0.0, 1.0];
 
-                                let v1 = PointVertex::from_point(&Point3f::new(pos[0] - size, pos[1] - size, pos[2]), color, 16.0, normal);
-                                let v2 = PointVertex::from_point(&Point3f::new(pos[0] + size, pos[1] - size, pos[2]), color, 16.0, normal);
-                                let v3 = PointVertex::from_point(&Point3f::new(pos[0] + size, pos[1] + size, pos[2]), color, 16.0, normal);
-                                let v4 = PointVertex::from_point(&Point3f::new(pos[0] - size, pos[1] + size, pos[2]), color, 16.0, normal);
+                                let v1 = PointVertex::from_point(
+                                    &Point3f::new(pos[0] - size, pos[1] - size, pos[2]),
+                                    color,
+                                    16.0,
+                                    normal,
+                                );
+                                let v2 = PointVertex::from_point(
+                                    &Point3f::new(pos[0] + size, pos[1] - size, pos[2]),
+                                    color,
+                                    16.0,
+                                    normal,
+                                );
+                                let v3 = PointVertex::from_point(
+                                    &Point3f::new(pos[0] + size, pos[1] + size, pos[2]),
+                                    color,
+                                    16.0,
+                                    normal,
+                                );
+                                let v4 = PointVertex::from_point(
+                                    &Point3f::new(pos[0] - size, pos[1] + size, pos[2]),
+                                    color,
+                                    16.0,
+                                    normal,
+                                );
 
                                 vertices.push(v1);
                                 vertices.push(v2);
@@ -524,11 +603,18 @@ impl ApplicationHandler for ViewerApp {
 
                             let normals_opt = mesh.normals.as_ref().map(|n| n.as_slice());
 
-                            let colors_f32: Option<Vec<[f32; 3]>> = mesh.colors.as_ref().map(|cols| {
-                                cols.iter()
-                                    .map(|c| [c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0])
-                                    .collect()
-                            });
+                            let colors_f32: Option<Vec<[f32; 3]>> =
+                                mesh.colors.as_ref().map(|cols| {
+                                    cols.iter()
+                                        .map(|c| {
+                                            [
+                                                c[0] as f32 / 255.0,
+                                                c[1] as f32 / 255.0,
+                                                c[2] as f32 / 255.0,
+                                            ]
+                                        })
+                                        .collect()
+                                });
                             let colors_opt = colors_f32.as_ref().map(|c| c.as_slice());
 
                             // Use the viewer's material and shading mode
@@ -540,14 +626,18 @@ impl ApplicationHandler for ViewerApp {
                                 Some(self.viewer.material),
                             );
 
-                            if let Err(e) = mesh_renderer.render(&gpu_mesh, self.viewer.shading_mode) {
+                            if let Err(e) =
+                                mesh_renderer.render(&gpu_mesh, self.viewer.shading_mode)
+                            {
                                 eprintln!("Mesh render error: {}", e);
                             }
 
                             // Handle screenshot request
                             if self.screenshot_pending {
                                 self.screenshot_pending = false;
-                                match mesh_renderer.render_to_texture(&gpu_mesh, self.viewer.shading_mode) {
+                                match mesh_renderer
+                                    .render_to_texture(&gpu_mesh, self.viewer.shading_mode)
+                                {
                                     Ok((pixels, format, w, h)) => {
                                         save_screenshot(&pixels, format, w, h);
                                     }
@@ -608,4 +698,3 @@ fn save_screenshot(pixels: &[u8], format: wgpu::TextureFormat, width: u32, heigh
         None => eprintln!("Failed to build image buffer for screenshot"),
     }
 }
-

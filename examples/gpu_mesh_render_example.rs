@@ -27,16 +27,24 @@ fn main() {
     );
 
     // Compute bounding sphere so setup_scene can centre and zoom correctly.
-    let (cx, cy, cz) = mesh.vertices.iter().fold((0f32, 0f32, 0f32), |(ax, ay, az), v| {
-        (ax + v.x, ay + v.y, az + v.z)
-    });
+    let (cx, cy, cz) = mesh
+        .vertices
+        .iter()
+        .fold((0f32, 0f32, 0f32), |(ax, ay, az), v| {
+            (ax + v.x, ay + v.y, az + v.z)
+        });
     let n = mesh.vertices.len() as f32;
     let center = Vec3::new(cx / n, cy / n, cz / n);
-    let radius = mesh.vertices.iter()
+    let radius = mesh
+        .vertices
+        .iter()
         .map(|v| (Vec3::new(v.x, v.y, v.z) - center).length())
         .fold(0f32, f32::max);
 
-    println!("Bounding sphere: center={:.2?} radius={:.2}", center, radius);
+    println!(
+        "Bounding sphere: center={:.2?} radius={:.2}",
+        center, radius
+    );
 
     let mut bevy_mesh = mesh.to_bevy_mesh().expect("failed to convert to Bevy mesh");
     // OBJ normal indices are per-face-vertex and don't survive the vertex
@@ -56,7 +64,11 @@ fn main() {
             }),
             ..default()
         }))
-        .insert_resource(viewer::LoadedMesh { mesh: bevy_mesh, center, radius })
+        .insert_resource(viewer::LoadedMesh {
+            mesh: bevy_mesh,
+            center,
+            radius,
+        })
         .add_systems(Startup, viewer::setup_scene)
         .add_systems(Update, (viewer::rotate_camera, viewer::handle_input))
         .run();
@@ -64,12 +76,12 @@ fn main() {
 
 #[cfg(feature = "bevy_interop")]
 mod viewer {
-    use bevy::prelude::*;
     use bevy::input::mouse::{MouseMotion, MouseWheel};
+    use bevy::prelude::*;
 
     #[derive(Resource)]
     pub struct LoadedMesh {
-        pub mesh:   Mesh,
+        pub mesh: Mesh,
         pub center: Vec3,
         pub radius: f32,
     }
@@ -77,16 +89,16 @@ mod viewer {
     #[derive(Component)]
     pub struct CameraController {
         pub rotation_speed: f32,
-        pub zoom_speed:     f32,
-        pub distance:       f32,
-        pub rotation_x:     f32,
-        pub rotation_y:     f32,
-        pub target:         Vec3,
+        pub zoom_speed: f32,
+        pub distance: f32,
+        pub rotation_x: f32,
+        pub rotation_y: f32,
+        pub target: Vec3,
     }
 
     pub fn setup_scene(
         mut commands: Commands,
-        mut meshes:   ResMut<Assets<Mesh>>,
+        mut meshes: ResMut<Assets<Mesh>>,
         mut materials: ResMut<Assets<StandardMaterial>>,
         loaded: Res<LoadedMesh>,
     ) {
@@ -103,11 +115,21 @@ mod viewer {
         ));
 
         commands.spawn((
-            DirectionalLight { illuminance: 18_000.0, shadows_enabled: true, color: Color::srgb(1.0, 0.97, 0.90), ..default() },
+            DirectionalLight {
+                illuminance: 18_000.0,
+                shadows_enabled: true,
+                color: Color::srgb(1.0, 0.97, 0.90),
+                ..default()
+            },
             Transform::from_xyz(5.0, 10.0, 5.0).looking_at(Vec3::ZERO, Vec3::Y),
         ));
         commands.spawn((
-            DirectionalLight { illuminance: 5_000.0, color: Color::srgb(0.6, 0.75, 1.0), shadows_enabled: false, ..default() },
+            DirectionalLight {
+                illuminance: 5_000.0,
+                color: Color::srgb(0.6, 0.75, 1.0),
+                shadows_enabled: false,
+                ..default()
+            },
             Transform::from_xyz(-5.0, 2.0, -5.0).looking_at(Vec3::ZERO, Vec3::Y),
         ));
         commands.insert_resource(GlobalAmbientLight {
@@ -120,11 +142,11 @@ mod viewer {
         let distance = loaded.radius * 2.5;
         let ctrl = CameraController {
             rotation_speed: 0.5,
-            zoom_speed:     loaded.radius * 0.2,
+            zoom_speed: loaded.radius * 0.2,
             distance,
-            rotation_x:     0.3,
-            rotation_y:     0.6,
-            target:         Vec3::ZERO,
+            rotation_x: 0.3,
+            rotation_y: 0.6,
+            target: Vec3::ZERO,
         };
         let (x, y, z) = cam_pos(&ctrl);
         commands.spawn((
@@ -136,11 +158,13 @@ mod viewer {
 
     pub fn rotate_camera(
         mut mouse_motion: MessageReader<MouseMotion>,
-        mut mouse_wheel:  MessageReader<MouseWheel>,
+        mut mouse_wheel: MessageReader<MouseWheel>,
         mouse_button: Res<ButtonInput<MouseButton>>,
         mut query: Query<(&mut Transform, &mut CameraController)>,
     ) {
-        let Ok((mut transform, mut ctrl)) = query.single_mut() else { return; };
+        let Ok((mut transform, mut ctrl)) = query.single_mut() else {
+            return;
+        };
 
         if mouse_button.pressed(MouseButton::Left) {
             for ev in mouse_motion.read() {
@@ -154,7 +178,9 @@ mod viewer {
 
         for ev in mouse_wheel.read() {
             ctrl.distance -= ev.y * ctrl.zoom_speed;
-            ctrl.distance = ctrl.distance.clamp(ctrl.zoom_speed, ctrl.distance.max(ctrl.zoom_speed) * 4.0);
+            ctrl.distance = ctrl
+                .distance
+                .clamp(ctrl.zoom_speed, ctrl.distance.max(ctrl.zoom_speed) * 4.0);
         }
 
         let (x, y, z) = cam_pos(&ctrl);

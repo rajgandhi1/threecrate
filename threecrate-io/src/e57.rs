@@ -246,9 +246,21 @@ mod tests {
     #[test]
     fn test_can_read_detects_extension() {
         let reader = E57Reader;
-        assert!(RegistryPointCloudReader::can_read(&reader, Path::new("scan.e57")));
-        assert!(RegistryPointCloudReader::can_read(&reader, Path::new("scan.E57")));
-        assert!(!RegistryPointCloudReader::can_read(&reader, Path::new("scan.ply")));
-        assert!(!RegistryPointCloudReader::can_read(&reader, Path::new("scan")));
+        assert!(RegistryPointCloudReader::can_read(
+            &reader,
+            Path::new("scan.e57")
+        ));
+        assert!(RegistryPointCloudReader::can_read(
+            &reader,
+            Path::new("scan.E57")
+        ));
+        assert!(!RegistryPointCloudReader::can_read(
+            &reader,
+            Path::new("scan.ply")
+        ));
+        assert!(!RegistryPointCloudReader::can_read(
+            &reader,
+            Path::new("scan")
+        ));
     }
 }

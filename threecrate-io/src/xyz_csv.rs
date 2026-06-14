@@ -1,5 +1,5 @@
 //! XYZ/CSV point cloud format support
-//! 
+//!
 //! This module provides comprehensive XYZ and CSV point cloud reading capabilities including:
 //! - Auto-detection of delimiters (comma, space, tab)
 //! - Header detection and parsing
@@ -7,10 +7,10 @@
 //! - Schema hints for flexible parsing
 //! - Streaming support for large files
 
-use threecrate_core::{PointCloud, Result, Point3f, Vector3f, Error};
-use std::path::Path;
 use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter, Write};
+use std::path::Path;
+use threecrate_core::{Error, Point3f, PointCloud, Result, Vector3f};
 
 /// Supported delimiters for CSV/XYZ files
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -31,14 +31,14 @@ impl Delimiter {
             Delimiter::Semicolon => ';',
         }
     }
-    
+
     /// Detect delimiter from a line of text
     pub fn detect_from_line(line: &str) -> Option<Self> {
         let comma_count = line.matches(',').count();
         let space_count = line.matches(' ').count();
         let tab_count = line.matches('\t').count();
         let semicolon_count = line.matches(';').count();
-        
+
         // Find the delimiter with the highest count
         let counts = [
             (comma_count, Delimiter::Comma),
@@ -46,8 +46,9 @@ impl Delimiter {
             (tab_count, Delimiter::Tab),
             (semicolon_count, Delimiter::Semicolon),
         ];
-        
-        counts.iter()
+
+        counts
+            .iter()
             .max_by_key(|(count, _)| count)
             .filter(|(count, _)| *count > 0)
             .map(|(_, delimiter)| *delimiter)
@@ -108,7 +109,7 @@ impl XyzCsvSchema {
             delimiter,
         }
     }
-    
+
     /// Auto-detect schema from file content
     pub fn detect_from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
         let path_ref = path.as_ref();
@@ -116,14 +117,14 @@ impl XyzCsvSchema {
         let mut reader = BufReader::new(file);
         let mut first_line = String::new();
         reader.read_line(&mut first_line)?;
-        
+
         // Detect delimiter
         let delimiter = Delimiter::detect_from_line(&first_line)
             .ok_or_else(|| Error::InvalidData("Could not detect delimiter".to_string()))?;
-        
+
         // Determine if this is a header by checking if first line contains non-numeric data
         let has_header = Self::is_header_line(&first_line, &[], delimiter);
-        
+
         let columns = if has_header {
             // Parse columns from header
             Self::parse_columns(&first_line, delimiter)?
@@ -131,59 +132,63 @@ impl XyzCsvSchema {
             // For files without headers, assume x,y,z format
             vec![ColumnType::X, ColumnType::Y, ColumnType::Z]
         };
-        
+
         Ok(Self::new(columns, has_header, delimiter))
     }
-    
+
     /// Parse columns from a header line
     fn parse_columns(line: &str, delimiter: Delimiter) -> Result<Vec<ColumnType>> {
-        let parts: Vec<&str> = line.split(delimiter.as_char())
-            .map(|s| s.trim())
-            .collect();
-        
-        let columns: Vec<ColumnType> = parts.iter()
+        let parts: Vec<&str> = line.split(delimiter.as_char()).map(|s| s.trim()).collect();
+
+        let columns: Vec<ColumnType> = parts
+            .iter()
             .map(|header| ColumnType::from_header(header))
             .collect();
-        
+
         // Validate that we have at least x, y, z columns
         let has_x = columns.contains(&ColumnType::X);
         let has_y = columns.contains(&ColumnType::Y);
         let has_z = columns.contains(&ColumnType::Z);
-        
+
         if !has_x || !has_y || !has_z {
             return Err(Error::InvalidData(
-                "XYZ/CSV file must contain x, y, z coordinates".to_string()
+                "XYZ/CSV file must contain x, y, z coordinates".to_string(),
             ));
         }
-        
+
         Ok(columns)
     }
-    
+
     /// Determine if a line is a header by checking for non-numeric content
     fn is_header_line(line: &str, columns: &[ColumnType], delimiter: Delimiter) -> bool {
-        let parts: Vec<&str> = line.split(delimiter.as_char())
-            .map(|s| s.trim())
-            .collect();
-        
+        let parts: Vec<&str> = line.split(delimiter.as_char()).map(|s| s.trim()).collect();
+
         // If we have fewer than 3 parts, it's likely not a valid point cloud line
         if parts.len() < 3 {
             return false;
         }
-        
+
         // If we have columns defined, check against them
         if !columns.is_empty() {
             // If we have fewer parts than expected columns, it's likely not a header
             if parts.len() < columns.len() {
                 return false;
             }
-            
+
             // Check if any part that should be numeric is not numeric
             for (i, part) in parts.iter().enumerate() {
                 if i < columns.len() {
                     match columns[i] {
-                        ColumnType::X | ColumnType::Y | ColumnType::Z |
-                        ColumnType::Intensity | ColumnType::Red | ColumnType::Green | ColumnType::Blue |
-                        ColumnType::NormalX | ColumnType::NormalY | ColumnType::NormalZ => {
+                        ColumnType::X
+                        | ColumnType::Y
+                        | ColumnType::Z
+                        | ColumnType::Intensity
+                        | ColumnType::Red
+                        | ColumnType::Green
+                        | ColumnType::Blue
+                        | ColumnType::NormalX
+                        | ColumnType::NormalY
+                        | ColumnType::NormalZ => {
                             if part.parse::<f32>().is_err() {
                                 return true; // Non-numeric data suggests this is a header
                             }
@@ -205,7 +210,7 @@ impl XyzCsvSchema {
                 }
             }
         }
-        
+
         false
     }
 }
@@ -229,7 +234,7 @@ impl XyzCsvPoint {
             normal: None,
         }
     }
-    
+
     /// Create a point with position and intensity
     pub fn with_intensity(position: Point3f, intensity: f32) -> Self {
         Self {
@@ -239,7 +244,7 @@ impl XyzCsvPoint {
             normal: None,
         }
     }
-    
+
     /// Create a point with position and color
     pub fn with_color(position: Point3f, color: [u8; 3]) -> Self {
         Self {
@@ -249,7 +254,7 @@ impl XyzCsvPoint {
             normal: None,
         }
     }
-    
+
     /// Create a point with position and normal
     pub fn with_normal(position: Point3f, normal: Vector3f) -> Self {
         Self {
@@ -270,83 +275,84 @@ impl XyzCsvReader {
         let schema = XyzCsvSchema::detect_from_file(&path)?;
         Self::read_point_cloud_with_schema(path, &schema)
     }
-    
+
     /// Read a point cloud with a specific schema
     pub fn read_point_cloud_with_schema<P: AsRef<Path>>(
-        path: P, 
-        schema: &XyzCsvSchema
+        path: P,
+        schema: &XyzCsvSchema,
     ) -> Result<PointCloud<Point3f>> {
         let file = File::open(path)?;
         let reader = BufReader::new(file);
         let mut lines = reader.lines();
-        
+
         // Skip header if present
         if schema.has_header {
             lines.next();
         }
-        
+
         let mut cloud = PointCloud::new();
-        
+
         for line_result in lines {
             let line = line_result?;
             if line.trim().is_empty() {
                 continue;
             }
-            
+
             let point = Self::parse_line(&line, schema)?;
             cloud.push(point.position);
         }
-        
+
         Ok(cloud)
     }
-    
+
     /// Read detailed point data (with colors, normals, etc.)
     pub fn read_detailed_points<P: AsRef<Path>>(path: P) -> Result<Vec<XyzCsvPoint>> {
         let schema = XyzCsvSchema::detect_from_file(&path)?;
         Self::read_detailed_points_with_schema(path, &schema)
     }
-    
+
     /// Read detailed point data with a specific schema
     pub fn read_detailed_points_with_schema<P: AsRef<Path>>(
         path: P,
-        schema: &XyzCsvSchema
+        schema: &XyzCsvSchema,
     ) -> Result<Vec<XyzCsvPoint>> {
         let file = File::open(path)?;
         let reader = BufReader::new(file);
         let mut lines = reader.lines();
-        
+
         // Skip header if present
         if schema.has_header {
             lines.next();
         }
-        
+
         let mut points = Vec::new();
-        
+
         for line_result in lines {
             let line = line_result?;
             if line.trim().is_empty() {
                 continue;
             }
-            
+
             let point = Self::parse_line(&line, schema)?;
             points.push(point);
         }
-        
+
         Ok(points)
     }
-    
+
     /// Parse a single line into a point
     fn parse_line(line: &str, schema: &XyzCsvSchema) -> Result<XyzCsvPoint> {
-        let parts: Vec<&str> = line.split(schema.delimiter.as_char())
+        let parts: Vec<&str> = line
+            .split(schema.delimiter.as_char())
             .map(|s| s.trim())
             .collect();
-        
+
         if parts.len() < 3 {
             return Err(Error::InvalidData(
-                "Line must have at least 3 columns (x, y, z)".to_string()
+                "Line must have at least 3 columns (x, y, z)".to_string(),
             ));
         }
-        
+
         // Find x, y, z indices
         let mut x_idx = None;
         let mut y_idx = None;
@@ -358,7 +364,7 @@ impl XyzCsvReader {
         let mut nx_idx = None;
         let mut ny_idx = None;
         let mut nz_idx = None;
-        
+
         for (i, col_type) in schema.columns.iter().enumerate() {
             match *col_type {
                 ColumnType::X => x_idx = Some(i),
@@ -374,28 +380,32 @@ impl XyzCsvReader {
                 ColumnType::Unknown => {}
             }
         }
-        
+
         // Parse position (required)
-        let x = parts[x_idx.ok_or_else(|| Error::InvalidData("Missing x coordinate".to_string()))?]
-            .parse::<f32>()
-            .map_err(|_| Error::InvalidData("Invalid x coordinate".to_string()))?;
-        let y = parts[y_idx.ok_or_else(|| Error::InvalidData("Missing y coordinate".to_string()))?]
-            .parse::<f32>()
-            .map_err(|_| Error::InvalidData("Invalid y coordinate".to_string()))?;
-        let z = parts[z_idx.ok_or_else(|| Error::InvalidData("Missing z coordinate".to_string()))?]
-            .parse::<f32>()
-            .map_err(|_| Error::InvalidData("Invalid z coordinate".to_string()))?;
-        
+        let x = parts
+            [x_idx.ok_or_else(|| Error::InvalidData("Missing x coordinate".to_string()))?]
+        .parse::<f32>()
+        .map_err(|_| Error::InvalidData("Invalid x coordinate".to_string()))?;
+        let y = parts
+            [y_idx.ok_or_else(|| Error::InvalidData("Missing y coordinate".to_string()))?]
+        .parse::<f32>()
+        .map_err(|_| Error::InvalidData("Invalid y coordinate".to_string()))?;
+        let z = parts
+            [z_idx.ok_or_else(|| Error::InvalidData("Missing z coordinate".to_string()))?]
+        .parse::<f32>()
+        .map_err(|_| Error::InvalidData("Invalid z coordinate".to_string()))?;
+
         let position = Point3f::new(x, y, z);
-        
+
         // Parse optional attributes
         let intensity = if let Some(idx) = intensity_idx {
             parts.get(idx).and_then(|s| s.parse::<f32>().ok())
         } else {
             None
         };
-        
-        let color = if let (Some(r_idx), Some(g_idx), Some(b_idx)) = (red_idx, green_idx, blue_idx) {
+
+        let color = if let (Some(r_idx), Some(g_idx), Some(b_idx)) = (red_idx, green_idx, blue_idx)
+        {
             if let (Some(r), Some(g), Some(b)) = (
                 parts.get(r_idx).and_then(|s| s.parse::<f32>().ok()),
                 parts.get(g_idx).and_then(|s| s.parse::<f32>().ok()),
@@ -412,7 +422,7 @@ impl XyzCsvReader {
         } else {
             None
         };
-        
+
         let normal = if let (Some(nx_idx), Some(ny_idx), Some(nz_idx)) = (nx_idx, ny_idx, nz_idx) {
             if let (Some(nx), Some(ny), Some(nz)) = (
                 parts.get(nx_idx).and_then(|s| s.parse::<f32>().ok()),
@@ -426,7 +436,7 @@ impl XyzCsvReader {
         } else {
             None
         };
-        
+
         Ok(XyzCsvPoint {
             position,
             intensity,
@@ -452,7 +462,7 @@ impl XyzCsvStreamingReader {
         let file = File::open(path_ref)?;
         let reader = BufReader::with_capacity(chunk_size, file);
         let schema = XyzCsvSchema::detect_from_file(path_ref)?;
-        
+
         Ok(Self {
             reader,
             schema,
@@ -461,13 +471,14 @@ impl XyzCsvStreamingReader {
             header_skipped: false,
         })
     }
-    
+
     /// Fill the buffer with the next chunk of lines
     fn fill_buffer(&mut self) -> Result<bool> {
         self.buffer.clear();
         self.buffer_index = 0;
-        
-        for _ in 0..1000 { // Read up to 1000 lines at a time
+
+        for _ in 0..1000 {
+            // Read up to 1000 lines at a time
             let mut line = String::new();
             match self.reader.read_line(&mut line)? {
                 0 => break, // EOF
@@ -478,14 +489,14 @@ impl XyzCsvStreamingReader {
                 }
             }
         }
-        
+
         Ok(!self.buffer.is_empty())
     }
 }
 
 impl Iterator for XyzCsvStreamingReader {
     type Item = Result<Point3f>;
-    
+
     fn next(&mut self) -> Option<Self::Item> {
         // Skip header on first read
         if !self.header_skipped && self.schema.has_header {
@@ -495,21 +506,21 @@ impl Iterator for XyzCsvStreamingReader {
             }
             self.header_skipped = true;
         }
-        
+
         // Fill buffer if needed
         if self.buffer_index >= self.buffer.len() {
             match self.fill_buffer() {
-                Ok(true) => {}, // Buffer filled successfully
+                Ok(true) => {}            // Buffer filled successfully
                 Ok(false) => return None, // EOF
                 Err(e) => return Some(Err(e)),
             }
         }
-        
+
         // Get next line from buffer
         if self.buffer_index < self.buffer.len() {
             let line = &self.buffer[self.buffer_index];
             self.buffer_index += 1;
-            
+
             match XyzCsvReader::parse_line(line, &self.schema) {
                 Ok(point) => Some(Ok(point.position)),
                 Err(e) => Some(Err(e)),
@@ -526,77 +537,81 @@ pub struct XyzCsvWriter;
 impl XyzCsvWriter {
     /// Write a point cloud to an XYZ/CSV file
     pub fn write_point_cloud<P: AsRef<Path>>(
-        cloud: &PointCloud<Point3f>, 
+        cloud: &PointCloud<Point3f>,
         path: P,
-        options: &XyzCsvWriteOptions
+        options: &XyzCsvWriteOptions,
     ) -> Result<()> {
         let file = File::create(path)?;
         let mut writer = BufWriter::new(file);
-        
+
         // Write header if requested
         if options.include_header {
             let header = Self::generate_header(&options.schema);
             writeln!(writer, "{}", header)?;
         }
-        
+
         // Write points
         for point in cloud.iter() {
             let line = Self::format_point(point, &options.schema);
             writeln!(writer, "{}", line)?;
         }
-        
+
         writer.flush()?;
         Ok(())
     }
-    
+
     /// Write detailed points to an XYZ/CSV file
     pub fn write_detailed_points<P: AsRef<Path>>(
         points: &[XyzCsvPoint],
         path: P,
-        options: &XyzCsvWriteOptions
+        options: &XyzCsvWriteOptions,
     ) -> Result<()> {
         let file = File::create(path)?;
         let mut writer = BufWriter::new(file);
-        
+
         // Write header if requested
         if options.include_header {
             let header = Self::generate_header(&options.schema);
             writeln!(writer, "{}", header)?;
         }
-        
+
         // Write points
         for point in points {
             let line = Self::format_detailed_point(point, &options.schema);
             writeln!(writer, "{}", line)?;
         }
-        
+
         writer.flush()?;
         Ok(())
     }
-    
+
     /// Generate header line
     fn generate_header(schema: &XyzCsvSchema) -> String {
-        let headers: Vec<&str> = schema.columns.iter().map(|col| match col {
-            ColumnType::X => "x",
-            ColumnType::Y => "y",
-            ColumnType::Z => "z",
-            ColumnType::Intensity => "intensity",
-            ColumnType::Red => "r",
-            ColumnType::Green => "g",
-            ColumnType::Blue => "b",
-            ColumnType::NormalX => "nx",
-            ColumnType::NormalY => "ny",
-            ColumnType::NormalZ => "nz",
-            ColumnType::Unknown => "unknown",
-        }).collect();
-        
+        let headers: Vec<&str> = schema
+            .columns
+            .iter()
+            .map(|col| match col {
+                ColumnType::X => "x",
+                ColumnType::Y => "y",
+                ColumnType::Z => "z",
+                ColumnType::Intensity => "intensity",
+                ColumnType::Red => "r",
+                ColumnType::Green => "g",
+                ColumnType::Blue => "b",
+                ColumnType::NormalX => "nx",
+                ColumnType::NormalY => "ny",
+                ColumnType::NormalZ => "nz",
+                ColumnType::Unknown => "unknown",
+            })
+            .collect();
+
         headers.join(&schema.delimiter.as_char().to_string())
     }
-    
+
     /// Format a basic point
     fn format_point(point: &Point3f, schema: &XyzCsvSchema) -> String {
         let mut values = Vec::new();
-        
+
         for col_type in &schema.columns {
             match col_type {
                 ColumnType::X => values.push(point.x.to_string()),
@@ -605,14 +620,14 @@ impl XyzCsvWriter {
                 _ => values.push("0".to_string()), // Default value for missing columns
             }
         }
-        
+
         values.join(&schema.delimiter.as_char().to_string())
     }
-    
+
     /// Format a detailed point
     fn format_detailed_point(point: &XyzCsvPoint, schema: &XyzCsvSchema) -> String {
         let mut values = Vec::new();
-        
+
         for col_type in &schema.columns {
             let value = match col_type {
                 ColumnType::X => point.position.x.to_string(),
@@ -629,7 +644,7 @@ impl XyzCsvWriter {
             };
             values.push(value);
         }
-        
+
         values.join(&schema.delimiter.as_char().to_string())
     }
 }
@@ -653,7 +668,7 @@ impl XyzCsvWriteOptions {
             include_header: false,
         }
     }
-    
+
     /// Create options for CSV format with header
     pub fn csv_with_header() -> Self {
         Self {
@@ -665,14 +680,18 @@ impl XyzCsvWriteOptions {
             include_header: true,
         }
     }
-    
+
     /// Create options for CSV with colors
     pub fn csv_with_colors() -> Self {
         Self {
             schema: XyzCsvSchema::new(
                 vec![
-                    ColumnType::X, ColumnType::Y, ColumnType::Z,
-                    ColumnType::Red, ColumnType::Green, ColumnType::Blue,
+                    ColumnType::X,
+                    ColumnType::Y,
+                    ColumnType::Z,
+                    ColumnType::Red,
+                    ColumnType::Green,
+                    ColumnType::Blue,
                 ],
                 true,
                 Delimiter::Comma,
@@ -680,14 +699,18 @@ impl XyzCsvWriteOptions {
             include_header: true,
         }
     }
-    
+
     /// Create options for CSV with normals
     pub fn csv_with_normals() -> Self {
         Self {
             schema: XyzCsvSchema::new(
                 vec![
-                    ColumnType::X, ColumnType::Y, ColumnType::Z,
-                    ColumnType::NormalX, ColumnType::NormalY, ColumnType::NormalZ,
+                    ColumnType::X,
+                    ColumnType::Y,
+                    ColumnType::Z,
+                    ColumnType::NormalX,
+                    ColumnType::NormalY,
+                    ColumnType::NormalZ,
                 ],
                 true,
                 Delimiter::Comma,
@@ -695,16 +718,22 @@ impl XyzCsvWriteOptions {
             include_header: true,
         }
     }
-    
+
     /// Create options for CSV with all attributes
     pub fn csv_complete() -> Self {
         Self {
             schema: XyzCsvSchema::new(
                 vec![
-                    ColumnType::X, ColumnType::Y, ColumnType::Z,
+                    ColumnType::X,
+                    ColumnType::Y,
+                    ColumnType::Z,
                     ColumnType::Intensity,
-                    ColumnType::Red, ColumnType::Green, ColumnType::Blue,
-                    ColumnType::NormalX, ColumnType::NormalY, ColumnType::NormalZ,
+                    ColumnType::Red,
+                    ColumnType::Green,
+                    ColumnType::Blue,
+                    ColumnType::NormalX,
+                    ColumnType::NormalY,
+                    ColumnType::NormalZ,
                 ],
                 true,
                 Delimiter::Comma,
@@ -719,7 +748,7 @@ impl crate::registry::PointCloudReader for XyzCsvReader {
     fn read_point_cloud(&self, path: &Path) -> Result<PointCloud<Point3f>> {
         Self::read_point_cloud(path)
     }
-    
+
     fn can_read(&self, path: &Path) -> bool {
         // Check file extension
         if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
@@ -728,7 +757,7 @@ impl crate::registry::PointCloudReader for XyzCsvReader {
             false
         }
     }
-    
+
     fn format_name(&self) -> &'static str {
         "xyz_csv"
     }
@@ -746,10 +775,10 @@ impl crate::registry::PointCloudWriter for XyzCsvWriter {
         } else {
             XyzCsvWriteOptions::xyz()
         };
-        
+
         Self::write_point_cloud(cloud, path, &options)
     }
-    
+
     fn format_name(&self) -> &'static str {
         "xyz_csv"
     }
@@ -759,15 +788,18 @@ impl crate::registry::PointCloudWriter for XyzCsvWriter {
 mod tests {
     use super::*;
     use std::fs;
-    
+
     #[test]
     fn test_delimiter_detection() {
         assert_eq!(Delimiter::detect_from_line("1,2,3"), Some(Delimiter::Comma));
         assert_eq!(Delimiter::detect_from_line("1 2 3"), Some(Delimiter::Space));
         assert_eq!(Delimiter::detect_from_line("1\t2\t3"), Some(Delimiter::Tab));
-        assert_eq!(Delimiter::detect_from_line("1;2;3"), Some(Delimiter::Semicolon));
+        assert_eq!(
+            Delimiter::detect_from_line("1;2;3"),
+            Some(Delimiter::Semicolon)
+        );
     }
-    
+
     #[test]
     fn test_column_type_detection() {
         assert_eq!(ColumnType::from_header("x"), ColumnType::X);
@@ -778,68 +810,68 @@ mod tests {
         assert_eq!(ColumnType::from_header("nx"), ColumnType::NormalX);
         assert_eq!(ColumnType::from_header("unknown"), ColumnType::Unknown);
     }
-    
+
     #[test]
     fn test_xyz_reader_basic() {
         let temp_file = "test_basic.xyz";
         let content = "1.0 2.0 3.0\n4.0 5.0 6.0\n7.0 8.0 9.0\n";
         fs::write(temp_file, content).unwrap();
-        
+
         let cloud = XyzCsvReader::read_point_cloud(temp_file).unwrap();
         assert_eq!(cloud.len(), 3);
         assert_eq!(cloud[0], Point3f::new(1.0, 2.0, 3.0));
         assert_eq!(cloud[1], Point3f::new(4.0, 5.0, 6.0));
         assert_eq!(cloud[2], Point3f::new(7.0, 8.0, 9.0));
-        
+
         fs::remove_file(temp_file).unwrap();
     }
-    
+
     #[test]
     fn test_csv_reader_with_header() {
         let temp_file = "test_header.csv";
         let content = "x,y,z\n1.0,2.0,3.0\n4.0,5.0,6.0\n";
         fs::write(temp_file, content).unwrap();
-        
+
         let cloud = XyzCsvReader::read_point_cloud(temp_file).unwrap();
         assert_eq!(cloud.len(), 2);
         assert_eq!(cloud[0], Point3f::new(1.0, 2.0, 3.0));
         assert_eq!(cloud[1], Point3f::new(4.0, 5.0, 6.0));
-        
+
         fs::remove_file(temp_file).unwrap();
     }
-    
+
     #[test]
     fn test_csv_reader_with_colors() {
         let temp_file = "test_colors.csv";
         let content = "x,y,z,r,g,b\n1.0,2.0,3.0,255,0,0\n4.0,5.0,6.0,0,255,0\n";
         fs::write(temp_file, content).unwrap();
-        
+
         let points = XyzCsvReader::read_detailed_points(temp_file).unwrap();
         assert_eq!(points.len(), 2);
         assert_eq!(points[0].position, Point3f::new(1.0, 2.0, 3.0));
         assert_eq!(points[0].color, Some([255, 0, 0]));
         assert_eq!(points[1].position, Point3f::new(4.0, 5.0, 6.0));
         assert_eq!(points[1].color, Some([0, 255, 0]));
-        
+
         fs::remove_file(temp_file).unwrap();
     }
-    
+
     #[test]
     fn test_csv_reader_with_normals() {
         let temp_file = "test_normals.csv";
         let content = "x,y,z,nx,ny,nz\n1.0,2.0,3.0,0.0,0.0,1.0\n4.0,5.0,6.0,0.0,1.0,0.0\n";
         fs::write(temp_file, content).unwrap();
-        
+
         let points = XyzCsvReader::read_detailed_points(temp_file).unwrap();
         assert_eq!(points.len(), 2);
         assert_eq!(points[0].position, Point3f::new(1.0, 2.0, 3.0));
         assert_eq!(points[0].normal, Some(Vector3f::new(0.0, 0.0, 1.0)));
         assert_eq!(points[1].position, Point3f::new(4.0, 5.0, 6.0));
         assert_eq!(points[1].normal, Some(Vector3f::new(0.0, 1.0, 0.0)));
-        
+
         fs::remove_file(temp_file).unwrap();
     }
-    
+
     #[test]
     fn test_xyz_writer() {
         let temp_file = "test_write.xyz";
@@ -847,17 +879,17 @@ mod tests {
             Point3f::new(1.0, 2.0, 3.0),
             Point3f::new(4.0, 5.0, 6.0),
         ]);
-        
+
         let options = XyzCsvWriteOptions::xyz();
         XyzCsvWriter::write_point_cloud(&cloud, temp_file, &options).unwrap();
-        
+
         let content = fs::read_to_string(temp_file).unwrap();
         assert!(content.contains("1 2 3"));
         assert!(content.contains("4 5 6"));
-        
+
         fs::remove_file(temp_file).unwrap();
     }
-    
+
     #[test]
     fn test_csv_writer_with_header() {
         let temp_file = "test_write_header.csv";
@@ -865,18 +897,18 @@ mod tests {
             Point3f::new(1.0, 2.0, 3.0),
             Point3f::new(4.0, 5.0, 6.0),
         ]);
-        
+
         let options = XyzCsvWriteOptions::csv_with_header();
         XyzCsvWriter::write_point_cloud(&cloud, temp_file, &options).unwrap();
-        
+
         let content = fs::read_to_string(temp_file).unwrap();
         assert!(content.starts_with("x,y,z"));
         assert!(content.contains("1,2,3"));
         assert!(content.contains("4,5,6"));
-        
+
         fs::remove_file(temp_file).unwrap();
     }
-    
+
     #[test]
     fn test_detailed_points_writer() {
         let temp_file = "test_detailed.csv";
@@ -884,22 +916,22 @@ mod tests {
             XyzCsvPoint::with_color(Point3f::new(1.0, 2.0, 3.0), [255, 0, 0]),
             XyzCsvPoint::with_intensity(Point3f::new(4.0, 5.0, 6.0), 0.8),
         ];
-        
+
         let options = XyzCsvWriteOptions::csv_complete();
         XyzCsvWriter::write_detailed_points(&points, temp_file, &options).unwrap();
-        
+
         let content = fs::read_to_string(temp_file).unwrap();
         assert!(content.starts_with("x,y,z,intensity,r,g,b,nx,ny,nz"));
-        
+
         fs::remove_file(temp_file).unwrap();
     }
-    
+
     #[test]
     fn test_schema_detection() {
         let temp_file = "test_schema.csv";
         let content = "x,y,z,intensity\n1.0,2.0,3.0,0.5\n4.0,5.0,6.0,0.8\n";
         fs::write(temp_file, content).unwrap();
-        
+
         let schema = XyzCsvSchema::detect_from_file(temp_file).unwrap();
         assert_eq!(schema.delimiter, Delimiter::Comma);
         assert!(schema.has_header);
@@ -907,33 +939,33 @@ mod tests {
         assert!(schema.columns.contains(&ColumnType::Y));
         assert!(schema.columns.contains(&ColumnType::Z));
         assert!(schema.columns.contains(&ColumnType::Intensity));
-        
+
         fs::remove_file(temp_file).unwrap();
     }
-    
+
     #[test]
     fn test_error_handling() {
         // Test missing coordinates
         let temp_file = "test_error.xyz";
         let content = "1.0 2.0\n"; // Missing z coordinate
         fs::write(temp_file, content).unwrap();
-        
+
         let result = XyzCsvReader::read_point_cloud(temp_file);
         assert!(result.is_err());
-        
+
         let _ = fs::remove_file(temp_file);
     }
-    
+
     #[test]
     fn test_registry_traits() {
         use crate::registry::{PointCloudReader, PointCloudWriter};
-        
+
         let reader = XyzCsvReader;
         let writer = XyzCsvWriter;
-        
+
         assert_eq!(reader.format_name(), "xyz_csv");
         assert_eq!(writer.format_name(), "xyz_csv");
-        
+
         // Test can_read
         assert!(reader.can_read(Path::new("test.xyz")));
         assert!(reader.can_read(Path::new("test.csv")));

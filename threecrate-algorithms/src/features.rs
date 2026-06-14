@@ -1,9 +1,9 @@
 //! Feature extraction algorithms
 
-use threecrate_core::{PointCloud, Result, Point3f, NormalPoint3f, Vector3f, Error};
 use nalgebra::Matrix3;
 use rayon::prelude::*;
 use std::cmp::Ordering;
+use threecrate_core::{Error, NormalPoint3f, Point3f, PointCloud, Result, Vector3f};
 
 /// Number of bins per angular feature sub-histogram
 const FPFH_BINS: usize = 11;
@@ -96,8 +96,12 @@ fn compute_spfh(
         if let Some((alpha, phi, theta)) = compute_pair_features(p_s, n_s, p_t, n_t) {
             let bin_alpha = to_bin(alpha, -1.0, 1.0, FPFH_BINS);
             let bin_phi = to_bin(phi, -1.0, 1.0, FPFH_BINS);
-            let bin_theta =
-                to_bin(theta, -std::f32::consts::PI, std::f32::consts::PI, FPFH_BINS);
+            let bin_theta = to_bin(
+                theta,
+                -std::f32::consts::PI,
+                std::f32::consts::PI,
+                FPFH_BINS,
+            );
 
             histogram[bin_alpha] += 1.0;
             histogram[FPFH_BINS + bin_phi] += 1.0;
@@ -142,8 +146,7 @@ fn find_neighbors(points: &[NormalPoint3f], query_idx: usize, config: &FpfhConfi
         .collect();
 
     if within_radius.len() >= config.k_neighbors {
-        within_radius
-            .sort_unstable_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal));
+        within_radius.sort_unstable_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal));
         return within_radius.into_iter().map(|(i, _)| i).collect();
     }
 
@@ -362,7 +365,11 @@ fn find_shot_neighbors(
                 return None;
             }
             let d_sq = (p.position - query).magnitude_squared();
-            if d_sq <= r_sq { Some((i, d_sq)) } else { None }
+            if d_sq <= r_sq {
+                Some((i, d_sq))
+            } else {
+                None
+            }
         })
         .collect();
 
@@ -376,8 +383,11 @@ fn find_shot_neighbors(
         .iter()
         .enumerate()
         .filter_map(|(i, p)| {
-            if i == query_idx { None }
-            else { Some((i, (p.position - query).magnitude_squared())) }
+            if i == query_idx {
+                None
+            } else {
+                Some((i, (p.position - query).magnitude_squared()))
+            }
         })
         .collect();
     all.sort_unstable_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal));
@@ -404,7 +414,8 @@ fn compute_shot_lrf(
         Vector3f::new(0.0, 0.0, 1.0)
     };
 
-    let n_pos_z = neighbors.iter()
+    let n_pos_z = neighbors
+        .iter()
         .filter(|&&i| z_axis.dot(&(points[i].position - query_pos)) >= 0.0)
         .count();
     if n_pos_z * 2 < neighbors.len() {
@@ -421,14 +432,18 @@ fn compute_shot_lrf(
     }
 
     let eig = cov.symmetric_eigen();
-    let (max_idx, _) = eig.eigenvalues.iter().enumerate()
+    let (max_idx, _) = eig
+        .eigenvalues
+        .iter()
+        .enumerate()
         .max_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(Ordering::Equal))
         .unwrap_or((0, &0.0));
     let col = eig.eigenvectors.column(max_idx);
     let mut x_axis = Vector3f::new(col[0], col[1], col[2]);
 
     // Disambiguate
-    let n_pos_x = neighbors.iter()
+    let n_pos_x = neighbors
+        .iter()
         .filter(|&&i| x_axis.dot(&(points[i].position - query_pos)) >= 0.0)
         .count();
     if n_pos_x * 2 < neighbors.len() {
@@ -473,10 +488,14 @@ fn compute_shot_impl(
     let mut vol_counts = [0u32; SHOT_N_VOLUMES];
 
     for &ni in neighbors {
-        if ni == query_idx { continue; }
+        if ni == query_idx {
+            continue;
+        }
         let dv = points[ni].position - qp;
         let dist = dv.magnitude();
-        if dist < 1e-10 || dist > radius { continue; }
+        if dist < 1e-10 || dist > radius {
+            continue;
+        }
 
         let lx = x_axis.dot(&dv);
         let ly = y_axis.dot(&dv);
@@ -509,7 +528,9 @@ fn compute_shot_impl(
     // L2-normalize the full descriptor
     let norm: f32 = desc.iter().map(|&v| v * v).sum::<f32>().sqrt();
     if norm > 1e-10 {
-        for v in &mut desc { *v /= norm; }
+        for v in &mut desc {
+            *v /= norm;
+        }
     }
     desc
 }
@@ -535,10 +556,14 @@ fn compute_usc_impl(
 
     let mut total = 0usize;
     for &ni in neighbors {
-        if ni == query_idx { continue; }
+        if ni == query_idx {
+            continue;
+        }
         let dv = points[ni].position - qp;
         let dist = dv.magnitude();
-        if dist < 1e-10 || dist > radius { continue; }
+        if dist < 1e-10 || dist > radius {
+            continue;
+        }
 
         let lx = x_axis.dot(&dv);
         let ly = y_axis.dot(&dv);
@@ -562,13 +587,17 @@ fn compute_usc_impl(
 
     if total > 0 {
         let scale = 1.0 / total as f32;
-        for v in &mut desc { *v *= scale; }
+        for v in &mut desc {
+            *v *= scale;
+        }
     }
 
     // L2-normalize
     let norm: f32 = desc.iter().map(|&v| v * v).sum::<f32>().sqrt();
     if norm > 1e-10 {
-        for v in &mut desc { *v /= norm; }
+        for v in &mut desc {
+            *v /= norm;
+        }
     }
     desc
 }
@@ -606,17 +635,20 @@ pub fn extract_shot_features_with_normals(
     let n = points.len();
 
     // Gather neighbors (sequential — avoids borrowing issues with par_iter)
-    let neighbors: Vec<Vec<usize>> =
-        (0..n).map(|i| find_shot_neighbors(points, i, config)).collect();
+    let neighbors: Vec<Vec<usize>> = (0..n)
+        .map(|i| find_shot_neighbors(points, i, config))
+        .collect();
 
     // Compute descriptors in parallel
     let descriptors: Vec<Vec<f32>> = (0..n)
         .into_par_iter()
         .map(|i| match config.variant {
-            ShotVariant::Standard =>
-                compute_shot_impl(i, points, &neighbors[i], config.search_radius).to_vec(),
-            ShotVariant::UniqueShapeContext =>
-                compute_usc_impl(i, points, &neighbors[i], config.search_radius).to_vec(),
+            ShotVariant::Standard => {
+                compute_shot_impl(i, points, &neighbors[i], config.search_radius).to_vec()
+            }
+            ShotVariant::UniqueShapeContext => {
+                compute_usc_impl(i, points, &neighbors[i], config.search_radius).to_vec()
+            }
         })
         .collect();
 
@@ -626,7 +658,7 @@ pub fn extract_shot_features_with_normals(
 #[cfg(test)]
 mod shot_tests {
     use super::*;
-    use threecrate_core::{NormalPoint3f, Vector3f, Point3f, PointCloud};
+    use threecrate_core::{NormalPoint3f, Point3f, PointCloud, Vector3f};
 
     fn make_plane(n: usize) -> PointCloud<NormalPoint3f> {
         let side = (n as f64).sqrt().ceil() as usize;
@@ -634,7 +666,9 @@ mod shot_tests {
         let mut cloud = PointCloud::new();
         'outer: for i in 0..side {
             for j in 0..side {
-                if cloud.len() == n { break 'outer; }
+                if cloud.len() == n {
+                    break 'outer;
+                }
                 cloud.push(NormalPoint3f {
                     position: Point3f::new(i as f32 * step, j as f32 * step, 0.0),
                     normal: Vector3f::new(0.0, 0.0, 1.0),
@@ -654,35 +688,57 @@ mod shot_tests {
     #[test]
     fn test_shot_descriptor_dim() {
         let cloud = make_plane(25);
-        let config = ShotConfig { search_radius: 0.5, k_neighbors: 5, variant: ShotVariant::Standard };
+        let config = ShotConfig {
+            search_radius: 0.5,
+            k_neighbors: 5,
+            variant: ShotVariant::Standard,
+        };
         let result = extract_shot_features_with_normals(&cloud, &config).unwrap();
         assert_eq!(result.len(), 25);
-        for d in &result { assert_eq!(d.len(), SHOT_DIM); }
+        for d in &result {
+            assert_eq!(d.len(), SHOT_DIM);
+        }
     }
 
     #[test]
     fn test_usc_descriptor_dim() {
         let cloud = make_plane(25);
-        let config = ShotConfig { search_radius: 0.5, k_neighbors: 5, variant: ShotVariant::UniqueShapeContext };
+        let config = ShotConfig {
+            search_radius: 0.5,
+            k_neighbors: 5,
+            variant: ShotVariant::UniqueShapeContext,
+        };
         let result = extract_shot_features_with_normals(&cloud, &config).unwrap();
         assert_eq!(result.len(), 25);
-        for d in &result { assert_eq!(d.len(), USC_DIM); }
+        for d in &result {
+            assert_eq!(d.len(), USC_DIM);
+        }
     }
 
     #[test]
     fn test_shot_non_negative() {
         let cloud = make_plane(25);
-        let config = ShotConfig { search_radius: 0.5, k_neighbors: 5, variant: ShotVariant::Standard };
+        let config = ShotConfig {
+            search_radius: 0.5,
+            k_neighbors: 5,
+            variant: ShotVariant::Standard,
+        };
         let result = extract_shot_features_with_normals(&cloud, &config).unwrap();
         for d in &result {
-            for &v in d { assert!(v >= 0.0, "negative value: {v}"); }
+            for &v in d {
+                assert!(v >= 0.0, "negative value: {v}");
+            }
         }
     }
 
     #[test]
     fn test_shot_l2_normalized_or_zero() {
         let cloud = make_plane(25);
-        let config = ShotConfig { search_radius: 0.5, k_neighbors: 5, variant: ShotVariant::Standard };
+        let config = ShotConfig {
+            search_radius: 0.5,
+            k_neighbors: 5,
+            variant: ShotVariant::Standard,
+        };
         let result = extract_shot_features_with_normals(&cloud, &config).unwrap();
         for d in &result {
             let norm: f32 = d.iter().map(|&v| v * v).sum::<f32>().sqrt();
@@ -693,14 +749,22 @@ mod shot_tests {
     #[test]
     fn test_shot_invalid_radius() {
         let cloud = make_plane(9);
-        let config = ShotConfig { search_radius: -0.1, k_neighbors: 5, variant: ShotVariant::Standard };
+        let config = ShotConfig {
+            search_radius: -0.1,
+            k_neighbors: 5,
+            variant: ShotVariant::Standard,
+        };
         assert!(extract_shot_features_with_normals(&cloud, &config).is_err());
     }
 
     #[test]
     fn test_shot_deterministic() {
         let cloud = make_plane(25);
-        let config = ShotConfig { search_radius: 0.5, k_neighbors: 5, variant: ShotVariant::Standard };
+        let config = ShotConfig {
+            search_radius: 0.5,
+            k_neighbors: 5,
+            variant: ShotVariant::Standard,
+        };
         let r1 = extract_shot_features_with_normals(&cloud, &config).unwrap();
         let r2 = extract_shot_features_with_normals(&cloud, &config).unwrap();
         for (d1, d2) in r1.iter().zip(&r2) {
@@ -713,29 +777,33 @@ mod shot_tests {
     #[test]
     fn test_shot_plane_vs_sphere_differ() {
         let plane = make_plane(25);
-        let config = ShotConfig { search_radius: 0.6, k_neighbors: 8, variant: ShotVariant::Standard };
+        let config = ShotConfig {
+            search_radius: 0.6,
+            k_neighbors: 8,
+            variant: ShotVariant::Standard,
+        };
         let plane_descs = extract_shot_features_with_normals(&plane, &config).unwrap();
 
         let mut sphere = PointCloud::<NormalPoint3f>::new();
         for i in 0..5usize {
             for j in 0..5usize {
                 let theta = std::f32::consts::PI * i as f32 / 4.0;
-                let phi   = 2.0 * std::f32::consts::PI * j as f32 / 5.0;
+                let phi = 2.0 * std::f32::consts::PI * j as f32 / 5.0;
                 let x = theta.sin() * phi.cos();
                 let y = theta.sin() * phi.sin();
                 let z = theta.cos();
                 sphere.push(NormalPoint3f {
                     position: Point3f::new(x, y, z),
-                    normal:   Vector3f::new(x, y, z),
+                    normal: Vector3f::new(x, y, z),
                 });
             }
         }
         let sphere_descs = extract_shot_features_with_normals(&sphere, &config).unwrap();
 
         let any_different = plane_descs.iter().any(|pd| {
-            sphere_descs.iter().any(|sd| {
-                pd.iter().zip(sd).map(|(a, b)| (a - b).abs()).sum::<f32>() > 0.05
-            })
+            sphere_descs
+                .iter()
+                .any(|sd| pd.iter().zip(sd).map(|(a, b)| (a - b).abs()).sum::<f32>() > 0.05)
         });
         assert!(any_different, "plane and sphere descriptors should differ");
     }

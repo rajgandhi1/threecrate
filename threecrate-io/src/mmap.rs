@@ -8,7 +8,7 @@
 use memmap2::Mmap;
 use std::fs::File;
 use std::path::Path;
-use threecrate_core::{Result, Error};
+use threecrate_core::{Error, Result};
 
 /// Memory-mapped file reader for binary data
 pub struct MmapReader {
@@ -23,7 +23,7 @@ pub struct MmapReader {
 
 impl MmapReader {
     /// Create a new memory-mapped reader for the given file
-    /// 
+    ///
     /// This will attempt to use memory mapping if available and supported,
     /// otherwise returns None to indicate fallback should be used.
     pub fn new<P: AsRef<Path>>(path: P) -> Result<Option<Self>> {
@@ -36,7 +36,7 @@ impl MmapReader {
 
             let file = File::open(path)?;
             let metadata = file.metadata()?;
-            
+
             // Only use mmap for files larger than a threshold (e.g., 64KB)
             // For small files, regular I/O is often faster due to mmap overhead
             const MIN_MMAP_SIZE: u64 = 64 * 1024; // 64KB
@@ -57,7 +57,7 @@ impl MmapReader {
                 position: 0,
             }))
         }
-        
+
         #[cfg(not(feature = "io-mmap"))]
         {
             let _ = path; // Suppress unused variable warning
@@ -72,7 +72,7 @@ impl MmapReader {
             // Memory mapping is generally supported on Unix-like systems and Windows
             cfg!(any(unix, windows))
         }
-        
+
         #[cfg(not(feature = "io-mmap"))]
         {
             false
@@ -85,7 +85,7 @@ impl MmapReader {
         {
             self.mmap.as_ref().map(|m| m.len()).unwrap_or(0)
         }
-        
+
         #[cfg(not(feature = "io-mmap"))]
         {
             0
@@ -98,7 +98,7 @@ impl MmapReader {
         {
             self.position
         }
-        
+
         #[cfg(not(feature = "io-mmap"))]
         {
             0
@@ -110,16 +110,20 @@ impl MmapReader {
         #[cfg(feature = "io-mmap")]
         {
             if pos > self.len() {
-                return Err(Error::InvalidData("Seek position beyond file end".to_string()));
+                return Err(Error::InvalidData(
+                    "Seek position beyond file end".to_string(),
+                ));
             }
             self.position = pos;
             Ok(())
         }
-        
+
         #[cfg(not(feature = "io-mmap"))]
         {
             let _ = pos;
-            Err(Error::Unsupported("Memory mapping not available".to_string()))
+            Err(Error::Unsupported(
+                "Memory mapping not available".to_string(),
+            ))
         }
     }
 
@@ -127,22 +131,26 @@ impl MmapReader {
     pub fn read_slice(&mut self, len: usize) -> Result<&[u8]> {
         #[cfg(feature = "io-mmap")]
         {
-            let mmap = self.mmap.as_ref().ok_or_else(|| 
-                Error::InvalidData("No memory mapping available".to_string()))?;
-            
+            let mmap = self
+                .mmap
+                .as_ref()
+                .ok_or_else(|| Error::InvalidData("No memory mapping available".to_string()))?;
+
             if self.position + len > mmap.len() {
                 return Err(Error::InvalidData("Read beyond file end".to_string()));
             }
-            
+
             let slice = &mmap[self.position..self.position + len];
             self.position += len;
             Ok(slice)
         }
-        
+
         #[cfg(not(feature = "io-mmap"))]
         {
             let _ = len;
-            Err(Error::Unsupported("Memory mapping not available".to_string()))
+            Err(Error::Unsupported(
+                "Memory mapping not available".to_string(),
+            ))
         }
     }
 
@@ -174,8 +182,7 @@ impl MmapReader {
     pub fn read_f64_le(&mut self) -> Result<f64> {
         let slice = self.read_slice(8)?;
         Ok(f64::from_le_bytes([
-            slice[0], slice[1], slice[2], slice[3],
-            slice[4], slice[5], slice[6], slice[7]
+            slice[0], slice[1], slice[2], slice[3], slice[4], slice[5], slice[6], slice[7],
         ]))
     }
 
@@ -201,8 +208,7 @@ impl MmapReader {
     pub fn read_f64_be(&mut self) -> Result<f64> {
         let slice = self.read_slice(8)?;
         Ok(f64::from_be_bytes([
-            slice[0], slice[1], slice[2], slice[3],
-            slice[4], slice[5], slice[6], slice[7]
+            slice[0], slice[1], slice[2], slice[3], slice[4], slice[5], slice[6], slice[7],
         ]))
     }
 
@@ -217,11 +223,13 @@ impl MmapReader {
             self.position = new_pos;
             Ok(())
         }
-        
+
         #[cfg(not(feature = "io-mmap"))]
         {
             let _ = bytes;
-            Err(Error::Unsupported("Memory mapping not available".to_string()))
+            Err(Error::Unsupported(
+                "Memory mapping not available".to_string(),
+            ))
         }
     }
 
@@ -231,7 +239,7 @@ impl MmapReader {
         {
             self.position >= self.len()
         }
-        
+
         #[cfg(not(feature = "io-mmap"))]
         {
             true
@@ -244,7 +252,7 @@ impl MmapReader {
         {
             self.len().saturating_sub(self.position)
         }
-        
+
         #[cfg(not(feature = "io-mmap"))]
         {
             0
@@ -287,7 +295,7 @@ mod tests {
         // Create a temporary file with test data
         let mut temp_file = NamedTempFile::new().unwrap();
         let test_data = vec![0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];
-        
+
         // Write enough data to trigger mmap (> 64KB)
         for _ in 0..10000 {
             temp_file.write_all(&test_data)?;
@@ -298,7 +306,7 @@ mod tests {
         if let Some(mut reader) = MmapReader::new(temp_file.path())? {
             assert_eq!(reader.position(), 0);
             assert!(reader.len() > 64 * 1024);
-            
+
             // Test reading
             let byte = reader.read_u8()?;
             assert_eq!(byte, 0x01);
@@ -307,10 +315,10 @@ mod tests {
             // Test seeking
             reader.seek(4)?;
             assert_eq!(reader.position(), 4);
-            
+
             let byte = reader.read_u8()?;
             assert_eq!(byte, 0x05);
-            
+
             // Test reading multi-byte values
             reader.seek(0)?;
             let u32_val = reader.read_u32_le()?;
@@ -328,7 +336,7 @@ mod tests {
     fn test_should_use_mmap() {
         // Create a small temporary file
         let temp_file = NamedTempFile::new().unwrap();
-        
+
         // Small file should not use mmap
         let should_mmap = should_use_mmap(temp_file.path());
         // This might be false due to size or platform support

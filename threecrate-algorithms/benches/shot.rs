@@ -1,5 +1,7 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use threecrate_algorithms::features::{extract_shot_features_with_normals, ShotConfig, ShotVariant};
+use threecrate_algorithms::features::{
+    extract_shot_features_with_normals, ShotConfig, ShotVariant,
+};
 use threecrate_core::{NormalPoint3f, Point3f, PointCloud, Vector3f};
 
 fn make_plane_cloud(n: usize) -> PointCloud<NormalPoint3f> {
@@ -78,5 +80,10 @@ fn bench_shot_by_radius(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_shot_by_cloud_size, bench_shot_vs_usc, bench_shot_by_radius);
+criterion_group!(
+    benches,
+    bench_shot_by_cloud_size,
+    bench_shot_vs_usc,
+    bench_shot_by_radius
+);
 criterion_main!(benches);

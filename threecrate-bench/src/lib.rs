@@ -4,4 +4,4 @@ pub mod mem;
 
 pub trait ThreecrateMeasurement: Measurement {
     const NAME: &'static str;
-} 
+}

@@ -1,5 +1,8 @@
-use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use threecrate_bench::{ThreecrateMeasurement, mem::{AllocationSize, Allocations, INSTRUMENTED_SYSTEM, InstrumentedSystem}};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use threecrate_bench::{
+    mem::{AllocationSize, Allocations, InstrumentedSystem, INSTRUMENTED_SYSTEM},
+    ThreecrateMeasurement,
+};
 use threecrate_io::{AttributePreservingReader, ExtendedTriangleMesh, SerializationOptions};
 use threecrate_simplification::{MeshSimplifier, QuadricErrorSimplifier};
 
@@ -10,34 +13,40 @@ const REDUCTION_RATIOS: [f32; 5] = [0.1, 0.3, 0.5, 0.7, 0.9];
 static GLOBAL_ALLOCATOR: &InstrumentedSystem = &INSTRUMENTED_SYSTEM;
 
 fn quadric_error_memory<M: ThreecrateMeasurement>(c: &mut Criterion<M>) {
-    let ExtendedTriangleMesh { mesh, .. } = AttributePreservingReader::read_extended_mesh(ASSET_PATH, &SerializationOptions::default()).unwrap();
+    let ExtendedTriangleMesh { mesh, .. } =
+        AttributePreservingReader::read_extended_mesh(ASSET_PATH, &SerializationOptions::default())
+            .unwrap();
     let simplifier = QuadricErrorSimplifier::default();
-    
+
     let mut g = c.benchmark_group(format!("quadric error {}", M::NAME));
     g.sample_size(10);
 
     for ratio in REDUCTION_RATIOS {
-        g.bench_with_input(BenchmarkId::from_parameter(ratio), &(&simplifier, &mesh, ratio), |b, &(simplifier, mesh, ratio)| {
-            b.iter(|| std::hint::black_box(simplifier).simplify(std::hint::black_box(mesh), std::hint::black_box(ratio)));
-        });
+        g.bench_with_input(
+            BenchmarkId::from_parameter(ratio),
+            &(&simplifier, &mesh, ratio),
+            |b, &(simplifier, mesh, ratio)| {
+                b.iter(|| {
+                    std::hint::black_box(simplifier)
+                        .simplify(std::hint::black_box(mesh), std::hint::black_box(ratio))
+                });
+            },
+        );
     }
 
     g.finish();
 }
 
-criterion_group!{
+criterion_group! {
     name = allocations;
     config = Criterion::default().with_measurement(Allocations);
     targets = quadric_error_memory
 }
 
-criterion_group!{
+criterion_group! {
     name = allocation_size;
     config = Criterion::default().with_measurement(AllocationSize);
     targets = quadric_error_memory
 }
 
-criterion_main!(
-    allocations,
-    allocation_size,
-);
+criterion_main!(allocations, allocation_size,);

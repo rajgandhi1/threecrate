@@ -3,14 +3,11 @@
 //! This example demonstrates the enhanced normal estimation functionality
 //! including k-NN, radius-based search, and orientation consistency.
 
-use threecrate_core::{PointCloud, Point3f};
-use threecrate_algorithms::{
-    estimate_normals, 
-    estimate_normals_with_config, 
-    estimate_normals_radius,
-    NormalEstimationConfig
-};
 use std::time::Instant;
+use threecrate_algorithms::{
+    estimate_normals, estimate_normals_radius, estimate_normals_with_config, NormalEstimationConfig,
+};
+use threecrate_core::{Point3f, PointCloud};
 
 fn main() -> threecrate_core::Result<()> {
     println!("🚀 Enhanced Normal Estimation Example");
@@ -35,7 +32,10 @@ fn main() -> threecrate_core::Result<()> {
     let start = Instant::now();
     let normals_radius = estimate_normals_radius(&cloud, 0.3, true)?;
     let radius_time = start.elapsed();
-    println!("✓ Estimated normals using radius search in {:?}", radius_time);
+    println!(
+        "✓ Estimated normals using radius search in {:?}",
+        radius_time
+    );
     println!("  - Result: {} points with normals", normals_radius.len());
 
     // 3. Advanced configuration
@@ -47,11 +47,14 @@ fn main() -> threecrate_core::Result<()> {
         consistent_orientation: true,
         viewpoint: Some(Point3f::new(0.0, 0.0, 5.0)),
     };
-    
+
     let start = Instant::now();
     let normals_advanced = estimate_normals_with_config(&cloud, &config)?;
     let advanced_time = start.elapsed();
-    println!("✓ Estimated normals with advanced config in {:?}", advanced_time);
+    println!(
+        "✓ Estimated normals with advanced config in {:?}",
+        advanced_time
+    );
     println!("  - Result: {} points with normals", normals_advanced.len());
 
     // 4. Compare results
@@ -74,7 +77,7 @@ fn main() -> threecrate_core::Result<()> {
 
 fn create_sample_point_cloud() -> PointCloud<Point3f> {
     let mut cloud = PointCloud::new();
-    
+
     // Add planar surface (XY plane)
     for i in 0..20 {
         for j in 0..20 {
@@ -84,7 +87,7 @@ fn create_sample_point_cloud() -> PointCloud<Point3f> {
             cloud.push(Point3f::new(x, y, z));
         }
     }
-    
+
     // Add cylindrical surface
     for i in 0..15 {
         for j in 0..10 {
@@ -96,7 +99,7 @@ fn create_sample_point_cloud() -> PointCloud<Point3f> {
             cloud.push(Point3f::new(x, y, z));
         }
     }
-    
+
     // Add spherical surface
     for i in 0..20 {
         for j in 0..10 {
@@ -108,36 +111,38 @@ fn create_sample_point_cloud() -> PointCloud<Point3f> {
             cloud.push(Point3f::new(x, y, z));
         }
     }
-    
+
     cloud
 }
 
 fn compare_normal_quality(normals: &PointCloud<threecrate_core::NormalPoint3f>, method: &str) {
     let mut unit_vector_count = 0;
     let mut z_direction_count = 0;
-    
+
     for point in normals.iter() {
         let magnitude = point.normal.magnitude();
         if (magnitude - 1.0).abs() < 0.1 {
             unit_vector_count += 1;
         }
-        
+
         if point.normal.z.abs() > 0.8 {
             z_direction_count += 1;
         }
     }
-    
+
     let unit_percentage = (unit_vector_count as f32 / normals.len() as f32) * 100.0;
     let z_percentage = (z_direction_count as f32 / normals.len() as f32) * 100.0;
-    
-    println!("  {}: {:.1}% unit vectors, {:.1}% in Z direction", 
-             method, unit_percentage, z_percentage);
+
+    println!(
+        "  {}: {:.1}% unit vectors, {:.1}% in Z direction",
+        method, unit_percentage, z_percentage
+    );
 }
 
 fn test_planar_surface() {
     println!("  Testing planar surface...");
     let mut cloud = PointCloud::new();
-    
+
     // Create a planar surface
     for i in 0..15 {
         for j in 0..15 {
@@ -147,24 +152,27 @@ fn test_planar_surface() {
             cloud.push(Point3f::new(x, y, z));
         }
     }
-    
+
     let normals = estimate_normals(&cloud, 8).unwrap();
     let mut z_direction_count = 0;
-    
+
     for point in normals.iter() {
         if point.normal.z.abs() > 0.8 {
             z_direction_count += 1;
         }
     }
-    
+
     let percentage = (z_direction_count as f32 / normals.len() as f32) * 100.0;
-    println!("    Planar surface: {:.1}% normals in Z direction", percentage);
+    println!(
+        "    Planar surface: {:.1}% normals in Z direction",
+        percentage
+    );
 }
 
 fn test_cylindrical_surface() {
     println!("  Testing cylindrical surface...");
     let mut cloud = PointCloud::new();
-    
+
     // Create a cylindrical surface
     for i in 0..12 {
         for j in 0..8 {
@@ -176,24 +184,27 @@ fn test_cylindrical_surface() {
             cloud.push(Point3f::new(x, y, z));
         }
     }
-    
+
     let normals = estimate_normals(&cloud, 8).unwrap();
     let mut perpendicular_count = 0;
-    
+
     for point in normals.iter() {
         if point.normal.z.abs() < 0.8 {
             perpendicular_count += 1;
         }
     }
-    
+
     let percentage = (perpendicular_count as f32 / normals.len() as f32) * 100.0;
-    println!("    Cylindrical surface: {:.1}% normals perpendicular to Z", percentage);
+    println!(
+        "    Cylindrical surface: {:.1}% normals perpendicular to Z",
+        percentage
+    );
 }
 
 fn test_spherical_surface() {
     println!("  Testing spherical surface...");
     let mut cloud = PointCloud::new();
-    
+
     // Create a spherical surface
     for i in 0..15 {
         for j in 0..8 {
@@ -205,10 +216,10 @@ fn test_spherical_surface() {
             cloud.push(Point3f::new(x, y, z));
         }
     }
-    
+
     let normals = estimate_normals(&cloud, 8).unwrap();
     let mut outward_count = 0;
-    
+
     for point in normals.iter() {
         let to_center = -point.position.coords.normalize();
         let dot_product = point.normal.dot(&to_center);
@@ -216,7 +227,10 @@ fn test_spherical_surface() {
             outward_count += 1;
         }
     }
-    
+
     let percentage = (outward_count as f32 / normals.len() as f32) * 100.0;
-    println!("    Spherical surface: {:.1}% normals pointing outward", percentage);
-} 
+    println!(
+        "    Spherical surface: {:.1}% normals pointing outward",
+        percentage
+    );
+}

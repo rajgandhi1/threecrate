@@ -1,13 +1,13 @@
 use crate::device::GpuContext;
-use threecrate_core::{PointCloud, ColoredPoint3f, Error, Result};
-use nalgebra::{Matrix4, Point3};
 use bytemuck::{Pod, Zeroable};
+use nalgebra::{Matrix4, Point3};
+use threecrate_core::{ColoredPoint3f, Error, PointCloud, Result};
 use wgpu::util::DeviceExt;
 
 /// TSDF voxel data for GPU processing
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-#[repr(align(16))]  // Ensure 16-byte alignment for GPU
+#[repr(align(16))] // Ensure 16-byte alignment for GPU
 pub struct TsdfVoxel {
     pub tsdf_value: f32,
     pub weight: f32,
@@ -37,7 +37,7 @@ pub struct TsdfVolumeGpu {
 /// Camera intrinsic parameters
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
-#[repr(align(16))]  // Ensure 16-byte alignment for GPU
+#[repr(align(16))] // Ensure 16-byte alignment for GPU
 pub struct CameraIntrinsics {
     pub fx: f32,
     pub fy: f32,
@@ -66,7 +66,7 @@ pub struct TsdfParams {
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-#[repr(align(16))]  // Ensure 16-byte alignment for GPU
+#[repr(align(16))] // Ensure 16-byte alignment for GPU
 pub struct GpuPoint3f {
     pub x: f32,
     pub y: f32,
@@ -88,14 +88,17 @@ impl GpuContext {
         camera_pose: &Matrix4<f32>,
         intrinsics: &CameraIntrinsics,
     ) -> Result<Vec<TsdfVoxel>> {
-        let total_voxels = (volume.resolution[0] * volume.resolution[1] * volume.resolution[2]) as usize;
-        
+        let total_voxels =
+            (volume.resolution[0] * volume.resolution[1] * volume.resolution[2]) as usize;
+
         // Create buffers
-        let depth_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("TSDF Depth Buffer"),
-            contents: bytemuck::cast_slice(depth_image),
-            usage: wgpu::BufferUsages::STORAGE,
-        });
+        let depth_buffer = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("TSDF Depth Buffer"),
+                contents: bytemuck::cast_slice(depth_image),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
 
         let color_buffer = if let Some(color_data) = color_image {
             // Convert RGB u8 data to packed u32 RGB values
@@ -107,43 +110,51 @@ impl GpuContext {
                 let packed = (r << 16) | (g << 8) | b;
                 packed_colors.push(packed);
             }
-            
-            self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("TSDF Color Buffer"),
-                contents: bytemuck::cast_slice(&packed_colors),
-                usage: wgpu::BufferUsages::STORAGE,
-            })
+
+            self.device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("TSDF Color Buffer"),
+                    contents: bytemuck::cast_slice(&packed_colors),
+                    usage: wgpu::BufferUsages::STORAGE,
+                })
         } else {
             // Create empty buffer if no color data
-            self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("TSDF Empty Color Buffer"),
-                contents: bytemuck::cast_slice(&[0u32; 4]), // Small dummy buffer
-                usage: wgpu::BufferUsages::STORAGE,
-            })
+            self.device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("TSDF Empty Color Buffer"),
+                    contents: bytemuck::cast_slice(&[0u32; 4]), // Small dummy buffer
+                    usage: wgpu::BufferUsages::STORAGE,
+                })
         };
 
         // Initialize TSDF volume if needed
-        let initial_voxels = vec![TsdfVoxel {
-            tsdf_value: 1.0,
-            weight: 0.0,
-            color_r: 0,
-            color_g: 0,
-            color_b: 0,
-            _padding1: 0,
-            _padding2: 0,
-            _padding3: 0,
-        }; total_voxels];
+        let initial_voxels = vec![
+            TsdfVoxel {
+                tsdf_value: 1.0,
+                weight: 0.0,
+                color_r: 0,
+                color_g: 0,
+                color_b: 0,
+                _padding1: 0,
+                _padding2: 0,
+                _padding3: 0,
+            };
+            total_voxels
+        ];
 
-        let voxel_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("TSDF Voxel Buffer"),
-            contents: bytemuck::cast_slice(&initial_voxels),
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-        });
+        let voxel_buffer = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("TSDF Voxel Buffer"),
+                contents: bytemuck::cast_slice(&initial_voxels),
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            });
 
         // Convert camera transform to world-to-camera matrix (inverse of camera pose)
-        let world_to_camera = camera_pose.try_inverse()
+        let world_to_camera = camera_pose
+            .try_inverse()
             .ok_or_else(|| Error::Gpu("Failed to invert camera pose matrix".into()))?;
-        
+
         let mut camera_transform = [[0.0f32; 4]; 4];
         for i in 0..4 {
             for j in 0..4 {
@@ -151,17 +162,21 @@ impl GpuContext {
             }
         }
 
-        let transform_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("TSDF Transform Buffer"),
-            contents: bytemuck::cast_slice(&[camera_transform]),
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
+        let transform_buffer = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("TSDF Transform Buffer"),
+                contents: bytemuck::cast_slice(&[camera_transform]),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
 
-        let intrinsics_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("TSDF Intrinsics Buffer"),
-            contents: bytemuck::bytes_of(intrinsics),
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
+        let intrinsics_buffer = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("TSDF Intrinsics Buffer"),
+                contents: bytemuck::bytes_of(intrinsics),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
 
         let params = TsdfParams {
             voxel_size: volume.voxel_size,
@@ -174,26 +189,34 @@ impl GpuContext {
             _padding3: 0.0,
         };
 
-        let params_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("TSDF Params Buffer"),
-            contents: bytemuck::bytes_of(&params),
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
+        let params_buffer = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("TSDF Params Buffer"),
+                contents: bytemuck::bytes_of(&params),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
 
         // Create compute pipeline
-        let shader = self.device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("TSDF Integration Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/tsdf_integration.wgsl").into()),
-        });
+        let shader = self
+            .device
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("TSDF Integration Shader"),
+                source: wgpu::ShaderSource::Wgsl(
+                    include_str!("shaders/tsdf_integration.wgsl").into(),
+                ),
+            });
 
-        let pipeline = self.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("TSDF Integration Pipeline"),
-            layout: None,
-            module: &shader,
-            entry_point: Some("main"),
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-            cache: None,
-        });
+        let pipeline = self
+            .device
+            .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("TSDF Integration Pipeline"),
+                layout: None,
+                module: &shader,
+                entry_point: Some("main"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                cache: None,
+            });
 
         // Create bind group
         let bind_group_entries = vec![
@@ -230,9 +253,11 @@ impl GpuContext {
         });
 
         // Dispatch compute shader
-        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("TSDF Integration Encoder"),
-        });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("TSDF Integration Encoder"),
+            });
 
         {
             let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -242,13 +267,13 @@ impl GpuContext {
 
             compute_pass.set_pipeline(&pipeline);
             compute_pass.set_bind_group(0, &bind_group, &[]);
-            
+
             // Dispatch with 4x4x4 workgroups
             let workgroup_size = 4;
             let dispatch_x = (volume.resolution[0] + workgroup_size - 1) / workgroup_size;
             let dispatch_y = (volume.resolution[1] + workgroup_size - 1) / workgroup_size;
             let dispatch_z = (volume.resolution[2] + workgroup_size - 1) / workgroup_size;
-            
+
             compute_pass.dispatch_workgroups(dispatch_x, dispatch_y, dispatch_z);
         }
 
@@ -260,13 +285,7 @@ impl GpuContext {
             mapped_at_creation: false,
         });
 
-        encoder.copy_buffer_to_buffer(
-            &voxel_buffer,
-            0,
-            &staging_buffer,
-            0,
-            staging_buffer.size(),
-        );
+        encoder.copy_buffer_to_buffer(&voxel_buffer, 0, &staging_buffer, 0, staging_buffer.size());
 
         self.queue.submit(std::iter::once(encoder.finish()));
 
@@ -280,12 +299,15 @@ impl GpuContext {
             submission_index: None,
             timeout: None,
         });
-        receiver.recv_async().await.map_err(|_| Error::Gpu("Failed to receive mapping result".into()))?
+        receiver
+            .recv_async()
+            .await
+            .map_err(|_| Error::Gpu("Failed to receive mapping result".into()))?
             .map_err(|e| Error::Gpu(format!("Buffer mapping failed: {:?}", e)))?;
 
         let data = buffer_slice.get_mapped_range();
         let result: Vec<TsdfVoxel> = bytemuck::cast_slice(&data).to_vec();
-        
+
         drop(data);
         staging_buffer.unmap();
 
@@ -299,15 +321,18 @@ impl GpuContext {
         voxels: &[TsdfVoxel],
         iso_value: f32,
     ) -> Result<PointCloud<ColoredPoint3f>> {
-        let total_voxels = (volume.resolution[0] * volume.resolution[1] * volume.resolution[2]) as usize;
+        let total_voxels =
+            (volume.resolution[0] * volume.resolution[1] * volume.resolution[2]) as usize;
         let max_points = std::cmp::min(total_voxels, 1_000_000); // Limit to reasonable size
-        
+
         // Create voxel buffer
-        let voxel_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("TSDF Voxel Buffer"),
-            contents: bytemuck::cast_slice(voxels),
-            usage: wgpu::BufferUsages::STORAGE,
-        });
+        let voxel_buffer = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("TSDF Voxel Buffer"),
+                contents: bytemuck::cast_slice(voxels),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
 
         // Create output buffers
         let points_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
@@ -317,11 +342,13 @@ impl GpuContext {
             mapped_at_creation: false,
         });
 
-        let point_count_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Point Count Buffer"),
-            contents: bytemuck::bytes_of(&0u32),
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-        });
+        let point_count_buffer =
+            self.device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Point Count Buffer"),
+                    contents: bytemuck::bytes_of(&0u32),
+                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+                });
 
         let params = TsdfParams {
             voxel_size: volume.voxel_size,
@@ -334,26 +361,34 @@ impl GpuContext {
             _padding3: 0.0,
         };
 
-        let params_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Surface Extraction Params Buffer"),
-            contents: bytemuck::bytes_of(&params),
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
+        let params_buffer = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Surface Extraction Params Buffer"),
+                contents: bytemuck::bytes_of(&params),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
 
         // Create compute pipeline
-        let shader = self.device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("Surface Extraction Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/surface_extraction.wgsl").into()),
-        });
+        let shader = self
+            .device
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("Surface Extraction Shader"),
+                source: wgpu::ShaderSource::Wgsl(
+                    include_str!("shaders/surface_extraction.wgsl").into(),
+                ),
+            });
 
-        let pipeline = self.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("Surface Extraction Pipeline"),
-            layout: None,
-            module: &shader,
-            entry_point: Some("main"),
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-            cache: None,
-        });
+        let pipeline = self
+            .device
+            .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("Surface Extraction Pipeline"),
+                layout: None,
+                module: &shader,
+                entry_point: Some("main"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                cache: None,
+            });
 
         // Create bind group
         let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -388,9 +423,11 @@ impl GpuContext {
         });
 
         // Dispatch compute shader
-        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Surface Extraction Encoder"),
-        });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Surface Extraction Encoder"),
+            });
 
         {
             let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -448,9 +485,11 @@ impl GpuContext {
         });
 
         // Copy points to staging buffer
-        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Points Copy Encoder"),
-        });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Points Copy Encoder"),
+            });
 
         encoder.copy_buffer_to_buffer(
             &points_buffer,
@@ -485,7 +524,7 @@ impl GpuContext {
             });
         }
 
-        drop(mapped_range);  // Explicitly drop the mapped range before unmapping
+        drop(mapped_range); // Explicitly drop the mapped range before unmapping
         points_staging_buffer.unmap();
 
         Ok(PointCloud { points })
@@ -495,25 +534,34 @@ impl GpuContext {
 impl TsdfVolumeGpu {
     /// Creates a new TSDF volume on the GPU.
     pub fn new(gpu: &GpuContext, volume_params: TsdfVolume) -> Self {
-        let total_voxels = (volume_params.resolution[0] * volume_params.resolution[1] * volume_params.resolution[2]) as usize;
-        
-        // Initialize voxels with default values
-        let initial_voxels = vec![TsdfVoxel {
-            tsdf_value: 1.0,
-            weight: 0.0,
-            color_r: 0,
-            color_g: 0,
-            color_b: 0,
-            _padding1: 0,
-            _padding2: 0,
-            _padding3: 0,
-        }; total_voxels];
+        let total_voxels = (volume_params.resolution[0]
+            * volume_params.resolution[1]
+            * volume_params.resolution[2]) as usize;
 
-        let voxel_buffer = gpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("TSDF Voxel Buffer"),
-            contents: bytemuck::cast_slice(&initial_voxels),
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
-        });
+        // Initialize voxels with default values
+        let initial_voxels = vec![
+            TsdfVoxel {
+                tsdf_value: 1.0,
+                weight: 0.0,
+                color_r: 0,
+                color_g: 0,
+                color_b: 0,
+                _padding1: 0,
+                _padding2: 0,
+                _padding3: 0,
+            };
+            total_voxels
+        ];
+
+        let voxel_buffer = gpu
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("TSDF Voxel Buffer"),
+                contents: bytemuck::cast_slice(&initial_voxels),
+                usage: wgpu::BufferUsages::STORAGE
+                    | wgpu::BufferUsages::COPY_SRC
+                    | wgpu::BufferUsages::COPY_DST,
+            });
 
         Self {
             volume: volume_params,
@@ -531,19 +579,28 @@ impl TsdfVolumeGpu {
         intrinsics: &CameraIntrinsics,
     ) -> Result<()> {
         // Create buffers for depth, color, transform, and parameters
-        let depth_buffer = gpu.create_buffer_init("TSDF Depth Buffer", depth_image, wgpu::BufferUsages::STORAGE);
+        let depth_buffer = gpu.create_buffer_init(
+            "TSDF Depth Buffer",
+            depth_image,
+            wgpu::BufferUsages::STORAGE,
+        );
 
         let color_buffer = if let Some(data) = color_image {
             gpu.create_buffer_init("TSDF Color Buffer", data, wgpu::BufferUsages::STORAGE)
         } else {
             // Create a dummy buffer if no color image is provided
-            gpu.create_buffer_init("TSDF Dummy Color Buffer", &[0u32; 4], wgpu::BufferUsages::STORAGE)
+            gpu.create_buffer_init(
+                "TSDF Dummy Color Buffer",
+                &[0u32; 4],
+                wgpu::BufferUsages::STORAGE,
+            )
         };
 
         // Convert camera transform to world-to-camera matrix (inverse of camera pose)
-        let world_to_camera = camera_pose.try_inverse()
+        let world_to_camera = camera_pose
+            .try_inverse()
             .ok_or_else(|| Error::Gpu("Failed to invert camera pose matrix".into()))?;
-        
+
         let mut camera_transform = [[0.0f32; 4]; 4];
         for i in 0..4 {
             for j in 0..4 {
@@ -570,21 +627,31 @@ impl TsdfVolumeGpu {
             iso_value: 0.0,
             resolution: self.volume.resolution,
             _padding2: 0,
-            origin: [self.volume.origin.x, self.volume.origin.y, self.volume.origin.z],
+            origin: [
+                self.volume.origin.x,
+                self.volume.origin.y,
+                self.volume.origin.z,
+            ],
             _padding3: 0.0,
         };
-        let params_buffer = gpu.create_buffer_init("TSDF Params Buffer", &[params], wgpu::BufferUsages::UNIFORM);
+        let params_buffer =
+            gpu.create_buffer_init("TSDF Params Buffer", &[params], wgpu::BufferUsages::UNIFORM);
 
         // Create compute pipeline
-        let shader = gpu.create_shader_module("TSDF Integration Shader", include_str!("shaders/tsdf_integration.wgsl"));
-        let pipeline = gpu.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("TSDF Integration Pipeline"),
-            layout: None,
-            module: &shader,
-            entry_point: Some("main"),
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-            cache: None,
-        });
+        let shader = gpu.create_shader_module(
+            "TSDF Integration Shader",
+            include_str!("shaders/tsdf_integration.wgsl"),
+        );
+        let pipeline = gpu
+            .device
+            .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("TSDF Integration Pipeline"),
+                layout: None,
+                module: &shader,
+                entry_point: Some("main"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                cache: None,
+            });
 
         // Create bind group
         let bind_group_entries = vec![
@@ -614,12 +681,18 @@ impl TsdfVolumeGpu {
             },
         ];
 
-        let bind_group = gpu.create_bind_group("TSDF Integration Bind Group", &pipeline.get_bind_group_layout(0), &bind_group_entries);
+        let bind_group = gpu.create_bind_group(
+            "TSDF Integration Bind Group",
+            &pipeline.get_bind_group_layout(0),
+            &bind_group_entries,
+        );
 
         // Dispatch compute shader
-        let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("TSDF Integration Encoder"),
-        });
+        let mut encoder = gpu
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("TSDF Integration Encoder"),
+            });
 
         {
             let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -629,14 +702,17 @@ impl TsdfVolumeGpu {
 
             compute_pass.set_pipeline(&pipeline);
             compute_pass.set_bind_group(0, &bind_group, &[]);
-            
+
             // Dispatch with 4x4x4 workgroups
             let workgroup_size = 4;
             let dispatch_x = (self.volume.resolution[0] + workgroup_size - 1) / workgroup_size;
             let dispatch_y = (self.volume.resolution[1] + workgroup_size - 1) / workgroup_size;
             let dispatch_z = (self.volume.resolution[2] + workgroup_size - 1) / workgroup_size;
-            
-            println!("Dispatching compute shader with {} x {} x {} workgroups", dispatch_x, dispatch_y, dispatch_z);
+
+            println!(
+                "Dispatching compute shader with {} x {} x {} workgroups",
+                dispatch_x, dispatch_y, dispatch_z
+            );
             compute_pass.dispatch_workgroups(dispatch_x, dispatch_y, dispatch_z);
         }
 
@@ -646,7 +722,9 @@ impl TsdfVolumeGpu {
 
     /// Downloads the TSDF voxel data from the GPU.
     pub async fn download_voxels(&self, gpu: &GpuContext) -> Result<Vec<TsdfVoxel>> {
-        let total_voxels = (self.volume.resolution[0] * self.volume.resolution[1] * self.volume.resolution[2]) as usize;
+        let total_voxels = (self.volume.resolution[0]
+            * self.volume.resolution[1]
+            * self.volume.resolution[2]) as usize;
         let buffer_size = (total_voxels * std::mem::size_of::<TsdfVoxel>()) as u64;
 
         let staging_buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
@@ -656,17 +734,13 @@ impl TsdfVolumeGpu {
             mapped_at_creation: false,
         });
 
-        let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("TSDF Download Encoder"),
-        });
+        let mut encoder = gpu
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("TSDF Download Encoder"),
+            });
 
-        encoder.copy_buffer_to_buffer(
-            &self.voxel_buffer,
-            0,
-            &staging_buffer,
-            0,
-            buffer_size,
-        );
+        encoder.copy_buffer_to_buffer(&self.voxel_buffer, 0, &staging_buffer, 0, buffer_size);
 
         gpu.queue.submit(std::iter::once(encoder.finish()));
 
@@ -680,11 +754,14 @@ impl TsdfVolumeGpu {
             submission_index: None,
             timeout: None,
         });
-        receiver.recv_async().await.map_err(|_| Error::Gpu("Failed to receive mapping result".into()))??;
+        receiver
+            .recv_async()
+            .await
+            .map_err(|_| Error::Gpu("Failed to receive mapping result".into()))??;
 
         let data = buffer_slice.get_mapped_range();
         let result: Vec<TsdfVoxel> = bytemuck::cast_slice(&data).to_vec();
-        
+
         drop(data);
         staging_buffer.unmap();
 
@@ -692,9 +769,14 @@ impl TsdfVolumeGpu {
     }
 
     /// Extract point cloud from TSDF volume using marching cubes
-    pub async fn extract_surface(&self, gpu: &GpuContext, iso_value: f32) -> Result<PointCloud<ColoredPoint3f>> {
+    pub async fn extract_surface(
+        &self,
+        gpu: &GpuContext,
+        iso_value: f32,
+    ) -> Result<PointCloud<ColoredPoint3f>> {
         let voxels = self.download_voxels(gpu).await?;
-        gpu.tsdf_extract_surface(&self.volume, &voxels, iso_value).await
+        gpu.tsdf_extract_surface(&self.volume, &voxels, iso_value)
+            .await
     }
 }
 
@@ -722,7 +804,9 @@ pub async fn gpu_tsdf_integrate(
     camera_pose: &Matrix4<f32>,
     intrinsics: &CameraIntrinsics,
 ) -> Result<Vec<TsdfVoxel>> {
-    gpu_context.tsdf_integrate(volume, depth_image, color_image, camera_pose, intrinsics).await
+    gpu_context
+        .tsdf_integrate(volume, depth_image, color_image, camera_pose, intrinsics)
+        .await
 }
 
 /// GPU-accelerated surface extraction from TSDF volume
@@ -732,15 +816,17 @@ pub async fn gpu_tsdf_extract_surface(
     voxels: &[TsdfVoxel],
     iso_value: f32,
 ) -> Result<PointCloud<ColoredPoint3f>> {
-    gpu_context.tsdf_extract_surface(volume, voxels, iso_value).await
+    gpu_context
+        .tsdf_extract_surface(volume, voxels, iso_value)
+        .await
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::device::GpuContext;
-    use nalgebra::{Matrix4, Point3};
     use approx::assert_relative_eq;
+    use nalgebra::{Matrix4, Point3};
 
     /// Try to create a GPU context, return None if not available
     async fn try_create_gpu_context() -> Option<GpuContext> {
@@ -775,10 +861,7 @@ mod tests {
     /// Create identity camera pose
     fn create_identity_pose() -> Matrix4<f32> {
         Matrix4::new(
-            1.0, 0.0, 0.0, 0.0,
-            0.0, 1.0, 0.0, 0.0,
-            0.0, 0.0, 1.0, 0.0,
-            0.0, 0.0, 0.0, 1.0,
+            1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
         )
     }
 
@@ -791,16 +874,12 @@ mod tests {
 
             // Create a simple TSDF volume
             let voxel_size = 0.02; // 2cm voxels for faster processing
-            let truncation_distance = 0.1; 
+            let truncation_distance = 0.1;
             let resolution = [32, 32, 32]; // Smaller resolution for speed
             let origin = Point3::new(-0.32, -0.32, 0.0);
 
-            let volume_params = create_tsdf_volume(
-                voxel_size,
-                truncation_distance,
-                resolution,
-                origin,
-            );
+            let volume_params =
+                create_tsdf_volume(voxel_size, truncation_distance, resolution, origin);
             let tsdf_volume_gpu = TsdfVolumeGpu::new(&gpu, volume_params);
 
             // Create simple depth image with constant depth
@@ -809,18 +888,27 @@ mod tests {
             let camera_pose = create_identity_pose();
 
             // Test integration
-            let result = tsdf_volume_gpu.integrate(&gpu, &depth_image, None, &camera_pose, &intrinsics).await;
+            let result = tsdf_volume_gpu
+                .integrate(&gpu, &depth_image, None, &camera_pose, &intrinsics)
+                .await;
             assert!(result.is_ok(), "TSDF integration should succeed");
 
             // Test voxel download
             let voxels = tsdf_volume_gpu.download_voxels(&gpu).await.unwrap();
-            assert_eq!(voxels.len(), (32 * 32 * 32) as usize, "Should have correct number of voxels");
+            assert_eq!(
+                voxels.len(),
+                (32 * 32 * 32) as usize,
+                "Should have correct number of voxels"
+            );
 
             // Check that some voxels have been updated
             let updated_voxels = voxels.iter().filter(|v| v.weight > 0.0).count();
             assert!(updated_voxels > 0, "Some voxels should have been updated");
 
-            println!("✓ Basic integration test passed: {} voxels updated", updated_voxels);
+            println!(
+                "✓ Basic integration test passed: {} voxels updated",
+                updated_voxels
+            );
         });
     }
 
@@ -831,18 +919,14 @@ mod tests {
                 return;
             };
 
-            // Create TSDF volume 
+            // Create TSDF volume
             let voxel_size = 0.02;
             let truncation_distance = 0.1;
             let resolution = [32, 32, 32];
             let origin = Point3::new(-0.32, -0.32, 0.0);
 
-            let volume_params = create_tsdf_volume(
-                voxel_size,
-                truncation_distance,
-                resolution,
-                origin,
-            );
+            let volume_params =
+                create_tsdf_volume(voxel_size, truncation_distance, resolution, origin);
             let tsdf_volume_gpu = TsdfVolumeGpu::new(&gpu, volume_params);
 
             // Integrate a simple depth image
@@ -850,25 +934,34 @@ mod tests {
             let depth_image = create_simple_depth_image(intrinsics.width, intrinsics.height, 0.3);
             let camera_pose = create_identity_pose();
 
-            tsdf_volume_gpu.integrate(&gpu, &depth_image, None, &camera_pose, &intrinsics)
+            tsdf_volume_gpu
+                .integrate(&gpu, &depth_image, None, &camera_pose, &intrinsics)
                 .await
                 .unwrap();
 
             // Extract surface
             let point_cloud = tsdf_volume_gpu.extract_surface(&gpu, 0.0).await.unwrap();
-            
+
             // Should extract some points
-            assert!(!point_cloud.points.is_empty(), "Should extract surface points");
-            
+            assert!(
+                !point_cloud.points.is_empty(),
+                "Should extract surface points"
+            );
+
             // Points should be in reasonable Z range around the depth value
-            let avg_z = point_cloud.points.iter()
-                .map(|p| p.position.z)
-                .sum::<f32>() / point_cloud.points.len() as f32;
-            
-            assert!(avg_z > 0.2 && avg_z < 0.4, "Average Z should be near depth value of 0.3");
-            
-            println!("✓ Surface extraction test passed: {} points extracted, avg Z: {:.3}", 
-                     point_cloud.points.len(), avg_z);
+            let avg_z = point_cloud.points.iter().map(|p| p.position.z).sum::<f32>()
+                / point_cloud.points.len() as f32;
+
+            assert!(
+                avg_z > 0.2 && avg_z < 0.4,
+                "Average Z should be near depth value of 0.3"
+            );
+
+            println!(
+                "✓ Surface extraction test passed: {} points extracted, avg Z: {:.3}",
+                point_cloud.points.len(),
+                avg_z
+            );
         });
     }
 
@@ -885,12 +978,8 @@ mod tests {
             let resolution = [32, 32, 32];
             let origin = Point3::new(-0.32, -0.32, 0.0);
 
-            let volume_params = create_tsdf_volume(
-                voxel_size,
-                truncation_distance,
-                resolution,
-                origin,
-            );
+            let volume_params =
+                create_tsdf_volume(voxel_size, truncation_distance, resolution, origin);
             let tsdf_volume_gpu = TsdfVolumeGpu::new(&gpu, volume_params);
 
             let intrinsics = create_test_camera();
@@ -899,8 +988,10 @@ mod tests {
             // Integrate multiple depth images
             let depths = [0.25, 0.3, 0.35];
             for &depth in &depths {
-                let depth_image = create_simple_depth_image(intrinsics.width, intrinsics.height, depth);
-                tsdf_volume_gpu.integrate(&gpu, &depth_image, None, &camera_pose, &intrinsics)
+                let depth_image =
+                    create_simple_depth_image(intrinsics.width, intrinsics.height, depth);
+                tsdf_volume_gpu
+                    .integrate(&gpu, &depth_image, None, &camera_pose, &intrinsics)
                     .await
                     .unwrap();
             }
@@ -908,14 +999,23 @@ mod tests {
             // Check voxel weights have increased
             let voxels = tsdf_volume_gpu.download_voxels(&gpu).await.unwrap();
             let max_weight = voxels.iter().map(|v| v.weight).fold(0.0, f32::max);
-            assert!(max_weight > 1.0, "Multiple integrations should increase voxel weights");
+            assert!(
+                max_weight > 1.0,
+                "Multiple integrations should increase voxel weights"
+            );
 
             // Extract surface
             let point_cloud = tsdf_volume_gpu.extract_surface(&gpu, 0.0).await.unwrap();
-            assert!(!point_cloud.points.is_empty(), "Should extract surface after multiple integrations");
+            assert!(
+                !point_cloud.points.is_empty(),
+                "Should extract surface after multiple integrations"
+            );
 
-            println!("✓ Multiple integration test passed: max weight {:.1}, {} points extracted", 
-                     max_weight, point_cloud.points.len());
+            println!(
+                "✓ Multiple integration test passed: max weight {:.1}, {} points extracted",
+                max_weight,
+                point_cloud.points.len()
+            );
         });
     }
 
@@ -945,10 +1045,10 @@ mod tests {
             // Test camera transforms
             let camera_pose = create_identity_pose();
             let world_to_camera = camera_pose.try_inverse().unwrap();
-            
+
             let test_point = Point3::new(0.1, 0.2, 0.3);
             let camera_point = world_to_camera.transform_point(&test_point);
-            
+
             // For identity transform, should be the same
             assert_relative_eq!(test_point.x, camera_point.x, epsilon = 0.001);
             assert_relative_eq!(test_point.y, camera_point.y, epsilon = 0.001);
@@ -971,45 +1071,53 @@ mod tests {
             let resolution = [32, 32, 32];
             let origin = Point3::new(-0.32, -0.32, 0.0);
 
-            let volume_params = create_tsdf_volume(
-                voxel_size,
-                truncation_distance,
-                resolution,
-                origin,
-            );
+            let volume_params =
+                create_tsdf_volume(voxel_size, truncation_distance, resolution, origin);
             let tsdf_volume_gpu = TsdfVolumeGpu::new(&gpu, volume_params);
 
             // Create depth and color images
             let intrinsics = create_test_camera();
             let depth_image = create_simple_depth_image(intrinsics.width, intrinsics.height, 0.3);
-            
+
             // Simple red color image
             let pixel_count = (intrinsics.width * intrinsics.height) as usize;
             let mut color_image = Vec::with_capacity(pixel_count * 3);
             for _ in 0..pixel_count {
                 color_image.extend_from_slice(&[255u8, 0u8, 0u8]); // RGB: red
             }
-            
+
             let camera_pose = create_identity_pose();
 
             // Integrate with color
-            tsdf_volume_gpu.integrate(&gpu, &depth_image, Some(&color_image), &camera_pose, &intrinsics)
+            tsdf_volume_gpu
+                .integrate(
+                    &gpu,
+                    &depth_image,
+                    Some(&color_image),
+                    &camera_pose,
+                    &intrinsics,
+                )
                 .await
                 .unwrap();
 
             // Extract surface
             let point_cloud = tsdf_volume_gpu.extract_surface(&gpu, 0.0).await.unwrap();
-            
-            assert!(!point_cloud.points.is_empty(), "Should extract colored surface points");
-            
+
+            assert!(
+                !point_cloud.points.is_empty(),
+                "Should extract colored surface points"
+            );
+
             // Check that some points have red color
-            let red_points = point_cloud.points.iter()
+            let red_points = point_cloud
+                .points
+                .iter()
                 .filter(|p| p.color[0] > 200)
                 .count();
-            
+
             assert!(red_points > 0, "Some points should have red color");
 
             println!("✓ Color integration test passed: {} red points", red_points);
         });
     }
-}  
+}

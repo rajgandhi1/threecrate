@@ -4,7 +4,7 @@
 //! `cargo run --example las_laz_example --features las_laz`
 
 #[cfg(feature = "las_laz")]
-use threecrate_core::{PointCloud, Point3f};
+use threecrate_core::{Point3f, PointCloud};
 #[cfg(feature = "las_laz")]
 use threecrate_io::{read_point_cloud, write_point_cloud};
 
@@ -45,15 +45,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if cloud.len() == loaded_cloud.len() {
         println!("✓ Point count matches");
     } else {
-        println!("✗ Point count mismatch: expected {}, got {}", cloud.len(), loaded_cloud.len());
+        println!(
+            "✗ Point count mismatch: expected {}, got {}",
+            cloud.len(),
+            loaded_cloud.len()
+        );
     }
 
     // Compare first few points
     for i in 0..std::cmp::min(3, cloud.len()) {
         let orig = cloud[i];
         let loaded = loaded_cloud[i];
-        println!("Point {}: ({:.3}, {:.3}, {:.3}) -> ({:.3}, {:.3}, {:.3})",
-                i, orig.x, orig.y, orig.z, loaded.x, loaded.y, loaded.z);
+        println!(
+            "Point {}: ({:.3}, {:.3}, {:.3}) -> ({:.3}, {:.3}, {:.3})",
+            i, orig.x, orig.y, orig.z, loaded.x, loaded.y, loaded.z
+        );
     }
 
     // Write to LAZ file as well

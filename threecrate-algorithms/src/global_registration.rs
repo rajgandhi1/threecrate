@@ -10,13 +10,13 @@
 //! Expected use: call `global_registration()` to get a good initial pose, then hand off to ICP
 //! or NDT for sub-millimetre refinement.
 
-use threecrate_core::{PointCloud, Result, Point3f, Error, Isometry3};
-use nalgebra::{Matrix3, Vector3, Rotation3, UnitQuaternion, Translation3};
-use rand::Rng;
-use rayon::prelude::*;
 use crate::features::{extract_fpfh_features_with_normals, FpfhConfig, FPFH_DIM};
 use crate::normals::estimate_normals;
 use crate::registration::{icp_point_to_point, ICPResult};
+use nalgebra::{Matrix3, Rotation3, Translation3, UnitQuaternion, Vector3};
+use rand::Rng;
+use rayon::prelude::*;
+use threecrate_core::{Error, Isometry3, Point3f, PointCloud, Result};
 
 // ---------------------------------------------------------------------------
 // Config
@@ -99,14 +99,11 @@ fn find_feature_correspondences(
         .par_iter()
         .enumerate()
         .filter_map(|(i, sd)| {
-            let best = tgt_descs
-                .iter()
-                .enumerate()
-                .min_by(|(_, ta), (_, tb)| {
-                    fpfh_dist_sq(sd, ta)
-                        .partial_cmp(&fpfh_dist_sq(sd, tb))
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                })?;
+            let best = tgt_descs.iter().enumerate().min_by(|(_, ta), (_, tb)| {
+                fpfh_dist_sq(sd, ta)
+                    .partial_cmp(&fpfh_dist_sq(sd, tb))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })?;
             Some((i, best.0))
         })
         .collect()
@@ -241,14 +238,21 @@ pub fn global_registration_with_normals(
         ));
     }
 
-    let src_pts = &source_n.points.iter().map(|p| p.position).collect::<Vec<_>>();
-    let tgt_pts = &target_n.points.iter().map(|p| p.position).collect::<Vec<_>>();
+    let src_pts = &source_n
+        .points
+        .iter()
+        .map(|p| p.position)
+        .collect::<Vec<_>>();
+    let tgt_pts = &target_n
+        .points
+        .iter()
+        .map(|p| p.position)
+        .collect::<Vec<_>>();
 
     // --- RANSAC ---
     let mut best_transform = Isometry3::identity();
     let mut best_inliers = 0usize;
-    let early_exit_count =
-        ((config.inlier_ratio * corrs.len() as f32).ceil() as usize).max(3);
+    let early_exit_count = ((config.inlier_ratio * corrs.len() as f32).ceil() as usize).max(3);
     let mut rng = rand::rng();
     let n_corrs = corrs.len();
 
@@ -256,10 +260,16 @@ pub fn global_registration_with_normals(
         // Pick 3 unique random correspondence indices
         let i0 = rng.random_range(0..n_corrs);
         let mut i1 = rng.random_range(0..n_corrs - 1);
-        if i1 >= i0 { i1 += 1; }
+        if i1 >= i0 {
+            i1 += 1;
+        }
         let mut i2 = rng.random_range(0..n_corrs - 2);
-        if i2 >= i0.min(i1) { i2 += 1; }
-        if i2 >= i0.max(i1) { i2 += 1; }
+        if i2 >= i0.min(i1) {
+            i2 += 1;
+        }
+        if i2 >= i0.max(i1) {
+            i2 += 1;
+        }
         let sample = [i0, i1, i2];
 
         let s_pts: Vec<Point3f> = sample.iter().map(|&i| src_pts[corrs[i].0]).collect();
@@ -270,7 +280,13 @@ pub fn global_registration_with_normals(
             None => continue,
         };
 
-        let inliers = count_inliers(&corrs, src_pts, tgt_pts, &transform, config.distance_threshold);
+        let inliers = count_inliers(
+            &corrs,
+            src_pts,
+            tgt_pts,
+            &transform,
+            config.distance_threshold,
+        );
 
         if inliers > best_inliers {
             best_inliers = inliers;
@@ -323,15 +339,19 @@ pub fn global_registration_with_normals(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use threecrate_core::{PointCloud, Point3f};
     use nalgebra::{Isometry3, Translation3, UnitQuaternion};
+    use threecrate_core::{Point3f, PointCloud};
 
     fn grid_cloud(nx: usize, ny: usize, nz: usize, scale: f32) -> PointCloud<Point3f> {
         let mut pts = Vec::new();
         for ix in 0..nx {
             for iy in 0..ny {
                 for iz in 0..nz {
-                    pts.push(Point3f::new(ix as f32 * scale, iy as f32 * scale, iz as f32 * scale));
+                    pts.push(Point3f::new(
+                        ix as f32 * scale,
+                        iy as f32 * scale,
+                        iz as f32 * scale,
+                    ));
                 }
             }
         }
@@ -339,7 +359,9 @@ mod tests {
     }
 
     fn apply(cloud: &PointCloud<Point3f>, iso: &Isometry3<f32>) -> PointCloud<Point3f> {
-        PointCloud { points: cloud.points.iter().map(|p| iso * p).collect() }
+        PointCloud {
+            points: cloud.points.iter().map(|p| iso * p).collect(),
+        }
     }
 
     #[test]
@@ -393,10 +415,7 @@ mod tests {
     #[test]
     fn test_global_reg_with_icp() {
         let target = grid_cloud(4, 4, 4, 1.0);
-        let t = Isometry3::from_parts(
-            Translation3::new(0.3, 0.2, 0.1),
-            UnitQuaternion::identity(),
-        );
+        let t = Isometry3::from_parts(Translation3::new(0.3, 0.2, 0.1), UnitQuaternion::identity());
         let source = apply(&target, &t);
         let cfg = GlobalRegistrationConfig {
             ransac_iterations: 500,
@@ -419,7 +438,10 @@ mod tests {
             Point3f::new(0.0, 1.0, 0.0),
         ];
         let shift = Vector3::new(1.0f32, 2.0, 3.0);
-        let tgt: Vec<Point3f> = src.iter().map(|p| Point3f::from(p.coords + shift)).collect();
+        let tgt: Vec<Point3f> = src
+            .iter()
+            .map(|p| Point3f::from(p.coords + shift))
+            .collect();
         let iso = estimate_transform_svd(&src, &tgt).unwrap();
         let t = iso.translation.vector;
         assert!((t.x - 1.0).abs() < 1e-4);

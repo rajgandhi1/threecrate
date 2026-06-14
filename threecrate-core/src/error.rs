@@ -7,22 +7,22 @@ use thiserror::Error;
 pub enum Error {
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
-    
+
     #[error("Invalid data: {0}")]
     InvalidData(String),
-    
+
     #[error("Algorithm error: {0}")]
     Algorithm(String),
-    
+
     #[error("GPU error: {0}")]
     Gpu(String),
-    
+
     #[error("Visualization error: {0}")]
     Visualization(String),
-    
+
     #[error("Unsupported operation: {0}")]
     Unsupported(String),
-    
+
     #[error("Unsupported format: {0}")]
     UnsupportedFormat(String),
 }

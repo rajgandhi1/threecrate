@@ -45,15 +45,9 @@ fn bench_fpfh_by_radius(c: &mut Criterion) {
             search_radius: r,
             k_neighbors: 10,
         };
-        group.bench_with_input(
-            BenchmarkId::from_parameter(r),
-            &config,
-            |b, config| {
-                b.iter(|| {
-                    extract_fpfh_features_with_normals(black_box(&cloud), black_box(config))
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::from_parameter(r), &config, |b, config| {
+            b.iter(|| extract_fpfh_features_with_normals(black_box(&cloud), black_box(config)));
+        });
     }
     group.finish();
 }
