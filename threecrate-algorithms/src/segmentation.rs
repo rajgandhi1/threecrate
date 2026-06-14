@@ -3,8 +3,8 @@
 use crate::KdTree;
 use nalgebra::Vector4;
 use rand::prelude::*;
-use rayon::prelude::*;
 use rand::rng;
+use rayon::prelude::*;
 use std::collections::{HashSet, VecDeque};
 use threecrate_core::NearestNeighborSearch;
 use threecrate_core::{Error, Point3f, PointCloud, Result, Vector3f};

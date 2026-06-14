@@ -4,9 +4,9 @@
 //! on noisy planar point clouds, as requested in GitHub issue #4.
 
 use rand::prelude::*;
+use rand::rng;
 use threecrate_algorithms::{plane_segmentation_ransac, segment_plane_ransac};
 use threecrate_core::{Point3f, PointCloud};
-use rand::rng;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== RANSAC Plane Segmentation Example ===\n");
