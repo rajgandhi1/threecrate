@@ -430,9 +430,9 @@ mod tests {
         // Flat ground at z = -sensor_height over a 60×60 area, with mild noise.
         let z_ground = -sensor_height;
         for _ in 0..8000 {
-            let x: f32 = rng.gen_range(-30.0..30.0);
-            let y: f32 = rng.gen_range(-30.0..30.0);
-            let z = z_ground + rng.gen_range(-0.02..0.02);
+            let x: f32 = rng.random_range(-30.0..30.0);
+            let y: f32 = rng.random_range(-30.0..30.0);
+            let z = z_ground + rng.random_range(-0.02..0.02);
             // Skip points right under the sensor (too close to origin).
             if x * x + y * y < 0.25 {
                 continue;
@@ -443,16 +443,16 @@ mod tests {
         if with_obstacles {
             // Tall vertical "wall" / obstacle cluster.
             for _ in 0..1500 {
-                let x = 8.0 + rng.gen_range(-0.4..0.4);
-                let y = rng.gen_range(-3.0..3.0);
-                let z = z_ground + rng.gen_range(0.5..3.0);
+                let x = 8.0 + rng.random_range(-0.4..0.4);
+                let y = rng.random_range(-3.0..3.0);
+                let z = z_ground + rng.random_range(0.5..3.0);
                 cloud.push(Point3f::new(x, y, z));
             }
             // A pole.
             for _ in 0..400 {
-                let x = -5.0 + rng.gen_range(-0.1..0.1);
-                let y = -5.0 + rng.gen_range(-0.1..0.1);
-                let z = z_ground + rng.gen_range(0.0..4.0);
+                let x = -5.0 + rng.random_range(-0.1..0.1);
+                let y = -5.0 + rng.random_range(-0.1..0.1);
+                let z = z_ground + rng.random_range(0.0..4.0);
                 cloud.push(Point3f::new(x, y, z));
             }
         }

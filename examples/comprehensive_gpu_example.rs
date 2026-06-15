@@ -393,7 +393,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn generate_sample_data() -> (PointCloud<Point3f>, PointCloud<Point3f>, Vec<f32>) {
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
 
     // Generate first point cloud (sphere)
     let mut source_points = Vec::new();

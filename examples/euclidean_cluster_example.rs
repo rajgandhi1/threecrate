@@ -4,7 +4,7 @@
 //! with multiple spatially-separated object blobs, as implemented for issue #95.
 
 use rand::prelude::*;
-use rand::thread_rng;
+use rand::rng;
 use threecrate_algorithms::{
     extract_euclidean_clusters, extract_euclidean_clusters_parallel, EuclideanClusterConfig,
 };
@@ -67,7 +67,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// Three sphere-shaped blobs at well-separated positions
 fn create_three_blobs() -> PointCloud<Point3f> {
     let mut cloud = PointCloud::new();
-    let mut rng = thread_rng();
+    let mut rng = rng();
 
     let blobs = [
         (Point3f::new(0.0, 0.0, 0.0), 0.4_f32, 500_usize),
@@ -94,7 +94,7 @@ fn create_three_blobs() -> PointCloud<Point3f> {
 /// A denser scene with four blobs
 fn create_dense_scene() -> PointCloud<Point3f> {
     let mut cloud = PointCloud::new();
-    let mut rng = thread_rng();
+    let mut rng = rng();
 
     let blobs = [
         (Point3f::new(0.0, 0.0, 0.0), 0.5_f32, 1000_usize),
@@ -122,7 +122,7 @@ fn create_dense_scene() -> PointCloud<Point3f> {
 /// Two large blobs plus several tiny noise blobs that should be filtered out
 fn create_cloud_with_noise_blobs() -> PointCloud<Point3f> {
     let mut cloud = PointCloud::new();
-    let mut rng = thread_rng();
+    let mut rng = rng();
 
     // Large blobs
     for (center, radius, count) in [

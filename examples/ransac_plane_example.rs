@@ -4,7 +4,7 @@
 //! on noisy planar point clouds, as requested in GitHub issue #4.
 
 use rand::prelude::*;
-use rand::thread_rng;
+use rand::rng;
 use threecrate_algorithms::{plane_segmentation_ransac, segment_plane_ransac};
 use threecrate_core::{Point3f, PointCloud};
 
@@ -99,7 +99,7 @@ fn create_simple_planar_cloud() -> PointCloud<Point3f> {
 /// Create a noisy planar point cloud
 fn create_noisy_planar_cloud() -> PointCloud<Point3f> {
     let mut cloud = PointCloud::new();
-    let mut rng = thread_rng();
+    let mut rng = rng();
 
     // Create a 20x20 grid on the XY plane with noise
     for i in 0..20 {
@@ -125,7 +125,7 @@ fn create_noisy_planar_cloud() -> PointCloud<Point3f> {
 /// Create a tilted plane with outliers
 fn create_tilted_plane_with_outliers() -> PointCloud<Point3f> {
     let mut cloud = PointCloud::new();
-    let mut rng = thread_rng();
+    let mut rng = rng();
 
     // Create a tilted plane: x + y + z = 0
     for i in 0..15 {
@@ -157,7 +157,7 @@ fn create_tilted_plane_with_outliers() -> PointCloud<Point3f> {
 /// Create multiple planes (for demonstrating single plane detection)
 fn create_multiple_planes() -> PointCloud<Point3f> {
     let mut cloud = PointCloud::new();
-    let mut rng = thread_rng();
+    let mut rng = rng();
 
     // First plane: z = 0 (largest)
     for i in 0..25 {

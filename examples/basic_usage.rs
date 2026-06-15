@@ -153,7 +153,7 @@ fn noisy_icp_example() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Create target points with known transformation + noise
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     for point in &source.points {
         let transformed = transform * point;
         // Add Gaussian noise
