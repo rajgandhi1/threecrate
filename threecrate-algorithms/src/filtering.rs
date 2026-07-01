@@ -1,6 +1,6 @@
 //! Filtering algorithms
 
-use crate::nearest_neighbor::BruteForceSearch;
+use crate::nearest_neighbor::KdTree;
 use rayon::prelude::*;
 use threecrate_core::{NearestNeighborSearch, Point3f, PointCloud, Result};
 
@@ -100,21 +100,33 @@ pub fn voxel_grid_filter(
         (x, y, z)
     };
 
-    // Group points by voxel
-    let mut voxel_map = std::collections::HashMap::new();
+    // Accumulate the centroid of every voxel in a single pass. We keep the
+    // running sum in f64 so that large-coordinate clouds (e.g. LiDAR scans far
+    // from the origin) do not lose precision. Returning the centroid — rather
+    // than an arbitrary first point — matches the semantics of Open3D's
+    // `voxel_down_sample` and PCL's `VoxelGrid`.
+    let mut voxel_map: std::collections::HashMap<(i32, i32, i32), ([f64; 3], usize)> =
+        std::collections::HashMap::new();
 
-    for (idx, point) in cloud.points.iter().enumerate() {
+    for point in cloud.points.iter() {
         let voxel_coords = get_voxel_coords(point);
-        voxel_map
-            .entry(voxel_coords)
-            .or_insert_with(Vec::new)
-            .push(idx);
+        let entry = voxel_map.entry(voxel_coords).or_insert(([0.0; 3], 0));
+        entry.0[0] += point.x as f64;
+        entry.0[1] += point.y as f64;
+        entry.0[2] += point.z as f64;
+        entry.1 += 1;
     }
 
-    // Keep one point per voxel (the first one)
     let filtered_points: Vec<Point3f> = voxel_map
         .values()
-        .map(|indices| cloud.points[indices[0]])
+        .map(|(sum, count)| {
+            let inv = 1.0 / *count as f64;
+            Point3f::new(
+                (sum[0] * inv) as f32,
+                (sum[1] * inv) as f32,
+                (sum[2] * inv) as f32,
+            )
+        })
         .collect();
 
     Ok(PointCloud::from_points(filtered_points))
@@ -173,8 +185,9 @@ pub fn radius_outlier_removal(
         ));
     }
 
-    // Create nearest neighbor search structure
-    let nn_search = BruteForceSearch::new(&cloud.points);
+    // Create nearest neighbor search structure (KD-tree: O(n log n) build,
+    // ~O(log n) per query instead of the O(n) brute-force scan).
+    let nn_search = KdTree::new(&cloud.points)?;
 
     // Count neighbors within radius for each point
     let neighbor_counts: Vec<usize> = cloud
@@ -254,8 +267,9 @@ pub fn statistical_outlier_removal(
         ));
     }
 
-    // Create nearest neighbor search structure
-    let nn_search = BruteForceSearch::new(&cloud.points);
+    // Create nearest neighbor search structure (KD-tree: O(n log n) build,
+    // ~O(log n) per query instead of the O(n) brute-force scan).
+    let nn_search = KdTree::new(&cloud.points)?;
 
     // Compute mean distances for all points
     let mean_distances: Vec<f32> = cloud
@@ -339,8 +353,9 @@ pub fn statistical_outlier_removal_with_threshold(
         ));
     }
 
-    // Create nearest neighbor search structure
-    let nn_search = BruteForceSearch::new(&cloud.points);
+    // Create nearest neighbor search structure (KD-tree: O(n log n) build,
+    // ~O(log n) per query instead of the O(n) brute-force scan).
+    let nn_search = KdTree::new(&cloud.points)?;
 
     // Compute mean distances for all points
     let mean_distances: Vec<f32> = cloud

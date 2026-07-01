@@ -27,6 +27,7 @@ tokio = { version = "1.0", features = ["full"] }
 rand = { workspace = true }
 winit = { workspace = true }
 pollster = { workspace = true }
+image = "0.25"
 
 [[bin]]
 name = "basic_usage"
@@ -169,3 +170,7 @@ path = "pbr_visualization.rs"
 [[bin]]
 name = "realtime_pipeline"
 path = "realtime_pipeline.rs"
+
+[[bin]]
+name = "threecrate_dataset_bench"
+path = "threecrate_dataset_bench.rs"

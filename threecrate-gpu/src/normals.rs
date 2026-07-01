@@ -1,6 +1,7 @@
 //! GPU-accelerated normal estimation
 
 use crate::GpuContext;
+use rayon::prelude::*;
 use threecrate_core::{NormalPoint3f, Point3f, PointCloud, Result};
 // use wgpu::util::DeviceExt; // Used in device.rs
 
@@ -372,37 +373,60 @@ impl GpuContext {
             .await
     }
 
-    /// Simple neighbor computation (brute force - could be replaced with KD-tree)
+    /// Simple top-k neighbor computation.
+    ///
+    /// This is still a CPU pre-pass, but it avoids allocating and sorting all pairwise
+    /// distances per point. The bounded insertion list keeps only the k best matches.
     pub fn compute_neighbors_simple(&self, points: &[[f32; 3]], k: usize) -> Vec<[u32; 64]> {
-        let mut neighbors = vec![[0u32; 64]; points.len()];
         let k = k.min(64).min(points.len()); // Limit to 64 neighbors and available points
+        if points.is_empty() {
+            return Vec::new();
+        }
 
-        for (i, point) in points.iter().enumerate() {
-            let mut distances: Vec<(f32, usize)> = points
-                .iter()
-                .enumerate()
-                .filter(|(j, _)| *j != i)
-                .map(|(j, other)| {
+        points
+            .par_iter()
+            .enumerate()
+            .map(|(i, point)| {
+                let mut best = [(f32::INFINITY, 0usize); 64];
+                let mut best_len = 0usize;
+
+                for (j, other) in points.iter().enumerate() {
+                    if j == i {
+                        continue;
+                    }
                     let dx = point[0] - other[0];
                     let dy = point[1] - other[1];
                     let dz = point[2] - other[2];
-                    (dx * dx + dy * dy + dz * dz, j)
-                })
-                .collect();
+                    let distance = dx * dx + dy * dy + dz * dz;
 
-            distances.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+                    if best_len < k {
+                        best[best_len] = (distance, j);
+                        best_len += 1;
+                        let mut idx = best_len - 1;
+                        while idx > 0 && best[idx].0 < best[idx - 1].0 {
+                            best.swap(idx, idx - 1);
+                            idx -= 1;
+                        }
+                    } else if k > 0 && distance < best[k - 1].0 {
+                        best[k - 1] = (distance, j);
+                        let mut idx = k - 1;
+                        while idx > 0 && best[idx].0 < best[idx - 1].0 {
+                            best.swap(idx, idx - 1);
+                            idx -= 1;
+                        }
+                    }
+                }
 
-            for (idx, &(_, neighbor_idx)) in distances.iter().take(k).enumerate() {
-                neighbors[i][idx] = neighbor_idx as u32;
-            }
-
-            // Fill remaining slots with the same neighbor to avoid issues
-            for idx in k..64 {
-                neighbors[i][idx] = if k > 0 { neighbors[i][k - 1] } else { i as u32 };
-            }
-        }
-
-        neighbors
+                let mut neighbors = [i as u32; 64];
+                for idx in 0..k {
+                    neighbors[idx] = best[idx].1 as u32;
+                }
+                for idx in k..64 {
+                    neighbors[idx] = if k > 0 { neighbors[k - 1] } else { i as u32 };
+                }
+                neighbors
+            })
+            .collect()
     }
 
     /// Helper to compute neighbors from Vec<[f32;3]> built from owned data

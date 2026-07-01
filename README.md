@@ -78,6 +78,34 @@ tc.write_mesh(mesh, "output.ply")
 | E57 support | ✅ opt-in | ❌ | ❌ |
 | WebAssembly | Roadmap | ❌ | ❌ |
 
+## Benchmarks
+
+We benchmarked ThreeCrate against **Open3D 0.19** on the same machine, using
+full-resolution frames from three real datasets: TUM RGB-D, KITTI, and
+nuScenes-mini. Everything runs on CPU. In the table below, higher is better — a
+ratio above 1 means ThreeCrate is faster than Open3D.
+
+| Workload | How ThreeCrate compares |
+|---|---:|
+| Reading files (raw float parsing) | **1.8x–2.2x faster** |
+| Voxel downsampling | **1.6x–1.8x faster** |
+| Normal estimation | 0.57x–1.09x (falls behind on big clouds) |
+| Single-scale ICP | 0.71x–0.99x (falls behind on big clouds) |
+
+The short version: ThreeCrate is noticeably quicker at loading data and
+downsampling, and it trades blows with Open3D on the heavier compute work. On
+small and medium clouds it holds its own; on large clouds it still gives up some
+ground on normal estimation and dense ICP. We're being upfront about that — those
+are the two areas we're actively working on.
+
+One thing we won't pretend about: **we haven't benchmarked PCL yet.** The harness
+to do it is written and ready in [`scripts/pcl_bench/`](scripts/pcl_bench), but
+until we've actually run it, there are no PCL numbers here to quote.
+
+Want the full picture? [docs/benchmarks.md](docs/benchmarks.md) has every number
+(full-resolution and capped), how we measured, the caveats we ran into, and the
+exact command to reproduce it yourself.
+
 ## Docs
 
 - [Installation & feature flags](docs/installation.md)

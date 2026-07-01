@@ -173,6 +173,11 @@ impl NearestNeighborSearch for KdTree {
 
         // Max-heap: the *farthest* accepted neighbor sits at the top so we can
         // evict it in O(log k) when a closer point is found.
+        //
+        // Distances are kept *squared* throughout the traversal so we never pay
+        // for a `sqrt` per visited node; squared distance is monotonic in
+        // distance, so heap ordering and pruning are unaffected. We take the
+        // square root once per surviving neighbor when building the result.
         let mut heap: BinaryHeap<Neighbor> = BinaryHeap::with_capacity(k + 1);
         let mut stack: Vec<&KdNode> = Vec::new();
 
@@ -181,18 +186,18 @@ impl NearestNeighborSearch for KdTree {
         }
 
         while let Some(node) = stack.pop() {
-            let dist = Self::distance_squared(&node.point, query).sqrt();
+            let dist_sq = Self::distance_squared(&node.point, query);
 
             if heap.len() < k {
                 heap.push(Neighbor {
-                    distance: dist,
+                    distance: dist_sq,
                     index: node.original_index,
                 });
             } else if let Some(farthest) = heap.peek() {
-                if dist < farthest.distance {
+                if dist_sq < farthest.distance {
                     heap.pop();
                     heap.push(Neighbor {
-                        distance: dist,
+                        distance: dist_sq,
                         index: node.original_index,
                     });
                 }
@@ -200,7 +205,8 @@ impl NearestNeighborSearch for KdTree {
 
             let query_val = query.coords[node.axis];
             let node_val = node.point.coords[node.axis];
-            let axis_dist = (query_val - node_val).abs();
+            let axis_dist = query_val - node_val;
+            let axis_dist_sq = axis_dist * axis_dist;
 
             // Near child: the half-space the query point lives in.
             // Far child:  the other half-space, searched only when it could
@@ -215,7 +221,7 @@ impl NearestNeighborSearch for KdTree {
             // same visit order as the recursive "near first" traversal and
             // maximising early pruning of the far subtree.
             let search_far = if let Some(farthest) = heap.peek() {
-                heap.len() < k || axis_dist < farthest.distance
+                heap.len() < k || axis_dist_sq < farthest.distance
             } else {
                 true
             };
@@ -229,10 +235,11 @@ impl NearestNeighborSearch for KdTree {
             }
         }
 
-        // `into_sorted_vec` drains the max-heap in ascending order (smallest first).
+        // `into_sorted_vec` drains the max-heap in ascending order of squared
+        // distance (smallest first); take the sqrt here to return true distances.
         heap.into_sorted_vec()
             .into_iter()
-            .map(|n| (n.index, n.distance))
+            .map(|n| (n.index, n.distance.sqrt()))
             .collect()
     }
 

@@ -1,10 +1,16 @@
 //! Normal estimation algorithms
 
+use crate::nearest_neighbor::KdTree;
 use nalgebra::Matrix3;
 use rayon::prelude::*;
+use threecrate_core::{
+    Error, NearestNeighborSearch, NormalPoint3f, Point3f, PointCloud, Result, Vector3f,
+};
+
+#[cfg(test)]
 use std::cmp::Ordering;
+#[cfg(test)]
 use std::collections::BinaryHeap;
-use threecrate_core::{Error, NormalPoint3f, Point3f, PointCloud, Result, Vector3f};
 
 /// Configuration for normal estimation
 #[derive(Debug, Clone)]
@@ -32,25 +38,30 @@ impl Default for NormalEstimationConfig {
 
 /// A simple distance-based neighbor for priority queue
 #[derive(Debug, Clone)]
+#[cfg(test)]
 struct Neighbor {
     index: usize,
     distance: f32,
 }
 
+#[cfg(test)]
 impl PartialEq for Neighbor {
     fn eq(&self, other: &Self) -> bool {
         self.distance == other.distance
     }
 }
 
+#[cfg(test)]
 impl Eq for Neighbor {}
 
+#[cfg(test)]
 impl PartialOrd for Neighbor {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
+#[cfg(test)]
 impl Ord for Neighbor {
     fn cmp(&self, other: &Self) -> Ordering {
         // Reverse ordering for min-heap behavior
@@ -62,6 +73,7 @@ impl Ord for Neighbor {
 }
 
 /// Find k-nearest neighbors using brute force search
+#[cfg(test)]
 fn find_k_nearest_neighbors(points: &[Point3f], query_idx: usize, k: usize) -> Vec<usize> {
     let query = &points[query_idx];
     let mut heap = BinaryHeap::with_capacity(k + 1);
@@ -88,6 +100,7 @@ fn find_k_nearest_neighbors(points: &[Point3f], query_idx: usize, k: usize) -> V
 }
 
 /// Find neighbors within a radius
+#[cfg(test)]
 fn find_radius_neighbors(points: &[Point3f], query_idx: usize, radius: f32) -> Vec<usize> {
     let query = &points[query_idx];
     let radius_squared = radius * radius;
@@ -103,6 +116,7 @@ fn find_radius_neighbors(points: &[Point3f], query_idx: usize, radius: f32) -> V
 }
 
 /// Find neighbors using either k-NN or radius-based search
+#[cfg(test)]
 fn find_neighbors(
     points: &[Point3f],
     query_idx: usize,
@@ -114,6 +128,29 @@ fn find_neighbors(
     } else {
         // Use k-NN search
         find_k_nearest_neighbors(points, query_idx, config.k_neighbors)
+    }
+}
+
+/// Find neighbors using a prebuilt KD-tree.
+fn find_neighbors_with_tree(
+    tree: &KdTree,
+    query_idx: usize,
+    query: &Point3f,
+    config: &NormalEstimationConfig,
+) -> Vec<usize> {
+    if let Some(radius) = config.radius {
+        tree.find_radius_neighbors(query, radius)
+            .into_iter()
+            .map(|(idx, _)| idx)
+            .filter(|idx| *idx != query_idx)
+            .collect()
+    } else {
+        tree.find_k_nearest(query, config.k_neighbors + 1)
+            .into_iter()
+            .map(|(idx, _)| idx)
+            .filter(|idx| *idx != query_idx)
+            .take(config.k_neighbors)
+            .collect()
     }
 }
 
@@ -232,6 +269,7 @@ pub fn estimate_normals_with_config(
     }
 
     let points = &cloud.points;
+    let search_tree = KdTree::new(points)?;
 
     // Determine viewpoint for orientation consistency
     let viewpoint = config.viewpoint.unwrap_or_else(|| {
@@ -268,20 +306,37 @@ pub fn estimate_normals_with_config(
     let normals: Vec<NormalPoint3f> = (0..points.len())
         .into_par_iter()
         .map(|i| {
-            let neighbors = find_neighbors(points, i, config);
+            let neighbors = find_neighbors_with_tree(&search_tree, i, &points[i], config);
 
             // Use only the neighbors for PCA, not the query point itself
             let mut neighborhood = neighbors;
 
             // If radius-based search didn't find enough neighbors, fall back to k-NN
             if config.radius.is_some() && neighborhood.len() < config.k_neighbors {
-                neighborhood = find_k_nearest_neighbors(points, i, config.k_neighbors);
+                neighborhood = search_tree
+                    .find_k_nearest(&points[i], config.k_neighbors + 1)
+                    .into_iter()
+                    .map(|(idx, _)| idx)
+                    .filter(|idx| *idx != i)
+                    .take(config.k_neighbors)
+                    .collect();
             }
 
             // Ensure we have enough neighbors for PCA
             if neighborhood.len() < 3 {
                 // If we still don't have enough neighbors, use a larger k
-                neighborhood = find_k_nearest_neighbors(points, i, config.k_neighbors.max(5));
+                let fallback_k = config.k_neighbors.max(5);
+                neighborhood = search_tree
+                    .find_k_nearest(&points[i], fallback_k + 1)
+                    .into_iter()
+                    .map(|(idx, _)| idx)
+                    .filter(|idx| *idx != i)
+                    .take(fallback_k)
+                    .collect();
+            }
+
+            if !neighborhood.contains(&i) {
+                neighborhood.push(i);
             }
 
             let mut normal = compute_normal_pca(points, &neighborhood);
