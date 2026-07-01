@@ -1,8 +1,12 @@
 //! Registration algorithms
 
+use crate::filtering::voxel_grid_filter;
+use crate::nearest_neighbor::KdTree;
 use nalgebra::{Matrix3, Matrix6, Translation3, UnitQuaternion, Vector6};
 use rayon::prelude::*;
-use threecrate_core::{Error, Isometry3, Point3f, PointCloud, Result, Vector3f};
+use threecrate_core::{
+    Error, Isometry3, NearestNeighborSearch, Point3f, PointCloud, Result, Vector3f,
+};
 
 /// Result of ICP registration
 #[derive(Debug, Clone)]
@@ -19,8 +23,92 @@ pub struct ICPResult {
     pub correspondences: Vec<(usize, usize)>,
 }
 
+/// One level in a coarse-to-fine ICP pyramid.
+#[derive(Debug, Clone)]
+pub struct IcpScaleLevel {
+    /// Voxel size used to downsample source and target before this ICP stage.
+    pub voxel_size: f32,
+    /// Maximum ICP iterations for this stage.
+    pub max_iterations: usize,
+    /// Optional correspondence cutoff for this stage.
+    pub max_correspondence_distance: Option<f32>,
+}
+
+/// Coarse-to-fine point-to-point ICP configuration.
+#[derive(Debug, Clone)]
+pub struct MultiScaleIcpConfig {
+    pub levels: Vec<IcpScaleLevel>,
+    pub final_refinement_iterations: usize,
+    pub final_max_correspondence_distance: Option<f32>,
+    pub convergence_threshold: f32,
+}
+
+impl Default for MultiScaleIcpConfig {
+    fn default() -> Self {
+        Self {
+            levels: vec![
+                IcpScaleLevel {
+                    voxel_size: 0.20,
+                    max_iterations: 10,
+                    max_correspondence_distance: Some(0.50),
+                },
+                IcpScaleLevel {
+                    voxel_size: 0.10,
+                    max_iterations: 10,
+                    max_correspondence_distance: Some(0.25),
+                },
+                IcpScaleLevel {
+                    voxel_size: 0.05,
+                    max_iterations: 15,
+                    max_correspondence_distance: Some(0.15),
+                },
+            ],
+            final_refinement_iterations: 10,
+            final_max_correspondence_distance: Some(0.10),
+            convergence_threshold: 1e-5,
+        }
+    }
+}
+
 /// Find the closest point in target cloud for each point in source cloud
+#[cfg(test)]
 fn find_correspondences(
+    source: &[Point3f],
+    target: &[Point3f],
+    max_distance: Option<f32>,
+) -> Vec<Option<(usize, f32)>> {
+    match KdTree::new(target) {
+        Ok(tree) => find_correspondences_with_tree(source, &tree, max_distance),
+        Err(_) => find_correspondences_brute_force(source, target, max_distance),
+    }
+}
+
+/// Find nearest-neighbor correspondences using a prebuilt target KD-tree.
+fn find_correspondences_with_tree(
+    source: &[Point3f],
+    target_tree: &KdTree,
+    max_distance: Option<f32>,
+) -> Vec<Option<(usize, f32)>> {
+    source
+        .par_iter()
+        .map(|source_point| {
+            let nearest = target_tree.find_k_nearest(source_point, 1);
+            let Some((idx, distance)) = nearest.first().copied() else {
+                return None;
+            };
+
+            if max_distance.is_some_and(|max_dist| distance > max_dist) {
+                None
+            } else {
+                Some((idx, distance))
+            }
+        })
+        .collect()
+}
+
+/// Brute-force fallback used only if the KD-tree cannot be built.
+#[cfg(test)]
+fn find_correspondences_brute_force(
     source: &[Point3f],
     target: &[Point3f],
     max_distance: Option<f32>,
@@ -190,6 +278,7 @@ pub fn icp_detailed(
     let mut current_transform = init;
     let mut previous_mse = f32::INFINITY;
     let mut final_correspondences = Vec::new();
+    let target_tree = KdTree::new(&target.points)?;
 
     for iteration in 0..max_iters {
         // Transform source points with current transformation
@@ -200,9 +289,9 @@ pub fn icp_detailed(
             .collect();
 
         // Find correspondences
-        let correspondences = find_correspondences(
+        let correspondences = find_correspondences_with_tree(
             &transformed_source,
-            &target.points,
+            &target_tree,
             max_correspondence_distance,
         );
 
@@ -444,6 +533,7 @@ pub fn icp_point_to_plane_detailed(
     let mut current_transform = init;
     let mut previous_mse = f32::INFINITY;
     let mut final_correspondences: Vec<(usize, usize)> = Vec::new();
+    let target_tree = KdTree::new(&target.points)?;
 
     for iteration in 0..max_iters {
         // Apply current estimate to source
@@ -454,9 +544,9 @@ pub fn icp_point_to_plane_detailed(
             .collect();
 
         // Find nearest-neighbor correspondences
-        let correspondences = find_correspondences(
+        let correspondences = find_correspondences_with_tree(
             &transformed_source,
-            &target.points,
+            &target_tree,
             max_correspondence_distance,
         );
 
@@ -608,6 +698,94 @@ pub fn icp_point_to_point_default(
     max_iterations: usize,
 ) -> Result<ICPResult> {
     icp_point_to_point(source, target, init, max_iterations, 1e-6, None)
+}
+
+/// Coarse-to-fine point-to-point ICP using voxel downsampling at each scale.
+pub fn multiscale_icp_point_to_point(
+    source: &PointCloud<Point3f>,
+    target: &PointCloud<Point3f>,
+    init: Isometry3<f32>,
+    config: &MultiScaleIcpConfig,
+) -> Result<ICPResult> {
+    if source.is_empty() || target.is_empty() {
+        return Err(Error::InvalidData(
+            "Source or target point cloud is empty".to_string(),
+        ));
+    }
+    if config.levels.is_empty() {
+        return Err(Error::InvalidData(
+            "At least one ICP scale level is required".to_string(),
+        ));
+    }
+    if config.convergence_threshold <= 0.0 {
+        return Err(Error::InvalidData(
+            "Convergence threshold must be positive".to_string(),
+        ));
+    }
+    if config.final_refinement_iterations == 0 {
+        return Err(Error::InvalidData(
+            "Final refinement iterations must be positive".to_string(),
+        ));
+    }
+
+    let mut current_transform = init;
+    let mut total_iterations = 0usize;
+    let mut last_result: Option<ICPResult> = None;
+
+    for level in &config.levels {
+        if level.voxel_size <= 0.0 {
+            return Err(Error::InvalidData(
+                "Scale voxel_size must be positive".to_string(),
+            ));
+        }
+        if level.max_iterations == 0 {
+            return Err(Error::InvalidData(
+                "Scale max_iterations must be positive".to_string(),
+            ));
+        }
+
+        let source_down = voxel_grid_filter(source, level.voxel_size)?;
+        let target_down = voxel_grid_filter(target, level.voxel_size)?;
+        if source_down.len() < 3 || target_down.len() < 3 {
+            continue;
+        }
+
+        let result = icp_point_to_point(
+            &source_down,
+            &target_down,
+            current_transform,
+            level.max_iterations,
+            config.convergence_threshold,
+            level.max_correspondence_distance,
+        )?;
+
+        current_transform = result.transformation;
+        total_iterations += result.iterations;
+        last_result = Some(result);
+    }
+
+    if last_result.is_none() {
+        return Err(Error::Algorithm(
+            "No multiscale ICP level had enough downsampled points".to_string(),
+        ));
+    }
+
+    let final_result = icp_point_to_point(
+        source,
+        target,
+        current_transform,
+        config.final_refinement_iterations,
+        config.convergence_threshold,
+        config.final_max_correspondence_distance,
+    )?;
+
+    Ok(ICPResult {
+        transformation: final_result.transformation,
+        mse: final_result.mse,
+        iterations: total_iterations + final_result.iterations,
+        converged: final_result.converged,
+        correspondences: final_result.correspondences,
+    })
 }
 
 #[cfg(test)]

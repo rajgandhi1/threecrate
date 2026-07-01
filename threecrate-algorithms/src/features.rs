@@ -1,9 +1,12 @@
 //! Feature extraction algorithms
 
+use crate::nearest_neighbor::KdTree;
 use nalgebra::Matrix3;
 use rayon::prelude::*;
 use std::cmp::Ordering;
-use threecrate_core::{Error, NormalPoint3f, Point3f, PointCloud, Result, Vector3f};
+use threecrate_core::{
+    Error, NearestNeighborSearch, NormalPoint3f, Point3f, PointCloud, Result, Vector3f,
+};
 
 /// Number of bins per angular feature sub-histogram
 const FPFH_BINS: usize = 11;
@@ -125,46 +128,34 @@ fn compute_spfh(
 ///
 /// First tries radius-based search. Falls back to k-NN when radius yields
 /// fewer than `config.k_neighbors` points.
-fn find_neighbors(points: &[NormalPoint3f], query_idx: usize, config: &FpfhConfig) -> Vec<usize> {
-    let query = &points[query_idx].position;
-    let radius_sq = config.search_radius * config.search_radius;
+fn find_neighbors(
+    tree: &KdTree,
+    points: &[NormalPoint3f],
+    query_idx: usize,
+    config: &FpfhConfig,
+) -> Vec<usize> {
+    let query = points[query_idx].position;
 
-    let mut within_radius: Vec<(usize, f32)> = points
-        .iter()
-        .enumerate()
-        .filter_map(|(i, p)| {
-            if i == query_idx {
-                return None;
-            }
-            let d_sq = (p.position - query).magnitude_squared();
-            if d_sq <= radius_sq {
-                Some((i, d_sq))
-            } else {
-                None
-            }
-        })
+    // Radius search first (results come back sorted ascending by distance);
+    // drop the query point itself.
+    let within_radius: Vec<usize> = tree
+        .find_radius_neighbors(&query, config.search_radius)
+        .into_iter()
+        .filter(|(i, _)| *i != query_idx)
+        .map(|(i, _)| i)
         .collect();
 
     if within_radius.len() >= config.k_neighbors {
-        within_radius.sort_unstable_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal));
-        return within_radius.into_iter().map(|(i, _)| i).collect();
+        return within_radius;
     }
 
-    // Fallback: k-NN over all points
-    let mut all: Vec<(usize, f32)> = points
-        .iter()
-        .enumerate()
-        .filter_map(|(i, p)| {
-            if i == query_idx {
-                return None;
-            }
-            Some((i, (p.position - query).magnitude_squared()))
-        })
-        .collect();
-
-    all.sort_unstable_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal));
-    all.truncate(config.k_neighbors);
-    all.into_iter().map(|(i, _)| i).collect()
+    // Fallback: k-NN (request one extra to absorb the self match).
+    tree.find_k_nearest(&query, config.k_neighbors + 1)
+        .into_iter()
+        .filter(|(i, _)| *i != query_idx)
+        .take(config.k_neighbors)
+        .map(|(i, _)| i)
+        .collect()
 }
 
 /// Extract FPFH (Fast Point Feature Histograms) features from a point cloud
@@ -196,9 +187,17 @@ pub fn extract_fpfh_features_with_normals(
     let points = &cloud.points;
     let n = points.len();
 
-    // Step 1: collect neighbours for every point
-    let neighbors_per_point: Vec<Vec<usize>> =
-        (0..n).map(|i| find_neighbors(points, i, config)).collect();
+    // Build a KD-tree over the point positions once (O(n log n)) so neighbour
+    // queries are ~O(log n) instead of the previous O(n) brute-force scan,
+    // turning the whole feature-extraction pass from O(n^2) into O(n log n).
+    let positions: Vec<Point3f> = points.iter().map(|p| p.position).collect();
+    let tree = KdTree::new(&positions)?;
+
+    // Step 1: collect neighbours for every point (parallel — the tree is immutable)
+    let neighbors_per_point: Vec<Vec<usize>> = (0..n)
+        .into_par_iter()
+        .map(|i| find_neighbors(&tree, points, i, config))
+        .collect();
 
     // Step 2: compute SPFH for every point in parallel
     let spfh: Vec<[f32; FPFH_DIM]> = (0..n)
@@ -350,49 +349,32 @@ impl Default for ShotConfig {
 
 /// Find neighbor indices for SHOT (radius search with k-NN fallback).
 fn find_shot_neighbors(
+    tree: &KdTree,
     points: &[NormalPoint3f],
     query_idx: usize,
     config: &ShotConfig,
 ) -> Vec<usize> {
-    let query = &points[query_idx].position;
-    let r_sq = config.search_radius * config.search_radius;
+    let query = points[query_idx].position;
 
-    let mut within: Vec<(usize, f32)> = points
-        .iter()
-        .enumerate()
-        .filter_map(|(i, p)| {
-            if i == query_idx {
-                return None;
-            }
-            let d_sq = (p.position - query).magnitude_squared();
-            if d_sq <= r_sq {
-                Some((i, d_sq))
-            } else {
-                None
-            }
-        })
+    // Radius search first (sorted ascending); drop the query point itself.
+    let within: Vec<usize> = tree
+        .find_radius_neighbors(&query, config.search_radius)
+        .into_iter()
+        .filter(|(i, _)| *i != query_idx)
+        .map(|(i, _)| i)
         .collect();
 
     if within.len() >= config.k_neighbors {
-        within.sort_unstable_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal));
-        return within.into_iter().map(|(i, _)| i).collect();
+        return within;
     }
 
-    // k-NN fallback
-    let mut all: Vec<(usize, f32)> = points
-        .iter()
-        .enumerate()
-        .filter_map(|(i, p)| {
-            if i == query_idx {
-                None
-            } else {
-                Some((i, (p.position - query).magnitude_squared()))
-            }
-        })
-        .collect();
-    all.sort_unstable_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal));
-    all.truncate(config.k_neighbors);
-    all.into_iter().map(|(i, _)| i).collect()
+    // k-NN fallback (one extra to absorb the self match).
+    tree.find_k_nearest(&query, config.k_neighbors + 1)
+        .into_iter()
+        .filter(|(i, _)| *i != query_idx)
+        .take(config.k_neighbors)
+        .map(|(i, _)| i)
+        .collect()
 }
 
 /// Compute the SHOT Local Reference Frame (LRF).
@@ -634,9 +616,16 @@ pub fn extract_shot_features_with_normals(
     let points = &cloud.points;
     let n = points.len();
 
-    // Gather neighbors (sequential — avoids borrowing issues with par_iter)
+    // Build a KD-tree over the point positions once so neighbour gathering is
+    // O(n log n) overall instead of O(n^2); the tree is immutable, so the
+    // gather can also run in parallel.
+    let positions: Vec<Point3f> = points.iter().map(|p| p.position).collect();
+    let tree = KdTree::new(&positions)?;
+
+    // Gather neighbors in parallel
     let neighbors: Vec<Vec<usize>> = (0..n)
-        .map(|i| find_shot_neighbors(points, i, config))
+        .into_par_iter()
+        .map(|i| find_shot_neighbors(&tree, points, i, config))
         .collect();
 
     // Compute descriptors in parallel
