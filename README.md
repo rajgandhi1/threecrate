@@ -118,6 +118,7 @@ exact command to reproduce it yourself.
 
 Contributions are welcome — algorithms, Python bindings, new formats, docs.
 
+- [ROADMAP.md](ROADMAP.md) — where we're ahead, where we trail, and what's next
 - [CONTRIBUTING.md](CONTRIBUTING.md) — setup and guidelines
 - [Open issues](https://github.com/rajgandhi1/threecrate/issues) — look for `good first issue`
 - [GitHub Discussions](https://github.com/rajgandhi1/threecrate/discussions) — questions and ideas
