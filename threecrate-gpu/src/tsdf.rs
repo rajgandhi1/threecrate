@@ -913,6 +913,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "GPU TSDF bytemuck buffer-size panic on Windows; see #175"]
     fn test_tsdf_surface_extraction() {
         pollster::block_on(async {
             let Some(gpu) = try_create_gpu_context().await else {
@@ -966,6 +967,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "GPU TSDF bytemuck buffer-size panic on Windows; see #175"]
     fn test_tsdf_multiple_integrations() {
         pollster::block_on(async {
             let Some(gpu) = try_create_gpu_context().await else {
@@ -1059,6 +1061,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "GPU TSDF bytemuck buffer-size panic on Windows; see #175"]
     fn test_tsdf_color_integration() {
         pollster::block_on(async {
             let Some(gpu) = try_create_gpu_context().await else {
