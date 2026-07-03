@@ -44,8 +44,10 @@ credibility story. In rough priority order:
 - **Competitive GPU compute** — cache pipelines, async readbacks, and a
   GPU-resident spatial index so GPU knn/normals/icp beat CPU (voxel and TSDF
   already do). → [#178](https://github.com/rajgandhi1/threecrate/issues/178)
-- **Fix the GPU TSDF buffer-cast panic** on Windows (currently `#[ignore]`d).
-  → [#175](https://github.com/rajgandhi1/threecrate/issues/175)
+- ~~Fix the GPU TSDF buffer-cast panic~~ — **done** ([#175](https://github.com/rajgandhi1/threecrate/issues/175)).
+  The readback cast a mapped GPU buffer (8-byte aligned) straight into
+  `repr(align(16))` structs; now it copies into a correctly aligned `Vec`. All
+  TSDF tests pass, no `#[ignore]`.
 - **Broader format coverage** and streaming improvements across `threecrate-io`.
 - **Python API parity** with the Rust surface (`threecrate-python`).
 
