@@ -88,7 +88,8 @@ ratio above 1 means ThreeCrate is faster than Open3D.
 | Workload | How ThreeCrate compares |
 |---|---:|
 | Reading files (raw float parsing) | **1.8x–2.2x faster** |
-| Voxel downsampling | **1.6x–1.8x faster** |
+| Voxel downsampling (CPU) | **1.6x–1.8x faster** |
+| Voxel downsampling (GPU, wgpu) | **1.8x–2.9x faster** *(vs our own CPU path, not Open3D)* |
 | Normal estimation | 0.57x–1.09x (falls behind on big clouds) |
 | Single-scale ICP | 0.71x–0.99x (falls behind on big clouds) |
 
@@ -97,6 +98,13 @@ downsampling, and it trades blows with Open3D on the heavier compute work. On
 small and medium clouds it holds its own; on large clouds it still gives up some
 ground on normal estimation and dense ICP. We're being upfront about that — those
 are the two areas we're actively working on.
+
+About the GPU row: the compute backend is [wgpu](https://wgpu.rs/), so it runs on
+any GPU (NVIDIA/AMD/Intel/Apple) with no CUDA lock-in. But to be honest about it,
+**only voxel downsampling and TSDF fusion are actually faster on the GPU today.**
+Normal estimation and ICP are still quicker on CPU right now (per-call pipeline
+rebuilds and blocking readbacks), so we don't list them as GPU wins — that work is
+[tracked openly](https://github.com/rajgandhi1/threecrate/issues/178).
 
 One thing we won't pretend about: **we haven't benchmarked PCL yet.** The harness
 to do it is written and ready in [`scripts/pcl_bench/`](scripts/pcl_bench), but

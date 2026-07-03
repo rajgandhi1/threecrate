@@ -306,7 +306,14 @@ impl GpuContext {
             .map_err(|e| Error::Gpu(format!("Buffer mapping failed: {:?}", e)))?;
 
         let data = buffer_slice.get_mapped_range();
-        let result: Vec<TsdfVoxel> = bytemuck::cast_slice(&data).to_vec();
+        // `get_mapped_range` only guarantees 8-byte alignment, but `TsdfVoxel` is
+        // `repr(align(16))`, so `cast_slice` would panic with
+        // `TargetAlignmentGreaterAndInputNotAligned`. Copy the bytes into a
+        // correctly aligned Vec instead of reinterpreting the mapped range.
+        let voxel_size = std::mem::size_of::<TsdfVoxel>();
+        let count = data.len() / voxel_size;
+        let mut result = vec![TsdfVoxel::zeroed(); count];
+        bytemuck::cast_slice_mut(&mut result).copy_from_slice(&data[..count * voxel_size]);
 
         drop(data);
         staging_buffer.unmap();
@@ -514,7 +521,15 @@ impl GpuContext {
         rx.receive().await.unwrap()?;
 
         let mapped_range = points_slice.get_mapped_range();
-        let gpu_points = bytemuck::cast_slice::<u8, GpuPoint3f>(mapped_range.as_ref());
+        // `GpuPoint3f` is `repr(align(16))` but `get_mapped_range` only guarantees
+        // 8-byte alignment, so copy into an aligned Vec rather than casting the
+        // mapped bytes in place (which panics with
+        // `TargetAlignmentGreaterAndInputNotAligned`).
+        let point_size = std::mem::size_of::<GpuPoint3f>();
+        let available = mapped_range.len() / point_size;
+        let mut gpu_points = vec![GpuPoint3f::zeroed(); available];
+        bytemuck::cast_slice_mut(&mut gpu_points)
+            .copy_from_slice(&mapped_range[..available * point_size]);
         let mut points = Vec::with_capacity(point_count);
 
         for gpu_point in gpu_points.iter().take(point_count) {
@@ -760,7 +775,14 @@ impl TsdfVolumeGpu {
             .map_err(|_| Error::Gpu("Failed to receive mapping result".into()))??;
 
         let data = buffer_slice.get_mapped_range();
-        let result: Vec<TsdfVoxel> = bytemuck::cast_slice(&data).to_vec();
+        // `get_mapped_range` only guarantees 8-byte alignment, but `TsdfVoxel` is
+        // `repr(align(16))`, so `cast_slice` would panic with
+        // `TargetAlignmentGreaterAndInputNotAligned`. Copy the bytes into a
+        // correctly aligned Vec instead of reinterpreting the mapped range.
+        let voxel_size = std::mem::size_of::<TsdfVoxel>();
+        let count = data.len() / voxel_size;
+        let mut result = vec![TsdfVoxel::zeroed(); count];
+        bytemuck::cast_slice_mut(&mut result).copy_from_slice(&data[..count * voxel_size]);
 
         drop(data);
         staging_buffer.unmap();
@@ -913,7 +935,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "GPU TSDF bytemuck buffer-size panic on Windows; see #175"]
     fn test_tsdf_surface_extraction() {
         pollster::block_on(async {
             let Some(gpu) = try_create_gpu_context().await else {
@@ -967,7 +988,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "GPU TSDF bytemuck buffer-size panic on Windows; see #175"]
     fn test_tsdf_multiple_integrations() {
         pollster::block_on(async {
             let Some(gpu) = try_create_gpu_context().await else {
@@ -1061,7 +1081,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "GPU TSDF bytemuck buffer-size panic on Windows; see #175"]
     fn test_tsdf_color_integration() {
         pollster::block_on(async {
             let Some(gpu) = try_create_gpu_context().await else {
