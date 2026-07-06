@@ -27,11 +27,16 @@ for the full tables and reproduction command.
 These are the concrete, measurable items that move the benchmark and the
 credibility story. In rough priority order:
 
-- **Flat-layout kd-tree** — the pointer-based tree is the bottleneck behind the
-  ~1.7x normal-estimation gap. A contiguous, index-based tree (or `kiddo`) is the
-  single highest-leverage change. → [#176](https://github.com/rajgandhi1/threecrate/issues/176) *(good first issue)*
-- **Dense ICP on large clouds** — at parity on small clouds, still ~0.7–0.8x on
-  KITTI/TUM. Depends partly on the flat kd-tree. → [#177](https://github.com/rajgandhi1/threecrate/issues/177)
+- ~~**Flat-layout kd-tree**~~ — **done** ([#176](https://github.com/rajgandhi1/threecrate/issues/176)).
+  The pointer/`Box` tree is now a contiguous, index-referenced `Vec<KdNode>`. k-NN
+  results are identical (all 201 algorithm tests pass); a same-machine A/B measured a
+  consistent **~8–10% speedup on normal estimation and ~5–9% on ICP**. It does **not**
+  close the Open3D gap on its own — normals are still ~0.5x on large clouds — because
+  the dominant remaining cost is per-point PCA and single-threaded correspondence
+  search, not tree layout. That work continues in [#177](https://github.com/rajgandhi1/threecrate/issues/177).
+- **Dense ICP on large clouds** — at parity on small clouds, still ~0.7x on
+  KITTI/TUM even after the flat kd-tree. Parallelising correspondence search and
+  per-point PCA (rayon) is the next lever. → [#177](https://github.com/rajgandhi1/threecrate/issues/177)
 - **Integrate PCL into the benchmark table** — the PCL harness is written and
   builds ([`scripts/pcl_bench/`](scripts/pcl_bench)); it just needs to be run in a
   shared environment and folded into the published numbers. → [#179](https://github.com/rajgandhi1/threecrate/issues/179)

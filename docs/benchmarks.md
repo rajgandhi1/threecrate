@@ -114,6 +114,14 @@ benchmark. Each is covered by the existing unit tests (201 passing).
   (full-res KITTI 530.8 → 387.3 ms; TUM 1548.6 → 1005.2 ms; nuScenes → parity).
   It has negligible effect on normal estimation, which is PCA-bound, not
   search-bound — normals are honestly still ~1.7x behind Open3D at full scale.
+- **Flat, array-backed kd-tree** (`nearest_neighbor.rs`, [#176]). The tree was
+  `Box`-pointer-based; it is now a contiguous `Vec<KdNode>` with children
+  referenced by index, so traversal is cache-friendly. k-NN output is identical
+  (201 tests pass). A same-machine A/B measured a **consistent ~8–10% speedup on
+  normals and ~5–9% on ICP** (e.g. normals KITTI 105.9 → 97.3 ms; ICP TUM
+  900.6 → 828.2 ms). Honestly, this is a real but modest win that does **not**
+  close the Open3D gap — the remaining cost is per-point PCA and single-threaded
+  correspondence, tracked in [#177].
 - **Outlier removal now uses the KD-tree** instead of brute force
   (`filtering.rs`), turning `radius_outlier_removal` and
   `statistical_outlier_removal` from O(n²) into O(n log n). Not exercised by the
@@ -125,9 +133,11 @@ benchmark. Each is covered by the existing unit tests (201 passing).
 
 ## Known remaining gaps (honest)
 
-- **Normal estimation is ~1.7x slower than Open3D at full scale.** The hand-rolled
-  pointer-based kd-tree and per-point PCA are the bottleneck; a flat-layout kd-tree
-  (or wiring in `kiddo`) is the next step.
+- **Normal estimation is still slower than Open3D at full scale** (~0.5x on
+  TUM/KITTI). The kd-tree is now flat/array-backed (see "What changed"), which
+  shaved a consistent ~8–10% off but did not close the gap; the dominant remaining
+  cost is per-point PCA and single-threaded neighbor search, so parallelising those
+  is the next step ([#177]).
 - **Dense ICP still trails Open3D** on large clouds (KITTI/TUM), even after the
   k-NN speedup.
 - **GPU knn/normals/icp are not competitive yet** (per-call shader/pipeline rebuilds,
@@ -182,5 +192,8 @@ Swap `--max-points all` for `--max-points 20000` to reproduce the capped table.
 - KITTI raw data: https://www.cvlibs.net/datasets/kitti/raw_data.php
 - TUM RGB-D download: https://cvg.cit.tum.de/data/datasets/rgbd-dataset/download
 - nuScenes paper: https://arxiv.org/abs/1903.11027
+
+[#176]: https://github.com/rajgandhi1/threecrate/issues/176
+[#177]: https://github.com/rajgandhi1/threecrate/issues/177
 </content>
 </invoke>
