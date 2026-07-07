@@ -4,31 +4,31 @@ use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 use threecrate_core::{NearestNeighborSearch, Point3f, Result};
 
-/// KD-Tree node for efficient nearest neighbor search
+/// Sentinel used in place of a child index to mean "no child".
+const NIL: u32 = u32::MAX;
+
+/// KD-Tree node stored in a flat, contiguous array.
+///
+/// Children are referenced by index into the owning `Vec<KdNode>` rather than
+/// through `Box` pointers. Keeping every node in one allocation makes traversal
+/// cache-friendly — neighbour search is the dominant cost in normal estimation
+/// and ICP correspondence, so a contiguous layout directly moves those numbers.
 #[derive(Debug)]
 struct KdNode {
     point: Point3f,
-    original_index: usize, // Store the original index
-    left: Option<Box<KdNode>>,
-    right: Option<Box<KdNode>>,
-    axis: usize, // 0=x, 1=y, 2=z
+    original_index: usize, // index into the original input slice
+    left: u32,             // child index, or NIL
+    right: u32,            // child index, or NIL
+    axis: u8,              // splitting axis: 0=x, 1=y, 2=z
 }
 
-impl KdNode {
-    fn new(point: Point3f, original_index: usize, axis: usize) -> Self {
-        Self {
-            point,
-            original_index,
-            left: None,
-            right: None,
-            axis,
-        }
-    }
-}
-
-/// Efficient KD-Tree implementation for nearest neighbor search
+/// Efficient KD-Tree implementation for nearest neighbor search.
+///
+/// Nodes live in a single contiguous `Vec` (`nodes`); children are referenced by
+/// index. `root` is the index of the tree root (always `0` when non-empty).
 pub struct KdTree {
-    root: Option<Box<KdNode>>,
+    nodes: Vec<KdNode>,
+    root: Option<u32>,
     points: Vec<Point3f>, // Keep original points for reference
 }
 
@@ -37,6 +37,7 @@ impl KdTree {
     pub fn new(points: &[Point3f]) -> Result<Self> {
         if points.is_empty() {
             return Ok(Self {
+                nodes: Vec::new(),
                 root: None,
                 points: Vec::new(),
             });
@@ -48,26 +49,27 @@ impl KdTree {
             .map(|(i, &point)| (point, i))
             .collect();
 
-        let root = Self::build_tree(&mut points_with_indices, 0, 0, points.len() - 1);
+        let mut nodes: Vec<KdNode> = Vec::with_capacity(points.len());
+        let root = Self::build_tree(&mut nodes, &mut points_with_indices, 0, 0, points.len() - 1);
 
         Ok(Self {
-            root: Some(Box::new(root)),
+            nodes,
+            root: Some(root),
             points: points.to_vec(),
         })
     }
 
-    /// Recursively build the KD-tree
+    /// Recursively build the KD-tree into the flat `nodes` array, returning the
+    /// array index of the subtree root spanning `[start, end]`.
+    ///
+    /// Slots are filled in pre-order, so the overall root lands at index 0.
     fn build_tree(
+        nodes: &mut Vec<KdNode>,
         points: &mut [(Point3f, usize)],
         depth: usize,
         start: usize,
         end: usize,
-    ) -> KdNode {
-        if start == end {
-            let (point, index) = points[start];
-            return KdNode::new(point, index, depth % 3);
-        }
-
+    ) -> u32 {
         let axis = depth % 3;
         let median_idx = (start + end) / 2;
 
@@ -75,29 +77,35 @@ impl KdTree {
         Self::select_median(points, start, end, median_idx, axis);
 
         let (point, index) = points[median_idx];
-        let mut node = KdNode::new(point, index, axis);
+
+        // Reserve this node's slot before recursing so children can link to it
+        // (and to each other) by index.
+        let my_idx = nodes.len() as u32;
+        nodes.push(KdNode {
+            point,
+            original_index: index,
+            left: NIL,
+            right: NIL,
+            axis: axis as u8,
+        });
 
         // Build left subtree
-        if median_idx > start {
-            node.left = Some(Box::new(Self::build_tree(
-                points,
-                depth + 1,
-                start,
-                median_idx - 1,
-            )));
-        }
+        let left = if median_idx > start {
+            Self::build_tree(nodes, points, depth + 1, start, median_idx - 1)
+        } else {
+            NIL
+        };
 
         // Build right subtree
-        if median_idx < end {
-            node.right = Some(Box::new(Self::build_tree(
-                points,
-                depth + 1,
-                median_idx + 1,
-                end,
-            )));
-        }
+        let right = if median_idx < end {
+            Self::build_tree(nodes, points, depth + 1, median_idx + 1, end)
+        } else {
+            NIL
+        };
 
-        node
+        nodes[my_idx as usize].left = left;
+        nodes[my_idx as usize].right = right;
+        my_idx
     }
 
     /// Select the median element and partition points around it
@@ -179,13 +187,14 @@ impl NearestNeighborSearch for KdTree {
         // distance, so heap ordering and pruning are unaffected. We take the
         // square root once per surviving neighbor when building the result.
         let mut heap: BinaryHeap<Neighbor> = BinaryHeap::with_capacity(k + 1);
-        let mut stack: Vec<&KdNode> = Vec::new();
+        let mut stack: Vec<u32> = Vec::new();
 
-        if let Some(ref root) = self.root {
+        if let Some(root) = self.root {
             stack.push(root);
         }
 
-        while let Some(node) = stack.pop() {
+        while let Some(idx) = stack.pop() {
+            let node = &self.nodes[idx as usize];
             let dist_sq = Self::distance_squared(&node.point, query);
 
             if heap.len() < k {
@@ -203,8 +212,8 @@ impl NearestNeighborSearch for KdTree {
                 }
             }
 
-            let query_val = query.coords[node.axis];
-            let node_val = node.point.coords[node.axis];
+            let query_val = query.coords[node.axis as usize];
+            let node_val = node.point.coords[node.axis as usize];
             let axis_dist = query_val - node_val;
             let axis_dist_sq = axis_dist * axis_dist;
 
@@ -212,9 +221,9 @@ impl NearestNeighborSearch for KdTree {
             // Far child:  the other half-space, searched only when it could
             //             contain a point closer than the current k-th nearest.
             let (near, far) = if query_val <= node_val {
-                (&node.left, &node.right)
+                (node.left, node.right)
             } else {
-                (&node.right, &node.left)
+                (node.right, node.left)
             };
 
             // Push far before near so near is popped first (LIFO), giving the
@@ -225,13 +234,11 @@ impl NearestNeighborSearch for KdTree {
             } else {
                 true
             };
-            if search_far {
-                if let Some(ref far_node) = far {
-                    stack.push(far_node);
-                }
+            if search_far && far != NIL {
+                stack.push(far);
             }
-            if let Some(ref near_node) = near {
-                stack.push(near_node);
+            if near != NIL {
+                stack.push(near);
             }
         }
 
@@ -251,37 +258,38 @@ impl NearestNeighborSearch for KdTree {
 
         let radius_sq = radius * radius;
         let mut result: Vec<(usize, f32)> = Vec::new();
-        let mut stack: Vec<&KdNode> = Vec::new();
+        let mut stack: Vec<u32> = Vec::new();
 
-        if let Some(ref root) = self.root {
+        if let Some(root) = self.root {
             stack.push(root);
         }
 
-        while let Some(node) = stack.pop() {
+        while let Some(idx) = stack.pop() {
+            let node = &self.nodes[idx as usize];
             let dist_sq = Self::distance_squared(&node.point, query);
             if dist_sq <= radius_sq {
                 result.push((node.original_index, dist_sq.sqrt()));
             }
 
-            let query_val = query.coords[node.axis];
-            let node_val = node.point.coords[node.axis];
+            let query_val = query.coords[node.axis as usize];
+            let node_val = node.point.coords[node.axis as usize];
             let axis_dist = query_val - node_val;
 
             let (near, far) = if query_val <= node_val {
-                (&node.left, &node.right)
+                (node.left, node.right)
             } else {
-                (&node.right, &node.left)
+                (node.right, node.left)
             };
 
             // The far subtree can only contain in-radius points when the
             // distance to the splitting hyperplane is within the search radius.
             if axis_dist * axis_dist <= radius_sq {
-                if let Some(ref far_node) = far {
-                    stack.push(far_node);
+                if far != NIL {
+                    stack.push(far);
                 }
             }
-            if let Some(ref near_node) = near {
-                stack.push(near_node);
+            if near != NIL {
+                stack.push(near);
             }
         }
 
