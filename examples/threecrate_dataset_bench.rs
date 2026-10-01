@@ -424,7 +424,11 @@ fn load_tum_depth_sequence(dir: &PathBuf) -> Result<PointCloud<Point3f>> {
             let z = depth as f32 / depth_factor;
             let x = (u as f32 - cx) * z / fx;
             let y = (v as f32 - cy) * z / fy;
-            points.push(Point3f::new(x, y, z));
+            // Flip y and z to match the Open3D side of the cross-library
+            // benchmark, which applies diag(1, -1, -1) after back-projection.
+            // Without this, the same ground-truth motion would point in a
+            // different direction in each library's cloud.
+            points.push(Point3f::new(x, -y, -z));
         }
     }
 

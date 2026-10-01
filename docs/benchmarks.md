@@ -92,8 +92,8 @@ Errors are measured against the known offset. Lower is better.
 
 | Dataset | Library | Rotation error | Translation error | Inlier RMSE | Time |
 | --- | --- | ---: | ---: | ---: | ---: |
-| TUM | Open3D | 0.029° | 4.7 mm | 2.8 mm | 1442 ms |
-| TUM | ThreeCrate | 0.665° | 35.0 mm | 8.3 mm | 538 ms |
+| TUM | Open3D | 0.029° | 4.7 mm | 2.8 mm | 1219 ms |
+| TUM | ThreeCrate | 0.678° | 34.4 mm | 8.1 mm | 621 ms |
 | KITTI | Open3D | 0.104° | 8.8 mm | 94.1 mm | 422 ms |
 | KITTI | ThreeCrate | 0.103° | 10.8 mm | 94.1 mm | 100 ms |
 | nuScenes | Open3D | 0.972° | 517.7 mm | 300.2 mm | 127 ms |
@@ -106,8 +106,8 @@ What this shows:
   needs a better starting guess than plain ICP gets here.
 - **TUM:** ThreeCrate is less accurate. Its default stopping rule looks at the
   absolute change in error, which is tiny on small indoor scenes, so it stops
-  after 27 iterations while still 3.5 cm off. With a tighter threshold
-  (`--convergence 1e-7`) it reaches 0.032° and 1.9 mm in 699 ms, which matches
+  after 31 iterations while still 3.4 cm off. With a tighter threshold
+  (`--convergence 1e-7`) it reaches 0.029° and 4.7 mm in 737 ms, the same as
   Open3D. We report the default here because that is what users get. Fixing the
   default is tracked in [#187].
 
