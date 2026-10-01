@@ -66,6 +66,7 @@ def parse_args() -> argparse.Namespace:
             "voxel",
             "normals",
             "icp",
+            "icp_accuracy",
             "multiscale_icp",
             "gpu_voxel",
             "gpu_icp",
@@ -82,6 +83,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-points", default="20000")
     parser.add_argument("--voxel-size", type=float, default=0.2)
     parser.add_argument("--max-icp-iters", type=int, default=20)
+    parser.add_argument(
+        "--max-correspondence-distance",
+        type=float,
+        default=1.0,
+        help="ICP correspondence cutoff for the icp_accuracy task (both libraries).",
+    )
     parser.add_argument("--pcl-bench-exe", default=os.environ.get("PCL_BENCH_EXE"))
     argv = [arg for arg in sys.argv[1:] if arg != "`"]
     parsed = parser.parse_args(argv)
@@ -124,6 +131,8 @@ def run_threecrate(args: argparse.Namespace, dataset: str, path: Path, task: str
         str(args.voxel_size),
         "--max-icp-iters",
         str(args.max_icp_iters),
+        "--max-correspondence-distance",
+        str(args.max_correspondence_distance),
     ]
     try:
         proc = subprocess.run(cmd, text=True, capture_output=True, check=True)
@@ -142,7 +151,10 @@ def run_open3d(args: argparse.Namespace, dataset: str, path: Path, task: str) ->
 
     try:
         source = limit_numpy(open3d_read(path, o3d, np), args.max_points)
-        target = transform_numpy(source, np)
+        if task == "icp_accuracy":
+            source, target = accuracy_pair_numpy(source, np)
+        else:
+            target = transform_numpy(source, np)
         for _ in range(args.warmups):
             open3d_task(task, source, target, args, o3d, np, path)
         times = []
@@ -183,6 +195,20 @@ def open3d_task(task: str, source, target, args: argparse.Namespace, o3d, np, pa
         source_pcd.estimate_normals(o3d.geometry.KDTreeSearchParamKNN(knn=10))
         return len(source_pcd.normals), "k=10"
     target_pcd = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(target))
+    if task == "icp_accuracy":
+        result = o3d.pipelines.registration.registration_icp(
+            source_pcd,
+            target_pcd,
+            args.max_correspondence_distance,
+            np.eye(4),
+            o3d.pipelines.registration.TransformationEstimationPointToPoint(),
+            o3d.pipelines.registration.ICPConvergenceCriteria(max_iteration=args.max_icp_iters),
+        )
+        rot_err_deg, trans_err_m = transform_error_numpy(np.asarray(result.transformation), np)
+        return len(source), (
+            f"rot_err_deg={rot_err_deg:.4f},trans_err_m={trans_err_m:.4f},"
+            f"fitness={result.fitness:.6f},rmse={result.inlier_rmse:.6f}"
+        )
     result = o3d.pipelines.registration.registration_icp(
         source_pcd,
         target_pcd,
@@ -199,7 +225,7 @@ def run_pdal(args: argparse.Namespace, dataset: str, path: Path, task: str) -> l
         return [unavailable("PDAL", task, dataset, "ThreeCrate-specific task")]
     if shutil.which("pdal") is None:
         return [unavailable("PDAL", task, dataset, "pdal CLI is not installed")]
-    if task == "icp":
+    if task in ("icp", "icp_accuracy"):
         return [unavailable("PDAL", task, dataset, "PDAL is not an ICP baseline")]
     if task == "normals":
         return [unavailable("PDAL", task, dataset, "PDAL normals are not configured in this harness")]
@@ -221,6 +247,8 @@ def run_pdal(args: argparse.Namespace, dataset: str, path: Path, task: str) -> l
 def run_pcl(args: argparse.Namespace, dataset: str, path: Path, task: str) -> list[dict[str, str]]:
     if task.startswith("gpu_") or task == "multiscale_icp":
         return [unavailable("PCL", task, dataset, "ThreeCrate-specific task")]
+    if task == "icp_accuracy":
+        return [unavailable("PCL", task, dataset, "icp_accuracy is not implemented in scripts/pcl_bench yet")]
     if not args.pcl_bench_exe:
         return [unavailable("PCL", task, dataset, "set PCL_BENCH_EXE to a custom PCL benchmark executable")]
     cmd = [
@@ -251,6 +279,40 @@ def transform_numpy(points, np):
     theta = 0.02
     rot = np.array([[np.cos(theta), -np.sin(theta), 0.0], [np.sin(theta), np.cos(theta), 0.0], [0.0, 0.0, 1.0]])
     return points @ rot.T + np.array([0.05, -0.02, 0.01])
+
+
+# Ground-truth motion for the icp_accuracy task: roughly one KITTI frame (10 Hz)
+# of vehicle motion. Must match `accuracy_ground_truth` in
+# examples/threecrate_dataset_bench.rs.
+ACCURACY_TASKS = ("icp_accuracy",)
+ACCURACY_GT_TRANSLATION = (0.30, -0.20, 0.10)
+ACCURACY_GT_ROLL_PITCH_YAW = (0.01, -0.015, 0.05)
+
+
+def accuracy_rotation(np):
+    """Rz(yaw) @ Ry(pitch) @ Rx(roll), matching nalgebra's from_euler_angles."""
+    roll, pitch, yaw = ACCURACY_GT_ROLL_PITCH_YAW
+    rx = np.array([[1.0, 0.0, 0.0], [0.0, np.cos(roll), -np.sin(roll)], [0.0, np.sin(roll), np.cos(roll)]])
+    ry = np.array([[np.cos(pitch), 0.0, np.sin(pitch)], [0.0, 1.0, 0.0], [-np.sin(pitch), 0.0, np.cos(pitch)]])
+    rz = np.array([[np.cos(yaw), -np.sin(yaw), 0.0], [np.sin(yaw), np.cos(yaw), 0.0], [0.0, 0.0, 1.0]])
+    return rz @ ry @ rx
+
+
+def accuracy_pair_numpy(points, np):
+    """Source = even-indexed points; target = odd-indexed points moved by the
+    ground truth. Same surfaces, no shared points."""
+    source = points[0::2]
+    target = points[1::2] @ accuracy_rotation(np).T + np.array(ACCURACY_GT_TRANSLATION)
+    return source, target
+
+
+def transform_error_numpy(transformation, np):
+    """Rotation error (degrees) and translation error of a 4x4 estimate."""
+    rot_est = transformation[:3, :3]
+    cos_angle = (np.trace(rot_est.T @ accuracy_rotation(np)) - 1.0) / 2.0
+    rot_err = math.degrees(math.acos(max(-1.0, min(1.0, cos_angle))))
+    trans_err = float(np.linalg.norm(transformation[:3, 3] - np.array(ACCURACY_GT_TRANSLATION)))
+    return rot_err, trans_err
 
 
 def tum_sequence_to_points(path: Path, o3d, np):
@@ -335,7 +397,7 @@ def write_markdown_report(path: str, rows: list[dict[str, str]], args: argparse.
         "",
         "- Lower time is better. Times are median milliseconds over the configured iterations.",
         f"- Iterations: {args.iterations}; warmups: {args.warmups}; max points: {args.max_points}; voxel size: {args.voxel_size}; max ICP iterations: {args.max_icp_iters}.",
-        "- ICP uses a synthetic rigid transform of the same source cloud unless an explicit target is supplied.",
+        "- The `icp` speed task uses a synthetic near-identity transform of the same source cloud unless an explicit target is supplied; `icp_accuracy` is described in its own section.",
         "- Composite score includes only tasks where ThreeCrate and at least one non-ThreeCrate baseline produced numeric timings.",
         "- ThreeCrate-specific GPU tasks are reported separately and are not included in the composite score.",
         "- Missing PCL/PDAL values are not filled with numbers from other machines or papers.",
@@ -368,6 +430,8 @@ def write_markdown_report(path: str, rows: list[dict[str, str]], args: argparse.
             )
     else:
         lines.append("No shared runnable task had both ThreeCrate and an external numeric baseline.")
+
+    lines.extend(accuracy_report_lines(rows, args))
 
     lines.extend(
         [
@@ -411,6 +475,47 @@ def write_markdown_report(path: str, rows: list[dict[str, str]], args: argparse.
     output.write_text("\n".join(lines), encoding="utf-8")
 
 
+def parse_detail(detail: str) -> dict[str, str]:
+    """Parse a `key=value,key=value` detail string into a dict."""
+    fields = {}
+    for part in detail.split(","):
+        if "=" in part:
+            key, value = part.split("=", 1)
+            fields[key.strip()] = value.strip()
+    return fields
+
+
+def accuracy_report_lines(rows: list[dict[str, str]], args: argparse.Namespace) -> list[str]:
+    accuracy_rows = [
+        row for row in rows if row["task"] in ACCURACY_TASKS and row["median_ms"] != "n/a"
+    ]
+    if not accuracy_rows:
+        return []
+    roll, pitch, yaw = ACCURACY_GT_ROLL_PITCH_YAW
+    lines = [
+        "",
+        "## ICP Accuracy",
+        "",
+        "Source = even-indexed points, target = odd-indexed points moved by a known "
+        f"ground truth (translation {ACCURACY_GT_TRANSLATION} m; roll/pitch/yaw "
+        f"{roll}/{pitch}/{yaw} rad). Identity initial guess, max correspondence distance "
+        f"{args.max_correspondence_distance} m, at most {args.max_icp_iters} iterations. "
+        "Each library uses its own convergence rule. Lower errors are better; fitness is "
+        "the fraction of source points with a correspondence inside the cutoff.",
+        "",
+        "| Dataset | Library | Rotation error (deg) | Translation error (m) | Fitness | Inlier RMSE | Iterations | Time (ms) |",
+        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+    ]
+    for row in sorted(accuracy_rows, key=lambda r: (r["dataset"], r["library"])):
+        fields = parse_detail(row["detail"])
+        lines.append(
+            f"| {row['dataset']} | {row['library']} | {fields.get('rot_err_deg', '')} | "
+            f"{fields.get('trans_err_m', '')} | {fields.get('fitness', '')} | {fields.get('rmse', '')} | "
+            f"{fields.get('icp_iters', 'n/a')} | {row['median_ms']} |"
+        )
+    return lines
+
+
 def detected_versions() -> dict[str, str]:
     versions: dict[str, str] = {}
     if importlib.util.find_spec("open3d") is not None:
@@ -430,6 +535,10 @@ def detected_versions() -> dict[str, str]:
 def composite_score(rows: list[dict[str, str]]) -> dict[str, object]:
     items = []
     for (task, dataset), libs in grouped_numeric(rows):
+        # Accuracy runs use different clouds and stopping points per library, so
+        # their timings are reported alongside the errors, not in the composite.
+        if task in ACCURACY_TASKS:
+            continue
         three = {name: ms for name, ms in libs.items() if name.startswith("ThreeCrate")}
         external = {name: ms for name, ms in libs.items() if not name.startswith("ThreeCrate") and name != "dataset"}
         if not three or not external:
