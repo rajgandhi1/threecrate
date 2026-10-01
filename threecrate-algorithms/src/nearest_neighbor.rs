@@ -13,7 +13,7 @@ const NIL: u32 = u32::MAX;
 /// through `Box` pointers. Keeping every node in one allocation makes traversal
 /// cache-friendly — neighbour search is the dominant cost in normal estimation
 /// and ICP correspondence, so a contiguous layout directly moves those numbers.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct KdNode {
     point: Point3f,
     original_index: usize, // index into the original input slice
@@ -33,129 +33,192 @@ pub struct KdTree {
 }
 
 impl KdTree {
-    /// Create a new KD-tree from a slice of points
+    /// Create a new KD-tree from a slice of points.
+    ///
+    /// Points with a NaN or infinite coordinate are left out of the tree and are
+    /// never returned as neighbors (indices of the remaining points still refer
+    /// to `points`). Organized clouds store invalid returns as NaN; a NaN split
+    /// value would send every query down one side and make the finite points on
+    /// the other side unreachable.
     pub fn new(points: &[Point3f]) -> Result<Self> {
-        if points.is_empty() {
-            return Ok(Self {
-                nodes: Vec::new(),
-                root: None,
-                points: Vec::new(),
-            });
-        }
-
         let mut points_with_indices: Vec<(Point3f, usize)> = points
             .iter()
             .enumerate()
+            .filter(|(_, point)| point.coords.iter().all(|c| c.is_finite()))
             .map(|(i, &point)| (point, i))
             .collect();
 
-        let mut nodes: Vec<KdNode> = Vec::with_capacity(points.len());
-        let root = Self::build_tree(&mut nodes, &mut points_with_indices, 0, 0, points.len() - 1);
+        if points_with_indices.is_empty() {
+            return Ok(Self {
+                nodes: Vec::new(),
+                root: None,
+                points: points.to_vec(),
+            });
+        }
+
+        // Every slot is overwritten by `build_tree`; the placeholder only lets
+        // us hand out disjoint `&mut` sub-slices to parallel subtree builds.
+        let placeholder = KdNode {
+            point: Point3f::origin(),
+            original_index: 0,
+            left: NIL,
+            right: NIL,
+            axis: 0,
+        };
+        let mut nodes: Vec<KdNode> = (0..points_with_indices.len())
+            .map(|_| placeholder.clone())
+            .collect();
+        Self::build_tree(&mut nodes, 0, &mut points_with_indices, 0);
 
         Ok(Self {
             nodes,
-            root: Some(root),
+            root: Some(0),
             points: points.to_vec(),
         })
     }
 
-    /// Recursively build the KD-tree into the flat `nodes` array, returning the
-    /// array index of the subtree root spanning `[start, end]`.
+    /// Recursively build the KD-tree for `points` into `nodes`, whose first slot
+    /// sits at absolute array index `base`.
     ///
-    /// Slots are filled in pre-order, so the overall root lands at index 0.
-    fn build_tree(
-        nodes: &mut Vec<KdNode>,
-        points: &mut [(Point3f, usize)],
-        depth: usize,
-        start: usize,
-        end: usize,
-    ) -> u32 {
+    /// Slots are filled in pre-order: the subtree root goes in `nodes[0]`, the
+    /// left subtree (`median` nodes) in `nodes[1..=median]`, and the right
+    /// subtree after it. Because each subtree's slot range is known up front,
+    /// the two halves are disjoint slices and large subtrees build in parallel.
+    fn build_tree(nodes: &mut [KdNode], base: u32, points: &mut [(Point3f, usize)], depth: usize) {
+        /// Below this size, spawning rayon tasks costs more than it saves.
+        const PARALLEL_THRESHOLD: usize = 4096;
+
         let axis = depth % 3;
-        let median_idx = (start + end) / 2;
+        let len = points.len();
+        let median = (len - 1) / 2;
 
-        // Find the actual median and partition points around it
-        Self::select_median(points, start, end, median_idx, axis);
+        // `select_nth_unstable_by` is introselect: O(n) and, unlike a fixed
+        // last-element pivot, not quadratic on already-sorted input such as
+        // row-ordered depth images. Coordinates are finite here (`new` filters
+        // the rest), so `total_cmp` matches numeric order.
+        points.select_nth_unstable_by(median, |a, b| a.0.coords[axis].total_cmp(&b.0.coords[axis]));
 
-        let (point, index) = points[median_idx];
+        let (left_points, rest) = points.split_at_mut(median);
+        let ((point, index), right_points) = (rest[0], &mut rest[1..]);
 
-        // Reserve this node's slot before recursing so children can link to it
-        // (and to each other) by index.
-        let my_idx = nodes.len() as u32;
-        nodes.push(KdNode {
+        let (root, children) = nodes.split_first_mut().expect("one slot per point");
+        let (left_nodes, right_nodes) = children.split_at_mut(median);
+
+        let left_base = base + 1;
+        let right_base = base + 1 + median as u32;
+        *root = KdNode {
             point,
             original_index: index,
-            left: NIL,
-            right: NIL,
+            left: if left_points.is_empty() {
+                NIL
+            } else {
+                left_base
+            },
+            right: if right_points.is_empty() {
+                NIL
+            } else {
+                right_base
+            },
             axis: axis as u8,
-        });
-
-        // Build left subtree
-        let left = if median_idx > start {
-            Self::build_tree(nodes, points, depth + 1, start, median_idx - 1)
-        } else {
-            NIL
         };
 
-        // Build right subtree
-        let right = if median_idx < end {
-            Self::build_tree(nodes, points, depth + 1, median_idx + 1, end)
-        } else {
-            NIL
-        };
-
-        nodes[my_idx as usize].left = left;
-        nodes[my_idx as usize].right = right;
-        my_idx
-    }
-
-    /// Select the median element and partition points around it
-    fn select_median(
-        points: &mut [(Point3f, usize)],
-        start: usize,
-        end: usize,
-        target: usize,
-        axis: usize,
-    ) {
-        let mut left = start;
-        let mut right = end;
-
-        while left < right {
-            let pivot_idx = Self::partition(points, left, right, axis);
-
-            match pivot_idx.cmp(&target) {
-                Ordering::Equal => return,
-                Ordering::Less => left = pivot_idx + 1,
-                Ordering::Greater => right = pivot_idx - 1,
+        let build_left = |nodes: &mut [KdNode], points: &mut [(Point3f, usize)]| {
+            if !points.is_empty() {
+                Self::build_tree(nodes, left_base, points, depth + 1);
             }
+        };
+        let build_right = |nodes: &mut [KdNode], points: &mut [(Point3f, usize)]| {
+            if !points.is_empty() {
+                Self::build_tree(nodes, right_base, points, depth + 1);
+            }
+        };
+
+        if len > PARALLEL_THRESHOLD {
+            rayon::join(
+                || build_left(left_nodes, left_points),
+                || build_right(right_nodes, right_points),
+            );
+        } else {
+            build_left(left_nodes, left_points);
+            build_right(right_nodes, right_points);
         }
     }
 
-    /// Partition points around a pivot on a specific axis
-    fn partition(points: &mut [(Point3f, usize)], start: usize, end: usize, axis: usize) -> usize {
-        let pivot_value = match axis {
-            0 => points[end].0.x,
-            1 => points[end].0.y,
-            2 => points[end].0.z,
-            _ => unreachable!(),
+    /// Find the single nearest neighbor of `query`, allocation-free.
+    ///
+    /// `bound_sq` is a squared-distance upper bound: only points strictly closer
+    /// than it are considered, and the far side of a split is skipped as soon as
+    /// it cannot beat the best so far. Pass `f32::INFINITY` for an unbounded
+    /// search. When the caller already knows a candidate (e.g. last ICP
+    /// iteration's match), pass its index and squared distance as `seed` so the
+    /// search starts pruned; `seed` is returned if nothing closer is found.
+    ///
+    /// Returns `(original_index, squared_distance)`, or `None` if no point lies
+    /// within the bound and no seed was given. This is the hot path for ICP
+    /// correspondence search, so — unlike `find_k_nearest` — it uses a fixed-size
+    /// stack and no heap, result `Vec`, or `sqrt`.
+    pub fn find_nearest_bounded(
+        &self,
+        query: &Point3f,
+        bound_sq: f32,
+        seed: Option<(usize, f32)>,
+    ) -> Option<(usize, f32)> {
+        // The tree is median-split, so its depth is at most ceil(log2(n + 1)),
+        // which for `u32` node indices is ≤ 33. The stack holds at most one
+        // deferred far child per level plus the current near child.
+        const MAX_STACK: usize = 64;
+
+        let (mut best, mut best_sq) = match seed {
+            Some((_, d)) if d < bound_sq => (seed, d),
+            _ => (None, bound_sq),
         };
 
-        let mut i = start;
-        for j in start..end {
-            let point_value = match axis {
-                0 => points[j].0.x,
-                1 => points[j].0.y,
-                2 => points[j].0.z,
-                _ => unreachable!(),
+        // Each entry is (node, squared distance from the query to the split
+        // plane that separated it). Far children are pushed before the near
+        // child is explored, so `best_sq` may have shrunk by the time one is
+        // popped; re-checking the plane distance then prunes the whole subtree.
+        let mut stack = [(0u32, 0.0f32); MAX_STACK];
+        let mut len = 0usize;
+        if let Some(root) = self.root {
+            stack[0] = (root, 0.0);
+            len = 1;
+        }
+
+        while len > 0 {
+            len -= 1;
+            let (idx, plane_sq) = stack[len];
+            if plane_sq >= best_sq {
+                continue;
+            }
+            let node = &self.nodes[idx as usize];
+
+            let dist_sq = Self::distance_squared(&node.point, query);
+            if dist_sq < best_sq {
+                best_sq = dist_sq;
+                best = Some((node.original_index, dist_sq));
+            }
+
+            let axis_dist =
+                query.coords[node.axis as usize] - node.point.coords[node.axis as usize];
+            let axis_dist_sq = axis_dist * axis_dist;
+            let (near, far) = if axis_dist <= 0.0 {
+                (node.left, node.right)
+            } else {
+                (node.right, node.left)
             };
 
-            if point_value <= pivot_value {
-                points.swap(i, j);
-                i += 1;
+            // Push far before near so near is popped first (LIFO).
+            if far != NIL && axis_dist_sq < best_sq {
+                stack[len] = (far, axis_dist_sq);
+                len += 1;
+            }
+            if near != NIL {
+                stack[len] = (near, 0.0);
+                len += 1;
             }
         }
 
-        points.swap(i, end);
-        i
+        best
     }
 
     /// Calculate squared distance between two points
@@ -638,6 +701,109 @@ mod tests {
                 assert!((kdtree_radius[i].1 - brute_radius[i].1).abs() < 1e-6);
             }
         }
+    }
+
+    #[test]
+    fn test_find_nearest_bounded_matches_brute_force() {
+        let mut rng = rand::rng();
+        let points: Vec<Point3f> = (0..5000)
+            .map(|_| {
+                Point3f::new(
+                    rng.random_range(-10.0..10.0),
+                    rng.random_range(-10.0..10.0),
+                    rng.random_range(-10.0..10.0),
+                )
+            })
+            .collect();
+        let kdtree = KdTree::new(&points).unwrap();
+        let brute_force = BruteForceSearch::new(&points);
+
+        for _ in 0..200 {
+            let query = Point3f::new(
+                rng.random_range(-12.0..12.0),
+                rng.random_range(-12.0..12.0),
+                rng.random_range(-12.0..12.0),
+            );
+            let (bf_idx, bf_dist) = brute_force.find_k_nearest(&query, 1)[0];
+            let bf_sq = bf_dist * bf_dist;
+
+            // Unbounded, unseeded
+            let (_, d) = kdtree
+                .find_nearest_bounded(&query, f32::INFINITY, None)
+                .unwrap();
+            assert!((d - bf_sq).abs() < 1e-4);
+
+            // Seeded with an arbitrary (usually far) point: still exact
+            let seed_idx = rng.random_range(0..points.len());
+            let seed_sq = (points[seed_idx] - query).magnitude_squared();
+            let (_, d) = kdtree
+                .find_nearest_bounded(&query, f32::INFINITY, Some((seed_idx, seed_sq)))
+                .unwrap();
+            assert!((d - bf_sq).abs() < 1e-4);
+
+            // Seeded with the true answer: returns it
+            let (idx, _) = kdtree
+                .find_nearest_bounded(&query, f32::INFINITY, Some((bf_idx, bf_sq)))
+                .unwrap();
+            assert_eq!(idx, bf_idx);
+
+            // A bound tighter than the nearest neighbor finds nothing
+            assert!(kdtree
+                .find_nearest_bounded(&query, bf_sq * 0.5, None)
+                .is_none());
+        }
+    }
+
+    #[test]
+    fn test_kd_tree_with_nan_points() {
+        let mut points = create_test_points();
+        points.push(Point3f::new(f32::NAN, 0.0, 0.0));
+        points.push(Point3f::new(0.5, f32::NAN, f32::NAN));
+
+        // Building must not panic, and finite queries still resolve to the
+        // nearest finite point.
+        let kdtree = KdTree::new(&points).unwrap();
+        let (idx, d) = kdtree
+            .find_nearest_bounded(&Point3f::new(0.9, 0.1, 0.05), f32::INFINITY, None)
+            .unwrap();
+        assert_eq!(idx, 1);
+        assert!(d.is_finite());
+    }
+
+    #[test]
+    fn test_kd_tree_mostly_nan_points() {
+        // Mostly-invalid organized cloud: NaN points must not become split
+        // nodes that hide the finite points from the search.
+        let nan = Point3f::new(f32::NAN, f32::NAN, f32::NAN);
+        let mut points = vec![nan; 50];
+        points[17] = Point3f::new(0.0, 0.0, 0.0);
+        points[33] = Point3f::new(5.0, 5.0, 5.0);
+        points.push(Point3f::new(f32::INFINITY, 0.0, 0.0));
+
+        let kdtree = KdTree::new(&points).unwrap();
+        let query = Point3f::new(0.1, 0.0, 0.0);
+
+        let (idx, _) = kdtree
+            .find_nearest_bounded(&query, f32::INFINITY, None)
+            .unwrap();
+        assert_eq!(idx, 17);
+
+        let knn = kdtree.find_k_nearest(&query, 5);
+        assert_eq!(
+            knn.iter().map(|(i, _)| *i).collect::<Vec<_>>(),
+            vec![17, 33]
+        );
+
+        let radius = kdtree.find_radius_neighbors(&query, 1.0);
+        assert_eq!(radius.len(), 1);
+        assert_eq!(radius[0].0, 17);
+
+        // An all-invalid cloud yields an empty tree, not a panic
+        let empty = KdTree::new(&[nan, nan]).unwrap();
+        assert!(empty
+            .find_nearest_bounded(&query, f32::INFINITY, None)
+            .is_none());
+        assert!(empty.find_k_nearest(&query, 3).is_empty());
     }
 
     #[test]

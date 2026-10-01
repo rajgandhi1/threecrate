@@ -87,17 +87,19 @@ ratio above 1 means ThreeCrate is faster than Open3D.
 
 | Workload | How ThreeCrate compares |
 |---|---:|
-| Reading files (raw float parsing) | **1.8x–2.2x faster** |
+| Reading files (raw float parsing) | **1.8x–1.9x faster** |
 | Voxel downsampling (CPU) | **1.6x–1.8x faster** |
 | Voxel downsampling (GPU, wgpu) | **1.8x–2.9x faster** *(vs our own CPU path, not Open3D)* |
-| Normal estimation | 0.57x–1.09x (falls behind on big clouds) |
-| Single-scale ICP | 0.71x–0.99x (falls behind on big clouds) |
+| Normal estimation | 0.92x–1.76x (faster on 2 of 3 datasets; slightly behind on KITTI) |
+| Single-scale ICP (per-iteration speed) | **2.7x–4.3x faster** |
 
-The short version: ThreeCrate is noticeably quicker at loading data and
-downsampling, and it trades blows with Open3D on the heavier compute work. On
-small and medium clouds it holds its own; on large clouds it still gives up some
-ground on normal estimation and dense ICP. We're being upfront about that — those
-are the two areas we're actively working on.
+The short version: ThreeCrate is quicker than Open3D at loading data,
+downsampling, and running ICP, and faster at normal estimation on two of the
+three datasets — it's still slightly behind on full-resolution KITTI normals.
+One honest caveat on ICP: the benchmark times registration against a
+near-identity target, so it measures speed per iteration, not how accurate the
+final alignment is. An accuracy comparison is
+[still to do](https://github.com/rajgandhi1/threecrate/issues/180).
 
 About the GPU row: the compute backend is [wgpu](https://wgpu.rs/), so it runs on
 any GPU (NVIDIA/AMD/Intel/Apple) with no CUDA lock-in. But to be honest about it,

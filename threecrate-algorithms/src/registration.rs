@@ -2,11 +2,9 @@
 
 use crate::filtering::voxel_grid_filter;
 use crate::nearest_neighbor::KdTree;
-use nalgebra::{Matrix3, Matrix6, Translation3, UnitQuaternion, Vector6};
+use nalgebra::{Matrix3, Matrix6, Translation3, UnitQuaternion, Vector3, Vector6};
 use rayon::prelude::*;
-use threecrate_core::{
-    Error, Isometry3, NearestNeighborSearch, Point3f, PointCloud, Result, Vector3f,
-};
+use threecrate_core::{Error, Isometry3, Point3f, PointCloud, Result, Vector3f};
 
 /// Result of ICP registration
 #[derive(Debug, Clone)]
@@ -78,30 +76,63 @@ fn find_correspondences(
     max_distance: Option<f32>,
 ) -> Vec<Option<(usize, f32)>> {
     match KdTree::new(target) {
-        Ok(tree) => find_correspondences_with_tree(source, &tree, max_distance),
+        Ok(tree) => {
+            let no_previous = vec![None; source.len()];
+            find_correspondences_seeded(
+                source,
+                &Isometry3::identity(),
+                target,
+                &tree,
+                &no_previous,
+                max_distance_sq(max_distance),
+            )
+            .into_iter()
+            .map(|c| c.map(|(idx, dist_sq)| (idx, dist_sq.sqrt())))
+            .collect()
+        }
         Err(_) => find_correspondences_brute_force(source, target, max_distance),
     }
 }
 
-/// Find nearest-neighbor correspondences using a prebuilt target KD-tree.
-fn find_correspondences_with_tree(
+/// Turn an optional correspondence cutoff into the exclusive squared-distance
+/// bound taken by [`KdTree::find_nearest_bounded`], keeping the original
+/// semantics: a match at exactly `max_distance` is accepted, a negative cutoff
+/// rejects every match, and `None` (or NaN, which never compared as "too far")
+/// means no limit.
+fn max_distance_sq(max_distance: Option<f32>) -> f32 {
+    match max_distance {
+        Some(d) if d < 0.0 => 0.0,
+        Some(d) if d >= 0.0 => (d * d).next_up(),
+        _ => f32::INFINITY,
+    }
+}
+
+/// Find the nearest target point for each source point after applying
+/// `transform`, in parallel.
+///
+/// `previous` holds each source point's match from the last ICP iteration.
+/// Between iterations a point moves only by the small delta transform, so its
+/// old match is almost always at or near the new nearest neighbor; seeding the
+/// kd-tree search with it lets most of the tree be pruned immediately. The
+/// result is still the exact nearest neighbor — the seed is only a bound.
+///
+/// Returns `(target_index, squared_distance)` per source point, or `None` when
+/// no target point lies within `max_dist_sq`.
+fn find_correspondences_seeded(
     source: &[Point3f],
+    transform: &Isometry3<f32>,
+    target: &[Point3f],
     target_tree: &KdTree,
-    max_distance: Option<f32>,
+    previous: &[Option<(usize, f32)>],
+    max_dist_sq: f32,
 ) -> Vec<Option<(usize, f32)>> {
     source
         .par_iter()
-        .map(|source_point| {
-            let nearest = target_tree.find_k_nearest(source_point, 1);
-            let Some((idx, distance)) = nearest.first().copied() else {
-                return None;
-            };
-
-            if max_distance.is_some_and(|max_dist| distance > max_dist) {
-                None
-            } else {
-                Some((idx, distance))
-            }
+        .zip(previous.par_iter())
+        .map(|(point, prev)| {
+            let moved = transform * point;
+            let seed = prev.map(|(idx, _)| (idx, (moved - target[idx]).magnitude_squared()));
+            target_tree.find_nearest_bounded(&moved, max_dist_sq, seed)
         })
         .collect()
 }
@@ -140,81 +171,139 @@ fn find_correspondences_brute_force(
         .collect()
 }
 
-/// Compute the optimal transformation using SVD
-fn compute_transformation(
-    source_points: &[Point3f],
-    target_points: &[Point3f],
-) -> Result<Isometry3<f32>> {
-    if source_points.len() != target_points.len() || source_points.is_empty() {
-        return Err(Error::InvalidData(
-            "Point correspondence mismatch".to_string(),
-        ));
-    }
-
-    let n = source_points.len() as f32;
-
-    // Compute centroids
-    let source_centroid = source_points
-        .iter()
-        .fold(Point3f::origin(), |acc, p| acc + p.coords)
-        / n;
-    let target_centroid = target_points
-        .iter()
-        .fold(Point3f::origin(), |acc, p| acc + p.coords)
-        / n;
-
-    // Compute covariance matrix H
-    let mut h = Matrix3::zeros();
-    for (src, tgt) in source_points.iter().zip(target_points.iter()) {
-        let p = src - source_centroid;
-        let q = tgt - target_centroid;
-        h += p * q.transpose();
-    }
-
-    // SVD decomposition
-    let svd = h.svd(true, true);
-    let u = svd
-        .u
-        .ok_or_else(|| Error::Algorithm("SVD U matrix not available".to_string()))?;
-    let v_t = svd
-        .v_t
-        .ok_or_else(|| Error::Algorithm("SVD V^T matrix not available".to_string()))?;
-
-    // Compute rotation matrix
-    let mut r = v_t.transpose() * u.transpose();
-
-    // Ensure proper rotation (det(R) = 1)
-    if r.determinant() < 0.0 {
-        let mut v_t_corrected = v_t;
-        v_t_corrected.set_row(2, &(-v_t.row(2)));
-        r = v_t_corrected.transpose() * u.transpose();
-    }
-
-    // Convert to unit quaternion
-    let rotation = UnitQuaternion::from_matrix(&r);
-
-    // Compute translation
-    let translation = target_centroid - rotation * source_centroid;
-
-    Ok(Isometry3::from_parts(
-        Translation3::new(translation.x, translation.y, translation.z),
-        rotation,
-    ))
+/// Running sums over point-to-point correspondences — enough to recover both
+/// the optimal rigid transform and the MSE without materialising the matched
+/// point lists, so a whole ICP iteration reduces in one parallel pass.
+///
+/// Sums are kept in `f64`: the covariance is formed in one pass as
+/// `Σ p qᵀ − n·p̄ q̄ᵀ`, which cancels badly in `f32` on clouds of 10⁵+ points.
+#[derive(Clone, Copy)]
+struct CorrespondenceStats {
+    count: usize,
+    sum_source: Vector3<f64>,
+    sum_target: Vector3<f64>,
+    sum_outer: Matrix3<f64>,
+    sum_sq_error: f64,
 }
 
-/// Compute mean squared error between corresponding points
-fn compute_mse(source_points: &[Point3f], target_points: &[Point3f]) -> f32 {
-    if source_points.is_empty() {
-        return 0.0;
+impl CorrespondenceStats {
+    fn zero() -> Self {
+        Self {
+            count: 0,
+            sum_source: Vector3::zeros(),
+            sum_target: Vector3::zeros(),
+            sum_outer: Matrix3::zeros(),
+            sum_sq_error: 0.0,
+        }
     }
 
-    let sum_squared_error: f32 = source_points
-        .iter()
-        .zip(target_points.iter())
-        .map(|(src, tgt)| (src - tgt).magnitude_squared())
-        .sum();
+    fn add(mut self, source: &Point3f, target: &Point3f) -> Self {
+        let p = source.coords.cast::<f64>();
+        let q = target.coords.cast::<f64>();
+        self.count += 1;
+        self.sum_source += p;
+        self.sum_target += q;
+        self.sum_outer += p * q.transpose();
+        self.sum_sq_error += (p - q).norm_squared();
+        self
+    }
 
-    sum_squared_error / source_points.len() as f32
+    fn merge(self, other: Self) -> Self {
+        Self {
+            count: self.count + other.count,
+            sum_source: self.sum_source + other.sum_source,
+            sum_target: self.sum_target + other.sum_target,
+            sum_outer: self.sum_outer + other.sum_outer,
+            sum_sq_error: self.sum_sq_error + other.sum_sq_error,
+        }
+    }
+
+    /// Accumulate `source` (moved by `transform`) against its matched targets.
+    fn collect(
+        source: &[Point3f],
+        transform: &Isometry3<f32>,
+        target: &[Point3f],
+        matches: &[Option<(usize, f32)>],
+    ) -> Self {
+        source
+            .par_iter()
+            .zip(matches.par_iter())
+            .fold(Self::zero, |stats, (point, m)| match m {
+                Some((idx, _)) => stats.add(&(transform * point), &target[*idx]),
+                None => stats,
+            })
+            .reduce(Self::zero, Self::merge)
+    }
+
+    /// Mean squared error between corresponding points
+    fn mse(&self) -> f32 {
+        if self.count == 0 {
+            0.0
+        } else {
+            (self.sum_sq_error / self.count as f64) as f32
+        }
+    }
+
+    /// Compute the optimal transformation using SVD
+    fn transformation(&self) -> Result<Isometry3<f32>> {
+        if self.count == 0 {
+            return Err(Error::InvalidData(
+                "Point correspondence mismatch".to_string(),
+            ));
+        }
+
+        let n = self.count as f64;
+        let source_centroid = self.sum_source / n;
+        let target_centroid = self.sum_target / n;
+
+        // Covariance H = Σ (p − p̄)(q − q̄)ᵀ, accumulated in f64 but decomposed
+        // in f32: nalgebra's f64 SVD fails to converge on some rank-deficient
+        // matrices (e.g. [[8,8,0],[8,8,0],[0,0,0]] from collinear clouds).
+        let h: Matrix3<f32> =
+            (self.sum_outer - source_centroid * target_centroid.transpose() * n).cast::<f32>();
+
+        // SVD decomposition, capped so a non-converging case errors, not hangs
+        const SVD_MAX_ITERATIONS: usize = 1000;
+        let svd = h
+            .try_svd(true, true, f32::EPSILON * 5.0, SVD_MAX_ITERATIONS)
+            .ok_or_else(|| Error::Algorithm("SVD did not converge".to_string()))?;
+        let u = svd
+            .u
+            .ok_or_else(|| Error::Algorithm("SVD U matrix not available".to_string()))?;
+        let v_t = svd
+            .v_t
+            .ok_or_else(|| Error::Algorithm("SVD V^T matrix not available".to_string()))?;
+
+        // Compute rotation matrix
+        let mut r = v_t.transpose() * u.transpose();
+
+        // Ensure proper rotation (det(R) = 1)
+        if r.determinant() < 0.0 {
+            let mut v_t_corrected = v_t;
+            v_t_corrected.set_row(2, &(-v_t.row(2)));
+            r = v_t_corrected.transpose() * u.transpose();
+        }
+
+        // Convert to unit quaternion
+        let rotation = UnitQuaternion::from_matrix(&r);
+
+        // Compute translation
+        let translation = target_centroid - rotation.cast::<f64>() * source_centroid;
+
+        Ok(Isometry3::from_parts(
+            Translation3::from(translation.cast::<f32>()),
+            rotation,
+        ))
+    }
+}
+
+/// Flatten per-source-point matches into `(source_index, target_index)` pairs.
+fn correspondence_pairs(matches: &[Option<(usize, f32)>]) -> Vec<(usize, usize)> {
+    matches
+        .iter()
+        .enumerate()
+        .filter_map(|(src_idx, m)| m.map(|(tgt_idx, _)| (src_idx, tgt_idx)))
+        .collect()
 }
 
 /// ICP (Iterative Closest Point) registration - Main function matching requested API
@@ -277,51 +366,43 @@ pub fn icp_detailed(
 
     let mut current_transform = init;
     let mut previous_mse = f32::INFINITY;
-    let mut final_correspondences = Vec::new();
     let target_tree = KdTree::new(&target.points)?;
+    let max_dist_sq = max_distance_sq(max_correspondence_distance);
+    let mut matches: Vec<Option<(usize, f32)>> = vec![None; source.points.len()];
 
     for iteration in 0..max_iters {
-        // Transform source points with current transformation
-        let transformed_source: Vec<Point3f> = source
-            .points
-            .iter()
-            .map(|point| current_transform * point)
-            .collect();
-
-        // Find correspondences
-        let correspondences = find_correspondences_with_tree(
-            &transformed_source,
+        // Find correspondences for the source moved by the current estimate,
+        // seeded with last iteration's matches
+        matches = find_correspondences_seeded(
+            &source.points,
+            &current_transform,
+            &target.points,
             &target_tree,
-            max_correspondence_distance,
+            &matches,
+            max_dist_sq,
         );
 
-        // Extract valid correspondences
-        let mut valid_source_points = Vec::new();
-        let mut valid_target_points = Vec::new();
-        let mut corr_pairs = Vec::new();
+        let stats = CorrespondenceStats::collect(
+            &source.points,
+            &current_transform,
+            &target.points,
+            &matches,
+        );
 
-        for (src_idx, correspondence) in correspondences.iter().enumerate() {
-            if let Some((tgt_idx, _distance)) = correspondence {
-                valid_source_points.push(transformed_source[src_idx]);
-                valid_target_points.push(target.points[*tgt_idx]);
-                corr_pairs.push((src_idx, *tgt_idx));
-            }
-        }
-
-        if valid_source_points.len() < 3 {
+        if stats.count < 3 {
             return Err(Error::Algorithm(
                 "Insufficient correspondences found".to_string(),
             ));
         }
 
         // Compute transformation for this iteration
-        let delta_transform = compute_transformation(&valid_source_points, &valid_target_points)?;
+        let delta_transform = stats.transformation()?;
 
         // Update transformation
         current_transform = delta_transform * current_transform;
 
-        // Compute MSE
-        let current_mse = compute_mse(&valid_source_points, &valid_target_points);
+        // MSE of this iteration's correspondences (before the update)
+        let current_mse = stats.mse();
 
         // Check for convergence
         let mse_change = (previous_mse - current_mse).abs();
@@ -331,31 +412,18 @@ pub fn icp_detailed(
                 mse: current_mse,
                 iterations: iteration + 1,
                 converged: true,
-                correspondences: corr_pairs,
+                correspondences: correspondence_pairs(&matches),
             });
         }
 
         previous_mse = current_mse;
-        final_correspondences = corr_pairs;
     }
 
-    // Final transformation after all iterations
-    let transformed_source: Vec<Point3f> = source
-        .points
-        .iter()
-        .map(|point| current_transform * point)
-        .collect();
-
-    let final_mse = if !final_correspondences.is_empty() {
-        let valid_source: Vec<Point3f> = final_correspondences
-            .iter()
-            .map(|(src_idx, _)| transformed_source[*src_idx])
-            .collect();
-        let valid_target: Vec<Point3f> = final_correspondences
-            .iter()
-            .map(|(_, tgt_idx)| target.points[*tgt_idx])
-            .collect();
-        compute_mse(&valid_source, &valid_target)
+    // Re-score the last correspondences under the final transformation
+    let final_stats =
+        CorrespondenceStats::collect(&source.points, &current_transform, &target.points, &matches);
+    let final_mse = if final_stats.count > 0 {
+        final_stats.mse()
     } else {
         previous_mse
     };
@@ -365,7 +433,7 @@ pub fn icp_detailed(
         mse: final_mse,
         iterations: max_iters,
         converged: false,
-        correspondences: final_correspondences,
+        correspondences: correspondence_pairs(&matches),
     })
 }
 
@@ -534,20 +602,25 @@ pub fn icp_point_to_plane_detailed(
     let mut previous_mse = f32::INFINITY;
     let mut final_correspondences: Vec<(usize, usize)> = Vec::new();
     let target_tree = KdTree::new(&target.points)?;
+    let max_dist_sq = max_distance_sq(max_correspondence_distance);
+    let mut correspondences: Vec<Option<(usize, f32)>> = vec![None; source.points.len()];
 
     for iteration in 0..max_iters {
         // Apply current estimate to source
         let transformed_source: Vec<Point3f> = source
             .points
-            .iter()
+            .par_iter()
             .map(|p| current_transform * p)
             .collect();
 
-        // Find nearest-neighbor correspondences
-        let correspondences = find_correspondences_with_tree(
-            &transformed_source,
+        // Find nearest-neighbor correspondences, seeded with last iteration's matches
+        correspondences = find_correspondences_seeded(
+            &source.points,
+            &current_transform,
+            &target.points,
             &target_tree,
-            max_correspondence_distance,
+            &correspondences,
+            max_dist_sq,
         );
 
         let mut valid_source: Vec<Point3f> = Vec::new();
@@ -900,6 +973,24 @@ mod tests {
 
         // Should return a valid transformation (not panic)
         assert!(transform.translation.vector.magnitude() > 0.5);
+    }
+
+    #[test]
+    fn test_max_distance_cutoff_semantics() {
+        let source = vec![Point3f::new(0.0, 0.0, 0.0)];
+        let target = vec![Point3f::new(0.5, 0.0, 0.0)];
+
+        // A match exactly at the cutoff is accepted
+        assert!(find_correspondences(&source, &target, Some(0.5))[0].is_some());
+        // A cutoff just below the match distance rejects it
+        assert!(find_correspondences(&source, &target, Some(0.49))[0].is_none());
+        // A negative cutoff rejects everything rather than being squared
+        assert!(find_correspondences(&source, &target, Some(-0.5))[0].is_none());
+        // No cutoff accepts
+        assert!(find_correspondences(&source, &target, None)[0].is_some());
+
+        // Zero cutoff still accepts exact duplicates
+        assert!(find_correspondences(&source, &source, Some(0.0))[0].is_some());
     }
 
     #[test]

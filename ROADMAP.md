@@ -16,10 +16,11 @@ for the full tables and reproduction command.
 
 | Workload | Status | vs Open3D |
 |---|---|---:|
-| File read (raw float parse) | ✅ Ahead | 1.8x–2.2x faster |
+| File read (raw float parse) | ✅ Ahead | 1.8x–1.9x faster |
 | Voxel downsampling (centroid) | ✅ Ahead | 1.6x–1.8x faster |
-| Normal estimation | ⚠️ Behind at scale | 0.57x–1.09x |
-| Single-scale ICP | ⚠️ Behind at scale | 0.71x–0.99x |
+| Normal estimation | ⚠️ Ahead on 2 of 3 | 0.92x–1.76x |
+| Single-scale ICP (per-iteration speed) | ✅ Ahead | 2.7x–4.3x faster |
+| ICP accuracy | ⏳ Not yet measured | — |
 | PCL comparison | ⏳ Not yet measured | — |
 
 ## Near-term: close the honest gaps
@@ -31,18 +32,23 @@ credibility story. In rough priority order:
   The pointer/`Box` tree is now a contiguous, index-referenced `Vec<KdNode>`. k-NN
   results are identical (all 201 algorithm tests pass); a same-machine A/B measured a
   consistent **~8–10% speedup on normal estimation and ~5–9% on ICP**. It does **not**
-  close the Open3D gap on its own — normals are still ~0.5x on large clouds — because
-  the dominant remaining cost is per-point PCA and single-threaded correspondence
-  search, not tree layout. That work continues in [#177](https://github.com/rajgandhi1/threecrate/issues/177).
-- **Dense ICP on large clouds** — at parity on small clouds, still ~0.7x on
-  KITTI/TUM even after the flat kd-tree. Parallelising correspondence search and
-  per-point PCA (rayon) is the next lever. → [#177](https://github.com/rajgandhi1/threecrate/issues/177)
+  close the Open3D gap on its own (normals were still ~0.5x on large clouds), because
+  the dominant remaining cost was elsewhere — see the next item.
+- ~~**Dense ICP on large clouds**~~ — **done** ([#177](https://github.com/rajgandhi1/threecrate/issues/177)).
+  Profiling showed the cost was a serial kd-tree build (whose pivot choice degraded
+  on sorted input), a k-NN query that allocated three times per point, and serial
+  covariance/MSE loops. With an introselect + parallel build, an allocation-free
+  nearest query, and a parallel reduction, ICP went from **0.71x–0.99x to
+  2.7x–4.3x** vs Open3D, and normals from 0.57x–1.09x to 0.92x–1.76x.
+- **Close the last normals gap** — full-resolution KITTI normals are still 0.92x.
+  The remaining cost is per-point k-NN + PCA on a sparse LiDAR ring scan.
 - **Integrate PCL into the benchmark table** — the PCL harness is written and
   builds ([`scripts/pcl_bench/`](scripts/pcl_bench)); it just needs to be run in a
   shared environment and folded into the published numbers. → [#179](https://github.com/rajgandhi1/threecrate/issues/179)
 - **Realistic ICP target + accuracy comparison** — today's benchmark tests
   per-iteration speed against a near-identity transform, not registration
-  accuracy. → [#180](https://github.com/rajgandhi1/threecrate/issues/180) *(good first issue)*
+  accuracy. Now that ICP is faster per iteration, this is the check that makes
+  the claim complete. → [#180](https://github.com/rajgandhi1/threecrate/issues/180) *(good first issue)*
 
 ## Medium-term
 
