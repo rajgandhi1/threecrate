@@ -96,10 +96,9 @@ ratio above 1 means ThreeCrate is faster than Open3D.
 The short version: ThreeCrate is quicker than Open3D at loading data,
 downsampling, and running ICP, and faster at normal estimation on two of the
 three datasets — it's still slightly behind on full-resolution KITTI normals.
-One honest caveat on ICP: the benchmark times registration against a
-near-identity target, so it measures speed per iteration, not how accurate the
-final alignment is. An accuracy comparison is
-[still to do](https://github.com/rajgandhi1/threecrate/issues/180).
+On ICP accuracy, we match Open3D on KITTI. On small indoor scenes like TUM, our
+default stopping rule quits too early and the result is less accurate. We are
+[fixing that](https://github.com/rajgandhi1/threecrate/issues/187).
 
 About the GPU row: the compute backend is [wgpu](https://wgpu.rs/), so it runs on
 any GPU (NVIDIA/AMD/Intel/Apple) with no CUDA lock-in. But to be honest about it,

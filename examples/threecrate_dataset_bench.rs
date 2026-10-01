@@ -29,6 +29,8 @@ struct Args {
     voxel_size: f32,
     max_icp_iters: usize,
     convergence: f32,
+    /// Correspondence cutoff for `icp_accuracy` (the `icp` speed task keeps none).
+    max_correspondence_distance: f32,
 }
 
 impl Default for Args {
@@ -44,6 +46,7 @@ impl Default for Args {
             voxel_size: 0.2,
             max_icp_iters: 20,
             convergence: 1e-5,
+            max_correspondence_distance: 1.0,
         }
     }
 }
@@ -53,13 +56,19 @@ fn main() -> Result<()> {
     let mut source = load_source(&args.source)?;
     limit_points(&mut source, args.max_points);
 
-    let mut target = match &args.target {
-        Some(path) => {
-            let mut cloud = load_source(path)?;
-            limit_points(&mut cloud, args.max_points);
-            cloud
+    let mut target = if args.task == "icp_accuracy" {
+        let (even, odd) = accuracy_pair(&source);
+        source = even;
+        odd
+    } else {
+        match &args.target {
+            Some(path) => {
+                let mut cloud = load_source(path)?;
+                limit_points(&mut cloud, args.max_points);
+                cloud
+            }
+            None => transformed_target(&source),
         }
-        None => transformed_target(&source),
     };
     limit_points(&mut target, args.max_points);
 
@@ -169,6 +178,30 @@ fn run_task(
                 ),
             })
         }
+        "icp_accuracy" => {
+            let result = icp_point_to_point(
+                source,
+                target,
+                Isometry3::identity(),
+                args.max_icp_iters,
+                args.convergence,
+                Some(args.max_correspondence_distance),
+            )?;
+            let (rot_err_deg, trans_err_m) =
+                transform_error(&result.transformation, &accuracy_ground_truth());
+            Ok(Outcome {
+                output_points: result.correspondences.len(),
+                detail: format!(
+                    "icp_iters={},converged={},rot_err_deg={:.4},trans_err_m={:.4},fitness={:.6},rmse={:.6}",
+                    result.iterations,
+                    result.converged,
+                    rot_err_deg,
+                    trans_err_m,
+                    result.correspondences.len() as f64 / source.len() as f64,
+                    result.mse.sqrt()
+                ),
+            })
+        }
         "multiscale_icp" => {
             let config = MultiScaleIcpConfig {
                 levels: vec![
@@ -269,7 +302,7 @@ fn run_task(
             })
         }
         other => Err(anyhow!(
-            "unsupported task: {other}; expected read, voxel, normals, icp, or gpu_*"
+            "unsupported task: {other}; expected read, voxel, normals, icp, icp_accuracy, multiscale_icp, or gpu_*"
         )),
     }
 }
@@ -284,6 +317,45 @@ fn transformed_target(source: &PointCloud<Point3f>) -> PointCloud<Point3f> {
         UnitQuaternion::from_euler_angles(0.0, 0.0, 0.02),
     );
     PointCloud::from_points(source.points.iter().map(|p| transform * p).collect())
+}
+
+/// Ground-truth motion for the `icp_accuracy` task: roughly one KITTI frame
+/// (10 Hz) of vehicle motion. Must match `ACCURACY_GT_*` in
+/// `scripts/bench_cross_library.py`.
+fn accuracy_ground_truth() -> Isometry3<f32> {
+    Isometry3::from_parts(
+        Translation3::new(0.30, -0.20, 0.10),
+        // nalgebra applies yaw * pitch * roll, i.e. Rz(0.05) Ry(-0.015) Rx(0.01)
+        UnitQuaternion::from_euler_angles(0.01, -0.015, 0.05),
+    )
+}
+
+/// Split a cloud for the `icp_accuracy` task: the source keeps the even-indexed
+/// points, and the target is the odd-indexed points moved by the ground truth.
+/// The two clouds sample the same surfaces but share no points, so ICP cannot
+/// snap to exact duplicates the way it can with a transformed copy.
+fn accuracy_pair(cloud: &PointCloud<Point3f>) -> (PointCloud<Point3f>, PointCloud<Point3f>) {
+    let truth = accuracy_ground_truth();
+    let source = cloud.points.iter().step_by(2).copied().collect();
+    let target = cloud
+        .points
+        .iter()
+        .skip(1)
+        .step_by(2)
+        .map(|p| truth * p)
+        .collect();
+    (
+        PointCloud::from_points(source),
+        PointCloud::from_points(target),
+    )
+}
+
+/// Rotation error (degrees) and translation error (same units as the cloud)
+/// of an estimated transform against the ground truth.
+fn transform_error(estimate: &Isometry3<f32>, truth: &Isometry3<f32>) -> (f64, f64) {
+    let rotation_error = (estimate.rotation.inverse() * truth.rotation).angle() as f64;
+    let translation_error = (estimate.translation.vector - truth.translation.vector).norm() as f64;
+    (rotation_error.to_degrees(), translation_error)
 }
 
 fn load_source(path: &PathBuf) -> Result<PointCloud<Point3f>> {
@@ -352,7 +424,11 @@ fn load_tum_depth_sequence(dir: &PathBuf) -> Result<PointCloud<Point3f>> {
             let z = depth as f32 / depth_factor;
             let x = (u as f32 - cx) * z / fx;
             let y = (v as f32 - cy) * z / fy;
-            points.push(Point3f::new(x, y, z));
+            // Flip y and z to match the Open3D side of the cross-library
+            // benchmark, which applies diag(1, -1, -1) after back-projection.
+            // Without this, the same ground-truth motion would point in a
+            // different direction in each library's cloud.
+            points.push(Point3f::new(x, -y, -z));
         }
     }
 
@@ -403,6 +479,7 @@ fn parse_args() -> Result<Args> {
             "--voxel-size" => args.voxel_size = value.parse()?,
             "--max-icp-iters" => args.max_icp_iters = value.parse()?,
             "--convergence" => args.convergence = value.parse()?,
+            "--max-correspondence-distance" => args.max_correspondence_distance = value.parse()?,
             other => return Err(anyhow!("unknown argument: {other}")),
         }
     }

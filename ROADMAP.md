@@ -20,7 +20,7 @@ for the full tables and reproduction command.
 | Voxel downsampling (centroid) | ✅ Ahead | 1.6x–1.8x faster |
 | Normal estimation | ⚠️ Ahead on 2 of 3 | 0.92x–1.76x |
 | Single-scale ICP (per-iteration speed) | ✅ Ahead | 2.7x–4.3x faster |
-| ICP accuracy | ⏳ Not yet measured | — |
+| ICP accuracy | ⚠️ Same on KITTI, behind on TUM | see [#187](https://github.com/rajgandhi1/threecrate/issues/187) |
 | PCL comparison | ⏳ Not yet measured | — |
 
 ## Near-term: close the honest gaps
@@ -45,10 +45,12 @@ credibility story. In rough priority order:
 - **Integrate PCL into the benchmark table** — the PCL harness is written and
   builds ([`scripts/pcl_bench/`](scripts/pcl_bench)); it just needs to be run in a
   shared environment and folded into the published numbers. → [#179](https://github.com/rajgandhi1/threecrate/issues/179)
-- **Realistic ICP target + accuracy comparison** — today's benchmark tests
-  per-iteration speed against a near-identity transform, not registration
-  accuracy. Now that ICP is faster per iteration, this is the check that makes
-  the claim complete. → [#180](https://github.com/rajgandhi1/threecrate/issues/180) *(good first issue)*
+- ~~**ICP accuracy comparison**~~: **done** ([#180](https://github.com/rajgandhi1/threecrate/issues/180)).
+  New `icp_accuracy` benchmark with a known offset. Same accuracy as Open3D on
+  KITTI, behind on TUM.
+- **Fix the ICP stopping rule.** It uses an absolute error change, so it stops too
+  early on small scenes. Switch to a relative rule like Open3D.
+  [#187](https://github.com/rajgandhi1/threecrate/issues/187)
 
 ## Medium-term
 

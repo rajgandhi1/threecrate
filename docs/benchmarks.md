@@ -14,10 +14,10 @@ this machine, and the caveats are stated plainly rather than buried.
   resolution** and **222.6 at the 20k-point cap**. Unlike the previous run, this
   is **not** carried by `read`: the compute-only score (voxel + normals + icp) is
   **192.4** at full resolution.
-- The ICP benchmark measures **per-iteration speed on a near-identity target**,
-  not registration accuracy — see Method notes. The speedup does not depend on
-  that easy target (see "What changed"), but accuracy is still unmeasured
-  ([#180]).
+- **ICP accuracy** is now measured too (see "ICP accuracy" below). ThreeCrate
+  matches Open3D on KITTI, both miss on nuScenes, and ThreeCrate is less accurate
+  on TUM because its default stopping rule quits too early on small scenes
+  ([#187]).
 - **PCL is not yet in these numbers.** A PCL benchmark executable is written and
   builds (`scripts/pcl_bench/`), but it has not been integrated into the
   published table yet. No PCL number here is estimated from papers or other
@@ -78,6 +78,39 @@ the one to trust.
 
 Composite (all 12 rows): **222.6**.
 
+## ICP accuracy
+
+The speed tables above use an easy, almost aligned target. This test is harder:
+
+- Source: the even-numbered points of each frame.
+- Target: the odd-numbered points, moved by a known offset of 0.30 m, 0.20 m,
+  0.10 m and about 3 degrees. That is roughly one frame of car motion in KITTI.
+- Both libraries start from no offset, use a 1.0 m match distance, run at most 50
+  iterations, and use their own default stopping rule.
+
+Errors are measured against the known offset. Lower is better.
+
+| Dataset | Library | Rotation error | Translation error | Inlier RMSE | Time |
+| --- | --- | ---: | ---: | ---: | ---: |
+| TUM | Open3D | 0.029° | 4.7 mm | 2.8 mm | 1219 ms |
+| TUM | ThreeCrate | 0.678° | 34.4 mm | 8.1 mm | 621 ms |
+| KITTI | Open3D | 0.104° | 8.8 mm | 94.1 mm | 422 ms |
+| KITTI | ThreeCrate | 0.103° | 10.8 mm | 94.1 mm | 100 ms |
+| nuScenes | Open3D | 0.972° | 517.7 mm | 300.2 mm | 127 ms |
+| nuScenes | ThreeCrate | 0.987° | 514.1 mm | 299.8 mm | 52 ms |
+
+What this shows:
+
+- **KITTI:** same accuracy, and ThreeCrate is about 4x faster.
+- **nuScenes:** both libraries get stuck in the same wrong spot. This sparse scan
+  needs a better starting guess than plain ICP gets here.
+- **TUM:** ThreeCrate is less accurate. Its default stopping rule looks at the
+  absolute change in error, which is tiny on small indoor scenes, so it stops
+  after 31 iterations while still 3.4 cm off. With a tighter threshold
+  (`--convergence 1e-7`) it reaches 0.029° and 4.7 mm in 737 ms, the same as
+  Open3D. We report the default here because that is what users get. Fixing the
+  default is tracked in [#187].
+
 ## The honest breakdown
 
 The composite is well above 100 and is no longer carried by I/O, but read it
@@ -93,13 +126,10 @@ with these caveats:
   per-voxel **centroid** (matching Open3D/PCL semantics), not an arbitrary first
   point — see "What changed" below.
 
-- **ICP is timed, not scored for accuracy.** Both libraries register the cloud
-  against a near-identity copy of itself and run the same iteration budget; the
-  ratio is per-iteration throughput. Whether ThreeCrate and Open3D reach equally
-  good alignments on a realistic target is unmeasured ([#180]).
+- **The ICP speed rows measure speed only.** The target is an almost aligned copy
+  of the source. Accuracy is covered in "ICP accuracy" above.
 - **Normals are not a clean sweep.** Full-resolution KITTI normals are still
-  0.92x — a sparse, ring-structured LiDAR scan, where per-point PCA rather than
-  tree construction dominates.
+  0.92x. That scan is sparse, so per-point PCA costs more than building the tree.
 
 If you remove the `read` task entirely and look only at the compute tasks
 (voxel + normals + icp), the geometric-mean score is:
@@ -109,7 +139,8 @@ If you remove the `read` task entirely and look only at the compute tasks
 
 So the fair one-line claim is: **on CPU, ThreeCrate is faster than Open3D on
 read, voxel downsampling, and per-iteration ICP throughput, and faster on normal
-estimation except full-resolution KITTI — with ICP accuracy not yet compared.**
+estimation except full-resolution KITTI. ICP accuracy matches Open3D on KITTI
+and trails on TUM until the stopping rule is fixed ([#187]).**
 
 ## What changed in this branch (and why it matters)
 
@@ -171,9 +202,8 @@ benchmark. Each is covered by unit tests (204 passing).
 - **Normal estimation still trails Open3D on full-resolution KITTI** (0.92x),
   though it is now ahead on TUM and nuScenes. The remaining cost there is
   per-point k-NN + PCA, not tree construction.
-- **ICP accuracy is unmeasured.** ICP is now faster per iteration than Open3D on
-  every dataset, but the benchmark target is a near-identity transform; a
-  realistic target and accuracy comparison are tracked in [#180].
+- **ICP stops too early on small scenes by default.** On TUM this costs accuracy
+  (see "ICP accuracy"). Tracked in [#187].
 - **GPU knn/normals/icp are not competitive yet** (per-call shader/pipeline rebuilds,
   blocking readbacks, no GPU-side spatial index). `gpu_voxel` and TSDF are the
   exceptions. GPU rows are reported separately and never enter the composite.
@@ -204,17 +234,16 @@ as future work, not as a measured comparison.
 ```
 
 Swap `--max-points all` for `--max-points 20000` to reproduce the capped table.
+For the accuracy table, use `--tasks icp_accuracy --max-icp-iters 50`.
 
 ## Method notes
 
 - Lower time is better; times are median ms over 5 iterations after 2 warmups.
 - The composite includes only rows where ThreeCrate and at least one external
   baseline produced numeric timings. GPU-only rows are excluded.
-- ICP uses a synthetic rigid transform (translation `(0.05, -0.02, 0.01)`,
-  0.02 rad about z) of the source cloud as the target. This is a near-identity
-  registration and does **not** test registration robustness/accuracy — only
-  per-iteration speed. A realistic target and an accuracy comparison are future
-  work.
+- The `icp` speed task uses a moved copy of the source cloud as the target
+  (translation `(0.05, -0.02, 0.01)`, 0.02 rad about z). It only measures speed.
+  Accuracy is measured by the separate `icp_accuracy` task.
 - Missing PCL/PDAL values are never estimated from papers, websites, or other
   machines.
 
@@ -230,5 +259,6 @@ Swap `--max-points all` for `--max-points 20000` to reproduce the capped table.
 [#176]: https://github.com/rajgandhi1/threecrate/issues/176
 [#177]: https://github.com/rajgandhi1/threecrate/issues/177
 [#180]: https://github.com/rajgandhi1/threecrate/issues/180
+[#187]: https://github.com/rajgandhi1/threecrate/issues/187
 </content>
 </invoke>

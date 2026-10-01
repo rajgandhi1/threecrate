@@ -45,3 +45,7 @@ examples/output.ply
 threecrate-umbrella/
 
 CLAUDE.md
+
+# Python bytecode
+__pycache__/
+*.pyc
