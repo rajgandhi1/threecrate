@@ -82,23 +82,20 @@ tc.write_mesh(mesh, "output.ply")
 
 We benchmarked ThreeCrate against **Open3D 0.19** on the same machine, using
 full-resolution frames from three real datasets: TUM RGB-D, KITTI, and
-nuScenes-mini. Everything runs on CPU. In the table below, higher is better — a
-ratio above 1 means ThreeCrate is faster than Open3D.
+nuScenes-mini. Everything runs on CPU. A ratio above 1 means ThreeCrate is
+faster than Open3D.
 
 | Workload | How ThreeCrate compares |
 |---|---:|
-| Reading files (raw float parsing) | **1.8x–1.9x faster** |
-| Voxel downsampling (CPU) | **1.6x–1.8x faster** |
-| Voxel downsampling (GPU, wgpu) | **1.8x–2.9x faster** *(vs our own CPU path, not Open3D)* |
-| Normal estimation | 0.92x–1.76x (faster on 2 of 3 datasets; slightly behind on KITTI) |
-| Single-scale ICP (per-iteration speed) | **2.7x–4.3x faster** |
+| Reading files (raw float parsing) | **1.1x to 1.6x faster** |
+| Voxel downsampling (CPU) | **1.5x to 1.9x faster** |
+| Voxel downsampling (GPU, wgpu) | **1.8x to 2.9x faster** *(vs our own CPU path, not Open3D)* |
+| Normal estimation | 0.92x to 1.5x (faster on 2 of 3 datasets) |
+| ICP | **2.7x to 3.7x faster**, with the same accuracy |
 
-The short version: ThreeCrate is quicker than Open3D at loading data,
-downsampling, and running ICP, and faster at normal estimation on two of the
-three datasets — it's still slightly behind on full-resolution KITTI normals.
-On ICP accuracy, we match Open3D on KITTI. On small indoor scenes like TUM, our
-default stopping rule quits too early and the result is less accurate. We are
-[fixing that](https://github.com/rajgandhi1/threecrate/issues/187).
+In short: ThreeCrate is faster than Open3D at loading data, downsampling, and
+ICP, and its ICP results are just as accurate. Normal estimation is faster on
+two datasets and slightly slower on KITTI.
 
 About the GPU row: the compute backend is [wgpu](https://wgpu.rs/), so it runs on
 any GPU (NVIDIA/AMD/Intel/Apple) with no CUDA lock-in. But to be honest about it,

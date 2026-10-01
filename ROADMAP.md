@@ -16,11 +16,11 @@ for the full tables and reproduction command.
 
 | Workload | Status | vs Open3D |
 |---|---|---:|
-| File read (raw float parse) | ✅ Ahead | 1.8x–1.9x faster |
-| Voxel downsampling (centroid) | ✅ Ahead | 1.6x–1.8x faster |
-| Normal estimation | ⚠️ Ahead on 2 of 3 | 0.92x–1.76x |
-| Single-scale ICP (per-iteration speed) | ✅ Ahead | 2.7x–4.3x faster |
-| ICP accuracy | ⚠️ Same on KITTI, behind on TUM | see [#187](https://github.com/rajgandhi1/threecrate/issues/187) |
+| File read (raw float parse) | ✅ Ahead | 1.1x to 1.6x faster |
+| Voxel downsampling (centroid) | ✅ Ahead | 1.5x to 1.9x faster |
+| Normal estimation | ⚠️ Ahead on 2 of 3 | 0.92x to 1.5x |
+| ICP speed | ✅ Ahead | 2.7x to 3.7x faster |
+| ICP accuracy | ✅ Same as Open3D | all 3 datasets |
 | PCL comparison | ⏳ Not yet measured | — |
 
 ## Near-term: close the honest gaps
@@ -46,11 +46,10 @@ credibility story. In rough priority order:
   builds ([`scripts/pcl_bench/`](scripts/pcl_bench)); it just needs to be run in a
   shared environment and folded into the published numbers. → [#179](https://github.com/rajgandhi1/threecrate/issues/179)
 - ~~**ICP accuracy comparison**~~: **done** ([#180](https://github.com/rajgandhi1/threecrate/issues/180)).
-  New `icp_accuracy` benchmark with a known offset. Same accuracy as Open3D on
-  KITTI, behind on TUM.
-- **Fix the ICP stopping rule.** It uses an absolute error change, so it stops too
-  early on small scenes. Switch to a relative rule like Open3D.
-  [#187](https://github.com/rajgandhi1/threecrate/issues/187)
+  New `icp_accuracy` benchmark with a known offset.
+- ~~**Fix the ICP stopping rule**~~: **done** ([#187](https://github.com/rajgandhi1/threecrate/issues/187)).
+  ICP now stops on a relative rule, so it works the same at any scene size. TUM
+  accuracy now matches Open3D.
 
 ## Medium-term
 

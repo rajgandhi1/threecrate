@@ -38,6 +38,7 @@ pub struct MultiScaleIcpConfig {
     pub levels: Vec<IcpScaleLevel>,
     pub final_refinement_iterations: usize,
     pub final_max_correspondence_distance: Option<f32>,
+    /// Stop when RMSE improves by less than this fraction of its previous value.
     pub convergence_threshold: f32,
 }
 
@@ -297,6 +298,130 @@ impl CorrespondenceStats {
     }
 }
 
+/// Where a cloud sits and how big it is: its centroid and the RMS distance of
+/// its points from that centroid. Both are used to judge whether an ICP update
+/// still moves the points by a meaningful amount.
+struct CloudScale {
+    centroid: Point3f,
+    radius: f32,
+}
+
+impl CloudScale {
+    fn of(points: &[Point3f]) -> Self {
+        let n = points.len().max(1) as f64;
+        let (sum, sum_sq) = points
+            .par_iter()
+            .map(|p| {
+                let v = p.coords.cast::<f64>();
+                (v, v.norm_squared())
+            })
+            .reduce(
+                || (Vector3::zeros(), 0.0),
+                |(a, a_sq), (b, b_sq)| (a + b, a_sq + b_sq),
+            );
+        let centroid = sum / n;
+        let radius_sq = (sum_sq / n - centroid.norm_squared()).max(0.0);
+        Self {
+            centroid: Point3f::from(centroid.cast::<f32>()),
+            radius: radius_sq.sqrt() as f32,
+        }
+    }
+}
+
+/// A frame centred on the target cloud, in which ICP runs.
+///
+/// Far from the origin (e.g. map coordinates millions of metres away), `f32`
+/// cannot represent small moves, so ICP would stall well short of alignment.
+/// Moving both clouds next to the origin first keeps full precision; the final
+/// transform is converted back to the original frame. Clouds already near the
+/// origin (e.g. in sensor coordinates) skip this and avoid the extra copies.
+struct LocalFrame {
+    origin: Vector3<f64>,
+}
+
+impl LocalFrame {
+    /// A frame centred on `points`, or `None` when they are close enough to
+    /// the origin (within 100x their own size) that `f32` loses nothing.
+    fn if_far_from_origin(points: &[Point3f]) -> Option<Self> {
+        let scale = CloudScale::of(points);
+        if scale.centroid.coords.norm() <= 100.0 * scale.radius {
+            return None;
+        }
+        let sum = points
+            .par_iter()
+            .map(|p| p.coords.cast::<f64>())
+            .reduce(Vector3::zeros, |a, b| a + b);
+        Some(Self {
+            origin: sum / points.len().max(1) as f64,
+        })
+    }
+
+    fn points_to_local(&self, points: &[Point3f]) -> Vec<Point3f> {
+        points
+            .par_iter()
+            .map(|p| Point3f::from((p.coords.cast::<f64>() - self.origin).cast::<f32>()))
+            .collect()
+    }
+
+    /// `T` in the original frame, expressed in this frame.
+    fn to_local(&self, transform: &Isometry3<f32>) -> Isometry3<f32> {
+        let shift = Translation3::from(self.origin);
+        (shift.inverse() * transform.cast::<f64>() * shift).cast::<f32>()
+    }
+
+    /// `T` in this frame, expressed in the original frame.
+    fn to_world(&self, transform: &Isometry3<f32>) -> Isometry3<f32> {
+        let shift = Translation3::from(self.origin);
+        (shift * transform.cast::<f64>() * shift.inverse()).cast::<f32>()
+    }
+}
+
+/// Decide whether ICP has converged. Both tests are relative, so they behave the
+/// same on a small indoor scan as on a large outdoor one (an absolute change in
+/// MSE does not: MSE shrinks with the square of the scene size).
+///
+/// ICP stops when either:
+/// - the RMSE improved by less than `threshold` as a fraction of its previous
+///   value, or
+/// - the last update `delta` moved the points by less than `threshold` times the
+///   cloud's size, or
+/// - the error has stopped going down and the update is about one `f32`
+///   rounding step at these coordinates. This catches near-perfect alignments,
+///   where the RMSE is down to rounding noise and its relative change never
+///   settles. It only applies once the error stops improving, so a cloud far
+///   from the origin (e.g. map coordinates) still takes every useful step.
+///
+/// `centroid` is the source centroid before `delta` was applied.
+fn has_converged(
+    previous_mse: f32,
+    current_mse: f32,
+    delta: &Isometry3<f32>,
+    centroid: &Point3f,
+    radius: f32,
+    threshold: f32,
+) -> bool {
+    // RMS point motion of a rigid update: centroid shift plus rotation about it.
+    let centroid_shift = (delta * centroid - centroid).norm();
+    let rotation_shift = delta.rotation.angle() * radius;
+    let motion = centroid_shift.hypot(rotation_shift);
+    if motion <= threshold * radius {
+        return true;
+    }
+
+    if !previous_mse.is_finite() {
+        return false;
+    }
+    let previous_rmse = previous_mse.sqrt();
+    if previous_rmse == 0.0
+        || (previous_rmse - current_mse.sqrt()).abs() / previous_rmse < threshold
+    {
+        return true;
+    }
+
+    let rounding_step = 2.0 * f32::EPSILON * (centroid.coords.norm() + radius);
+    current_mse >= previous_mse && motion <= rounding_step
+}
+
 /// Flatten per-source-point matches into `(source_index, target_index)` pairs.
 fn correspondence_pairs(matches: &[Option<(usize, f32)>]) -> Vec<(usize, usize)> {
     matches
@@ -340,7 +465,7 @@ pub fn icp(
 /// * `init` - Initial transformation estimate
 /// * `max_iters` - Maximum number of iterations
 /// * `max_correspondence_distance` - Maximum distance for valid correspondences (None = no limit)
-/// * `convergence_threshold` - MSE change threshold for convergence
+/// * `convergence_threshold` - Stop when RMSE improves by less than this fraction (e.g. 1e-6)
 ///
 /// # Returns
 /// * `Result<ICPResult>` - Detailed ICP result including transformation, error, and convergence info
@@ -364,30 +489,57 @@ pub fn icp_detailed(
         ));
     }
 
+    let Some(frame) = LocalFrame::if_far_from_origin(&target.points) else {
+        return icp_point_to_point_local(
+            &source.points,
+            &target.points,
+            init,
+            max_iters,
+            max_correspondence_distance,
+            convergence_threshold,
+        );
+    };
+    let mut result = icp_point_to_point_local(
+        &frame.points_to_local(&source.points),
+        &frame.points_to_local(&target.points),
+        frame.to_local(&init),
+        max_iters,
+        max_correspondence_distance,
+        convergence_threshold,
+    )?;
+    result.transformation = frame.to_world(&result.transformation);
+    Ok(result)
+}
+
+/// The point-to-point ICP loop, on clouds already moved into a [`LocalFrame`].
+fn icp_point_to_point_local(
+    source: &[Point3f],
+    target: &[Point3f],
+    init: Isometry3<f32>,
+    max_iters: usize,
+    max_correspondence_distance: Option<f32>,
+    convergence_threshold: f32,
+) -> Result<ICPResult> {
     let mut current_transform = init;
     let mut previous_mse = f32::INFINITY;
-    let target_tree = KdTree::new(&target.points)?;
+    let target_tree = KdTree::new(target)?;
     let max_dist_sq = max_distance_sq(max_correspondence_distance);
-    let mut matches: Vec<Option<(usize, f32)>> = vec![None; source.points.len()];
+    let source_scale = CloudScale::of(source);
+    let mut matches: Vec<Option<(usize, f32)>> = vec![None; source.len()];
 
     for iteration in 0..max_iters {
         // Find correspondences for the source moved by the current estimate,
         // seeded with last iteration's matches
         matches = find_correspondences_seeded(
-            &source.points,
+            source,
             &current_transform,
-            &target.points,
+            target,
             &target_tree,
             &matches,
             max_dist_sq,
         );
 
-        let stats = CorrespondenceStats::collect(
-            &source.points,
-            &current_transform,
-            &target.points,
-            &matches,
-        );
+        let stats = CorrespondenceStats::collect(source, &current_transform, target, &matches);
 
         if stats.count < 3 {
             return Err(Error::Algorithm(
@@ -399,14 +551,21 @@ pub fn icp_detailed(
         let delta_transform = stats.transformation()?;
 
         // Update transformation
+        let moved_centroid = current_transform * source_scale.centroid;
         current_transform = delta_transform * current_transform;
 
         // MSE of this iteration's correspondences (before the update)
         let current_mse = stats.mse();
 
         // Check for convergence
-        let mse_change = (previous_mse - current_mse).abs();
-        if mse_change < convergence_threshold {
+        if has_converged(
+            previous_mse,
+            current_mse,
+            &delta_transform,
+            &moved_centroid,
+            source_scale.radius,
+            convergence_threshold,
+        ) {
             return Ok(ICPResult {
                 transformation: current_transform,
                 mse: current_mse,
@@ -420,8 +579,7 @@ pub fn icp_detailed(
     }
 
     // Re-score the last correspondences under the final transformation
-    let final_stats =
-        CorrespondenceStats::collect(&source.points, &current_transform, &target.points, &matches);
+    let final_stats = CorrespondenceStats::collect(source, &current_transform, target, &matches);
     let final_mse = if final_stats.count > 0 {
         final_stats.mse()
     } else {
@@ -572,7 +730,7 @@ pub fn icp_point_to_plane(
 /// * `init`                         - Initial transformation estimate
 /// * `max_iters`                    - Maximum number of iterations
 /// * `max_correspondence_distance`  - Optional distance cutoff for correspondence rejection
-/// * `convergence_threshold`        - MSE change threshold to declare convergence
+/// * `convergence_threshold`        - Stop when RMSE improves by less than this fraction
 pub fn icp_point_to_plane_detailed(
     source: &PointCloud<Point3f>,
     target: &PointCloud<Point3f>,
@@ -598,26 +756,58 @@ pub fn icp_point_to_plane_detailed(
         ));
     }
 
+    let Some(frame) = LocalFrame::if_far_from_origin(&target.points) else {
+        return icp_point_to_plane_local(
+            &source.points,
+            &target.points,
+            target_normals,
+            init,
+            max_iters,
+            max_correspondence_distance,
+            convergence_threshold,
+        );
+    };
+    let mut result = icp_point_to_plane_local(
+        &frame.points_to_local(&source.points),
+        &frame.points_to_local(&target.points),
+        target_normals,
+        frame.to_local(&init),
+        max_iters,
+        max_correspondence_distance,
+        convergence_threshold,
+    )?;
+    result.transformation = frame.to_world(&result.transformation);
+    Ok(result)
+}
+
+/// The point-to-plane ICP loop, on clouds already moved into a [`LocalFrame`].
+fn icp_point_to_plane_local(
+    source: &[Point3f],
+    target: &[Point3f],
+    target_normals: &[Vector3f],
+    init: Isometry3<f32>,
+    max_iters: usize,
+    max_correspondence_distance: Option<f32>,
+    convergence_threshold: f32,
+) -> Result<ICPResult> {
     let mut current_transform = init;
     let mut previous_mse = f32::INFINITY;
     let mut final_correspondences: Vec<(usize, usize)> = Vec::new();
-    let target_tree = KdTree::new(&target.points)?;
+    let target_tree = KdTree::new(target)?;
     let max_dist_sq = max_distance_sq(max_correspondence_distance);
-    let mut correspondences: Vec<Option<(usize, f32)>> = vec![None; source.points.len()];
+    let source_scale = CloudScale::of(source);
+    let mut correspondences: Vec<Option<(usize, f32)>> = vec![None; source.len()];
 
     for iteration in 0..max_iters {
         // Apply current estimate to source
-        let transformed_source: Vec<Point3f> = source
-            .points
-            .par_iter()
-            .map(|p| current_transform * p)
-            .collect();
+        let transformed_source: Vec<Point3f> =
+            source.par_iter().map(|p| current_transform * p).collect();
 
         // Find nearest-neighbor correspondences, seeded with last iteration's matches
         correspondences = find_correspondences_seeded(
-            &source.points,
+            source,
             &current_transform,
-            &target.points,
+            target,
             &target_tree,
             &correspondences,
             max_dist_sq,
@@ -631,7 +821,7 @@ pub fn icp_point_to_plane_detailed(
         for (src_idx, corr) in correspondences.iter().enumerate() {
             if let Some((tgt_idx, _)) = corr {
                 valid_source.push(transformed_source[src_idx]);
-                valid_target.push(target.points[*tgt_idx]);
+                valid_target.push(target[*tgt_idx]);
                 valid_normals.push(target_normals[*tgt_idx]);
                 corr_pairs.push((src_idx, *tgt_idx));
             }
@@ -646,12 +836,18 @@ pub fn icp_point_to_plane_detailed(
 
         let delta =
             compute_transformation_point_to_plane(&valid_source, &valid_target, &valid_normals)?;
+        let moved_centroid = current_transform * source_scale.centroid;
         current_transform = delta * current_transform;
 
         let current_mse = compute_point_to_plane_mse(&valid_source, &valid_target, &valid_normals);
-        let mse_change = (previous_mse - current_mse).abs();
-
-        if mse_change < convergence_threshold {
+        if has_converged(
+            previous_mse,
+            current_mse,
+            &delta,
+            &moved_centroid,
+            source_scale.radius,
+            convergence_threshold,
+        ) {
             return Ok(ICPResult {
                 transformation: current_transform,
                 mse: current_mse,
@@ -684,7 +880,7 @@ pub fn icp_point_to_plane_detailed(
 /// * `target` - Target point cloud to align to
 /// * `init` - Initial transformation estimate (use Isometry3::identity() for no initial guess)
 /// * `max_iterations` - Maximum number of iterations to perform
-/// * `convergence_threshold` - MSE change threshold for convergence (default: 1e-6)
+/// * `convergence_threshold` - Stop when RMSE improves by less than this fraction (default: 1e-6)
 /// * `max_correspondence_distance` - Maximum distance for valid correspondences (None = no limit)
 ///
 /// # Returns
@@ -973,6 +1169,93 @@ mod tests {
 
         // Should return a valid transformation (not panic)
         assert!(transform.translation.vector.magnitude() > 0.5);
+    }
+
+    #[test]
+    fn test_icp_far_from_origin_does_not_stop_early() {
+        // Terrain-like cloud in UTM-style map coordinates (millions of metres
+        // from the origin), turned and shifted by a few metres. ICP needs
+        // several real steps here and must not stop before it is aligned.
+        let origin = nalgebra::Vector3::<f64>::new(500_000.0, 4_200_000.0, 0.0);
+        let local: Vec<nalgebra::Vector3<f64>> = (0..40)
+            .flat_map(|i| (0..40).map(move |j| (i as f64 * 10.0, j as f64 * 10.0)))
+            .map(|(x, y)| nalgebra::Vector3::new(x, y, 30.0 * (x / 70.0).sin() * (y / 110.0).cos()))
+            .collect();
+        let centre = local.iter().sum::<nalgebra::Vector3<f64>>() / local.len() as f64 + origin;
+
+        // Truth: turn 0.01 rad about the cloud centre, then shift (3, -2, 0.5)
+        let truth = nalgebra::Translation3::from(centre + nalgebra::Vector3::new(3.0, -2.0, 0.5))
+            * nalgebra::UnitQuaternion::from_euler_angles(0.0, 0.0, 0.01)
+            * nalgebra::Translation3::from(-centre);
+
+        let world: Vec<nalgebra::Point3<f64>> = local
+            .iter()
+            .map(|v| nalgebra::Point3::from(v + origin))
+            .collect();
+        let source = PointCloud::from_points(world.iter().map(|p| p.cast::<f32>()).collect());
+        let target =
+            PointCloud::from_points(world.iter().map(|p| (truth * p).cast::<f32>()).collect());
+
+        let result =
+            icp_point_to_point(&source, &target, Isometry3::identity(), 100, 1e-6, None).unwrap();
+
+        // Judge by where the points land (in f64), not by the translation
+        // vector: this far from the origin, a 1e-7 rotation rounding error is
+        // already ~0.4 m of translation, which the translation then cancels.
+        let estimate = result.transformation.cast::<f64>();
+        let error = world
+            .iter()
+            .map(|p| (estimate * p - truth * p).norm())
+            .fold(0.0, f64::max);
+        assert!(
+            result.converged && error < 0.05,
+            "points {error} m off after {} iterations (converged: {})",
+            result.iterations,
+            result.converged
+        );
+    }
+
+    #[test]
+    fn test_icp_convergence_is_scale_invariant() {
+        // The same problem at 1x and at 1/100 scale (e.g. metres vs centimetres
+        // of scene). With an absolute MSE rule the small copy stopped early.
+        let solve = |scale: f32| {
+            let mut source = PointCloud::new();
+            for i in 0..40 {
+                for j in 0..40 {
+                    let (x, y) = (i as f32 * 0.1, j as f32 * 0.1);
+                    let z = 0.3 * (1.3 * x).sin() * (0.7 * y).cos();
+                    source.push(Point3f::new(x, y, z) * scale);
+                }
+            }
+            let truth = Isometry3::from_parts(
+                Translation3::new(0.05 * scale, -0.03 * scale, 0.02 * scale),
+                UnitQuaternion::from_euler_angles(0.0, 0.0, 0.03),
+            );
+            let target = PointCloud::from_points(source.points.iter().map(|p| truth * p).collect());
+            let result =
+                icp_point_to_point(&source, &target, Isometry3::identity(), 100, 1e-6, None)
+                    .unwrap();
+            let rotation_error =
+                (result.transformation.rotation.inverse() * truth.rotation).angle();
+            let translation_error =
+                (result.transformation.translation.vector - truth.translation.vector).norm()
+                    / scale;
+            (result.iterations, rotation_error, translation_error)
+        };
+
+        let (iters_big, rot_big, trans_big) = solve(1.0);
+        let (iters_small, rot_small, trans_small) = solve(0.01);
+
+        assert!(rot_big < 1e-3 && trans_big < 1e-3);
+        assert!(
+            rot_small < 1e-3 && trans_small < 1e-3,
+            "small-scale ICP stopped early: rot {rot_small}, trans {trans_small}, {iters_small} iterations"
+        );
+        assert!(
+            iters_small.abs_diff(iters_big) <= 2,
+            "iterations: big {iters_big}, small {iters_small}"
+        );
     }
 
     #[test]
