@@ -10,7 +10,7 @@
 //   library,task,dataset,source_points,target_points,output_points,iterations,
 //   median_ms,min_ms,mean_ms,detail
 //
-// Supported tasks: read, voxel, normals, icp. Unsupported inputs (e.g. the TUM
+// Supported tasks: read, voxel, normals, icp, icp_accuracy. Unsupported inputs (e.g. the TUM
 // depth-frame directory, which PCL has no equivalent loader for in this harness)
 // exit non-zero so the Python harness records them as "unavailable" rather than
 // inventing a number.
@@ -19,6 +19,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <fstream>
 #include <iostream>
 #include <numeric>
@@ -46,6 +47,7 @@ struct Args {
     float voxel_size = 0.2f;
     int max_icp_iters = 10;
     int normals_k = 10;
+    float max_correspondence_distance = 1.0f;  // icp_accuracy only
 };
 
 static bool ends_with(const std::string& s, const std::string& suffix) {
@@ -107,6 +109,36 @@ static Cloud::Ptr make_target(const Cloud& source) {
     return out;
 }
 
+// Ground-truth motion for the icp_accuracy task. Must match
+// `accuracy_ground_truth` in examples/threecrate_dataset_bench.rs and
+// ACCURACY_GT_* in scripts/bench_cross_library.py: translation (0.30, -0.20,
+// 0.10) and rotation Rz(0.05) * Ry(-0.015) * Rx(0.01).
+static Eigen::Affine3f accuracy_ground_truth() {
+    Eigen::Affine3f t = Eigen::Affine3f::Identity();
+    t.translation() << 0.30f, -0.20f, 0.10f;
+    t.rotate(Eigen::AngleAxisf(0.05f, Eigen::Vector3f::UnitZ()) *
+             Eigen::AngleAxisf(-0.015f, Eigen::Vector3f::UnitY()) *
+             Eigen::AngleAxisf(0.01f, Eigen::Vector3f::UnitX()));
+    return t;
+}
+
+// icp_accuracy pair: source = even-indexed points, target = odd-indexed points
+// moved by the ground truth. Same surfaces, no shared points.
+static void accuracy_pair(const Cloud& cloud, Cloud::Ptr& source, Cloud::Ptr& target) {
+    const Eigen::Affine3f truth = accuracy_ground_truth();
+    source.reset(new Cloud());
+    target.reset(new Cloud());
+    for (size_t i = 0; i < cloud.size(); ++i) {
+        const auto& p = cloud[i];
+        if (i % 2 == 0) {
+            source->emplace_back(p.x, p.y, p.z);
+        } else {
+            Eigen::Vector3f v = truth * Eigen::Vector3f(p.x, p.y, p.z);
+            target->emplace_back(v.x(), v.y(), v.z());
+        }
+    }
+}
+
 struct Outcome {
     size_t output_points = 0;
     std::string detail;
@@ -152,6 +184,26 @@ static Outcome run_task(const Args& args, const Cloud::Ptr& source, const Cloud:
         // measured ICP time relative to Open3D/ThreeCrate, which report fitness
         // from already-computed state.
         o.detail = "converged=" + std::string(icp.hasConverged() ? "true" : "false");
+    } else if (args.task == "icp_accuracy") {
+        pcl::IterativeClosestPoint<pcl::PointXYZ, pcl::PointXYZ> icp;
+        icp.setInputSource(source);
+        icp.setInputTarget(target);
+        icp.setMaximumIterations(args.max_icp_iters);
+        icp.setMaxCorrespondenceDistance(args.max_correspondence_distance);
+        Cloud aligned;
+        icp.align(aligned);
+        o.output_points = source->size();
+
+        // Error against the known ground truth (PCL's default stopping rule).
+        const Eigen::Matrix4f est = icp.getFinalTransformation();
+        const Eigen::Affine3f truth = accuracy_ground_truth();
+        const Eigen::Matrix3f r_err = est.block<3, 3>(0, 0).transpose() * truth.linear();
+        const float cos_angle = std::max(-1.0f, std::min(1.0f, (r_err.trace() - 1.0f) / 2.0f));
+        const double rot_err_deg = std::acos(cos_angle) * 180.0 / M_PI;
+        const double trans_err_m = (est.block<3, 1>(0, 3) - truth.translation()).norm();
+        char buf[128];
+        std::snprintf(buf, sizeof(buf), "rot_err_deg=%.4f,trans_err_m=%.4f", rot_err_deg, trans_err_m);
+        o.detail = buf;
     } else {
         throw std::runtime_error("unsupported task: " + args.task);
     }
@@ -189,6 +241,7 @@ int main(int argc, char** argv) {
         else if (flag == "--max-points") args.max_points = (value == "all" || value == "0") ? -1 : std::stol(value);
         else if (flag == "--voxel-size") args.voxel_size = std::stof(value);
         else if (flag == "--max-icp-iters") args.max_icp_iters = std::stoi(value);
+        else if (flag == "--max-correspondence-distance") args.max_correspondence_distance = std::stof(value);
         else { std::cerr << "unknown argument: " << flag << "\n"; return 2; }
     }
 
@@ -203,7 +256,13 @@ int main(int argc, char** argv) {
         return 3;
     }
     cap_points(*source, args.max_points);
-    Cloud::Ptr target = make_target(*source);
+    Cloud::Ptr target;
+    if (args.task == "icp_accuracy") {
+        Cloud::Ptr full = source;
+        accuracy_pair(*full, source, target);
+    } else {
+        target = make_target(*source);
+    }
 
     Outcome outcome;
     try {

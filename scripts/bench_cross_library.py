@@ -247,8 +247,6 @@ def run_pdal(args: argparse.Namespace, dataset: str, path: Path, task: str) -> l
 def run_pcl(args: argparse.Namespace, dataset: str, path: Path, task: str) -> list[dict[str, str]]:
     if task.startswith("gpu_") or task == "multiscale_icp":
         return [unavailable("PCL", task, dataset, "ThreeCrate-specific task")]
-    if task == "icp_accuracy":
-        return [unavailable("PCL", task, dataset, "icp_accuracy is not implemented in scripts/pcl_bench yet")]
     if not args.pcl_bench_exe:
         return [unavailable("PCL", task, dataset, "set PCL_BENCH_EXE to a custom PCL benchmark executable")]
     cmd = [
@@ -261,6 +259,7 @@ def run_pcl(args: argparse.Namespace, dataset: str, path: Path, task: str) -> li
         "--max-points", str(args.max_points),
         "--voxel-size", str(args.voxel_size),
         "--max-icp-iters", str(args.max_icp_iters),
+        "--max-correspondence-distance", str(args.max_correspondence_distance),
     ]
     try:
         proc = subprocess.run(cmd, text=True, capture_output=True, check=True)
