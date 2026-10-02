@@ -21,3 +21,17 @@ jobs:
         run: cargo build --verbose
       - name: Run tests
         run: cargo test --verbose
+
+  # Catch release problems on every PR instead of on release day: the umbrella
+  # crate sits outside the workspace (so the build above skips it), and
+  # `cargo publish --dry-run` checks that every crate packages and builds the
+  # way crates.io will see it.
+  package:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check umbrella crate (all features)
+        run: cargo check --manifest-path threecrate-umbrella/Cargo.toml --all-features
+      - name: Dry-run publish of workspace crates
+        run: cargo publish --dry-run --workspace
