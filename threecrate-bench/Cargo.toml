@@ -8,6 +8,8 @@ repository.workspace = true
 homepage.workspace = true
 documentation.workspace = true
 description = "Benchmarks utilities for threecrate"
+# Internal benchmark helpers; only used as a dev-dependency.
+publish = false
 keywords.workspace = true
 categories.workspace = true
 
