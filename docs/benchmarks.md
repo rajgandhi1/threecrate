@@ -14,7 +14,7 @@ this machine, and the caveats are stated plainly rather than buried.
   **199.5 at the 20k-point cap**. Without the `read` rows it is 194.7 and 180.3,
   so the lead does not come from file reading.
 - **PCL is now measured** in a Linux container next to Open3D (see "ThreeCrate
-  vs Open3D vs PCL"). ThreeCrate's ICP is 6x to 12x faster than PCL's with the
+  vs Open3D vs PCL"). ThreeCrate's ICP is 8x to 15x faster than PCL's with the
   same accuracy; in that container ThreeCrate and Open3D are close overall.
 
 ## Environment
@@ -226,9 +226,6 @@ benchmark. Each is covered by unit tests (210 passing).
 
 ## Known remaining gaps (honest)
 
-- **Too many threads in VMs.** ThreeCrate uses every CPU it sees, which was
-  slower than using half of them inside the Docker VM (see "ThreeCrate vs Open3D
-  vs PCL").
 
 ## ThreeCrate vs Open3D vs PCL (Linux container)
 
@@ -239,44 +236,43 @@ resolution, median of 5 runs, lower is better.
 
 | Task | Dataset | ThreeCrate (ms) | Open3D (ms) | PCL (ms) |
 | --- | --- | ---: | ---: | ---: |
-| voxel | TUM | 7.7 | 6.3 | n/a |
-| voxel | KITTI | 10.9 | 13.5 | 5.0 |
-| voxel | nuScenes | 3.6 | 2.0 | 1.4 |
-| normals | TUM | 85 | 100 | n/a |
-| normals | KITTI | 46 | 37 | 47 |
-| normals | nuScenes | 11 | 13 | 15 |
-| icp | TUM | 308 | 358 | n/a |
-| icp | KITTI | 123 | 124 | 1462 |
-| icp | nuScenes | 85 | 47 | 534 |
+| voxel | TUM | 8.0 | 12.2 | n/a |
+| voxel | KITTI | 8.7 | 10.3 | 5.2 |
+| voxel | nuScenes | 2.6 | 2.4 | 1.3 |
+| normals | TUM | 81 | 83 | n/a |
+| normals | KITTI | 44 | 37 | 51 |
+| normals | nuScenes | 13 | 14 | 16 |
+| icp | TUM | 270 | 378 | n/a |
+| icp | KITTI | 100 | 134 | 1459 |
+| icp | nuScenes | 71 | 50 | 548 |
 
 ICP accuracy (same test as "ICP accuracy" above, at most 50 iterations):
 
 | Dataset | Library | Rotation error | Translation error | Time |
 | --- | --- | ---: | ---: | ---: |
-| KITTI | ThreeCrate | 0.105° | 8.7 mm | 263 ms |
-| KITTI | Open3D | 0.104° | 8.8 mm | 172 ms |
-| KITTI | PCL | 0.089° | 8.5 mm | 3639 ms |
-| nuScenes | ThreeCrate | 0.972° | 517 mm | 152 ms |
-| nuScenes | Open3D | 0.972° | 518 mm | 62 ms |
-| nuScenes | PCL | 0.955° | 519 mm | 1743 ms |
+| KITTI | ThreeCrate | 0.105° | 8.7 mm | 159 ms |
+| KITTI | Open3D | 0.104° | 8.8 mm | 186 ms |
+| KITTI | PCL | 0.089° | 8.5 mm | 3603 ms |
+| nuScenes | ThreeCrate | 0.972° | 517 mm | 109 ms |
+| nuScenes | Open3D | 0.972° | 518 mm | 60 ms |
+| nuScenes | PCL | 0.955° | 519 mm | 1802 ms |
 
 What this shows:
 
-- **PCL:** ThreeCrate's ICP is 6x to 12x faster than PCL's, with the same
+- **PCL:** ThreeCrate's ICP is 8x to 15x faster than PCL's, with the same
   accuracy. Normals are about even. PCL's voxel filter is the fastest of the
   three.
-- **Open3D:** in this container the two are close overall, not the clear
-  ThreeCrate lead of the Windows tables. ThreeCrate is ahead on TUM, even on
-  KITTI ICP, and behind on nuScenes ICP and on KITTI normals.
+- **Open3D:** in this container ThreeCrate is ahead on TUM and on KITTI ICP and
+  voxel, and behind on KITTI normals and nuScenes ICP. Closer than on Windows,
+  but no longer behind overall.
 
-Why the container numbers differ from Windows:
+Notes:
 
-- **Threads in the VM.** ThreeCrate uses every CPU it sees by default. Inside
-  this VM, 16 threads were slower than 8 (KITTI ICP at 20k points: 49 ms with
-  16 threads, 18 ms with 8, 78 ms with 1), because the threads compete for the
-  VM's virtual CPUs. We kept the default for the published numbers rather than
-  tune ThreeCrate alone. Choosing a better thread count automatically is future
-  work.
+- **Threads in the VM.** Waking worker threads is slow inside a VM. ICP used to
+  make two light parallel passes per iteration and split them finely, so with
+  16 threads it was slower than with 8. Since [#194] it makes one pass per
+  iteration with at least 512 points per task, which made ICP here 2x to 3x
+  faster on small clouds and about 30% faster on full ones.
 - **No `read` row.** Files were read through Docker's shared-folder mount, which
   adds about 20 ms for every library, so those timings measure the mount, not the
   libraries.
@@ -329,6 +325,7 @@ For the accuracy table, use `--tasks icp_accuracy --max-icp-iters 50`.
 [#180]: https://github.com/rajgandhi1/threecrate/issues/180
 [#187]: https://github.com/rajgandhi1/threecrate/issues/187
 [#190]: https://github.com/rajgandhi1/threecrate/issues/190
+[#194]: https://github.com/rajgandhi1/threecrate/issues/194
 [#178]: https://github.com/rajgandhi1/threecrate/issues/178
 </content>
 </invoke>
