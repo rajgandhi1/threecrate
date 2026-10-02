@@ -16,6 +16,8 @@ bytemuck = { workspace = true }
 nalgebra = { workspace = true }
 rayon = { workspace = true }
 threecrate-simplification = { path = "../threecrate-simplification", version = "0.8.0" }
+# CPU kd-tree, uploaded to the GPU for neighbor searches
+threecrate-algorithms = { path = "../threecrate-algorithms", version = "0.8.0" }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 winit = { workspace = true }
@@ -26,5 +28,4 @@ flume = "0.12"
 approx = { workspace = true }
 pollster = "0.4"
 rand = { workspace = true }
-threecrate-algorithms = { path = "../threecrate-algorithms", version = "0.8.0" }
 tokio = { version = "1.0", features = ["full"] } 

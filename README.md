@@ -89,19 +89,18 @@ faster than Open3D.
 |---|---:|
 | Reading files (raw float parsing) | **1.5x to 2.0x faster** |
 | Voxel downsampling (CPU) | **1.5x to 1.7x faster** |
-| Voxel downsampling (GPU, wgpu) | **1.8x to 2.9x faster** *(vs our own CPU path, not Open3D)* |
+| Voxel downsampling (GPU, wgpu) | **1.4x to 2.7x faster** *(vs our own CPU path, not Open3D)* |
 | Normal estimation | **1.5x to 2.1x faster** |
 | ICP | **1.8x to 3.4x faster**, with the same accuracy |
 
 In short: ThreeCrate is faster than Open3D at every task we measure, and its ICP
 results are just as accurate.
 
-About the GPU row: the compute backend is [wgpu](https://wgpu.rs/), so it runs on
-any GPU (NVIDIA/AMD/Intel/Apple) with no CUDA lock-in. But to be honest about it,
-**only voxel downsampling and TSDF fusion are actually faster on the GPU today.**
-Normal estimation and ICP are still quicker on CPU right now (per-call pipeline
-rebuilds and blocking readbacks), so we don't list them as GPU wins — that work is
-[tracked openly](https://github.com/rajgandhi1/threecrate/issues/178).
+About the GPU: the compute backend is [wgpu](https://wgpu.rs/), so it runs on any
+GPU (NVIDIA/AMD/Intel/Apple) with no CUDA lock-in. On an RTX 3050 Ti laptop GPU,
+ICP is 2.6x to 3.4x faster and normal estimation 1.2x to 2.4x faster than our
+16-core CPU path, with the same results. Details in
+[docs/benchmarks.md](docs/benchmarks.md).
 
 One thing we won't pretend about: **we haven't benchmarked PCL yet.** The harness
 to do it is written and ready in [`scripts/pcl_bench/`](scripts/pcl_bench), but
