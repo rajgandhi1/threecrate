@@ -23,8 +23,11 @@ jobs:
           # glibc 2.28+ (Ubuntu 20.04+, Debian 10+, RHEL 8+), not just on the
           # runner's own glibc.
           - { name: linux-x86_64, os: ubuntu-latest, target: x86_64, manylinux: "2_28" }
-          # One wheel for both Apple Silicon and Intel Macs.
-          - { name: macos-universal2, os: macos-latest, target: universal2-apple-darwin, manylinux: "off" }
+          # Each Mac wheel is built natively on its own CPU type. Cross-building
+          # (e.g. a universal2 wheel on Apple Silicon) fails: the Draco C++
+          # dependency (threecrate-io `compression`) refuses to cross-compile.
+          - { name: macos-arm64, os: macos-latest, target: aarch64-apple-darwin, manylinux: "off" }
+          - { name: macos-x86_64, os: macos-15-intel, target: x86_64-apple-darwin, manylinux: "off" }
           - { name: windows-x64, os: windows-latest, target: x64, manylinux: "off" }
 
     steps:
@@ -75,7 +78,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, macos-latest, macos-15-intel, windows-latest]
         python: ["3.9", "3.13"]
 
     steps:

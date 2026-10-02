@@ -56,8 +56,8 @@
   platform). 0.8.0 only had wheels for Python 3.11.
 - The Linux wheel targets manylinux 2.28, so it installs on Ubuntu 20.04+,
   Debian 10+ and RHEL 8+. The 0.8.0 wheel needed glibc 2.38.
-- New wheel for Intel Macs (universal2), and a source package for other
-  platforms.
+- New wheel for Intel Macs (next to the Apple Silicon one), and a source
+  package for other platforms.
 
 ## Crates
 
