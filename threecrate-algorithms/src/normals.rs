@@ -132,26 +132,25 @@ fn find_neighbors(
 }
 
 /// Find neighbors using a prebuilt KD-tree.
-fn find_neighbors_with_tree(
+/// Fill `neighborhood` with the `k` nearest neighbors of point `index`, not
+/// counting the point itself. `knn` is scratch space, reused across calls so the
+/// search does not allocate per point.
+fn nearest_excluding(
     tree: &KdTree,
-    query_idx: usize,
+    index: usize,
     query: &Point3f,
-    config: &NormalEstimationConfig,
-) -> Vec<usize> {
-    if let Some(radius) = config.radius {
-        tree.find_radius_neighbors(query, radius)
-            .into_iter()
-            .map(|(idx, _)| idx)
-            .filter(|idx| *idx != query_idx)
-            .collect()
-    } else {
-        tree.find_k_nearest(query, config.k_neighbors + 1)
-            .into_iter()
-            .map(|(idx, _)| idx)
-            .filter(|idx| *idx != query_idx)
-            .take(config.k_neighbors)
-            .collect()
-    }
+    k: usize,
+    knn: &mut Vec<(usize, f32)>,
+    neighborhood: &mut Vec<usize>,
+) {
+    tree.find_k_nearest_into(query, k + 1, knn);
+    neighborhood.clear();
+    neighborhood.extend(
+        knn.iter()
+            .map(|&(idx, _)| idx)
+            .filter(|&idx| idx != index)
+            .take(k),
+    );
 }
 
 /// Compute normal using PCA on the neighborhood points
@@ -302,55 +301,58 @@ pub fn estimate_normals_with_config(
         center + Vector3f::new(0.0, 0.0, extent)
     });
 
-    // Compute normals in parallel
+    // Compute normals in parallel. Each rayon thread keeps its own scratch
+    // buffers, so the per-point neighbor search does not allocate.
     let normals: Vec<NormalPoint3f> = (0..points.len())
         .into_par_iter()
-        .map(|i| {
-            let neighbors = find_neighbors_with_tree(&search_tree, i, &points[i], config);
+        .map_init(
+            || (Vec::new(), Vec::new()),
+            |(knn, neighborhood): &mut (Vec<(usize, f32)>, Vec<usize>), i| {
+                neighborhood.clear();
+                if let Some(radius) = config.radius {
+                    neighborhood.extend(
+                        search_tree
+                            .find_radius_neighbors(&points[i], radius)
+                            .into_iter()
+                            .map(|(idx, _)| idx)
+                            .filter(|&idx| idx != i),
+                    );
+                }
 
-            // Use only the neighbors for PCA, not the query point itself
-            let mut neighborhood = neighbors;
+                // k-NN: the default, and the fallback when the radius finds too few
+                if config.radius.is_none() || neighborhood.len() < config.k_neighbors {
+                    nearest_excluding(
+                        &search_tree,
+                        i,
+                        &points[i],
+                        config.k_neighbors,
+                        knn,
+                        neighborhood,
+                    );
+                }
 
-            // If radius-based search didn't find enough neighbors, fall back to k-NN
-            if config.radius.is_some() && neighborhood.len() < config.k_neighbors {
-                neighborhood = search_tree
-                    .find_k_nearest(&points[i], config.k_neighbors + 1)
-                    .into_iter()
-                    .map(|(idx, _)| idx)
-                    .filter(|idx| *idx != i)
-                    .take(config.k_neighbors)
-                    .collect();
-            }
+                // Ensure we have enough neighbors for PCA
+                if neighborhood.len() < 3 {
+                    let fallback_k = config.k_neighbors.max(5);
+                    nearest_excluding(&search_tree, i, &points[i], fallback_k, knn, neighborhood);
+                }
 
-            // Ensure we have enough neighbors for PCA
-            if neighborhood.len() < 3 {
-                // If we still don't have enough neighbors, use a larger k
-                let fallback_k = config.k_neighbors.max(5);
-                neighborhood = search_tree
-                    .find_k_nearest(&points[i], fallback_k + 1)
-                    .into_iter()
-                    .map(|(idx, _)| idx)
-                    .filter(|idx| *idx != i)
-                    .take(fallback_k)
-                    .collect();
-            }
-
-            if !neighborhood.contains(&i) {
+                // Include the point itself in its neighborhood
                 neighborhood.push(i);
-            }
 
-            let mut normal = compute_normal_pca(points, &neighborhood);
+                let mut normal = compute_normal_pca(points, neighborhood);
 
-            // Apply orientation consistency if requested
-            if config.consistent_orientation {
-                normal = orient_normal_towards_viewpoint(normal, points[i], viewpoint);
-            }
+                // Apply orientation consistency if requested
+                if config.consistent_orientation {
+                    normal = orient_normal_towards_viewpoint(normal, points[i], viewpoint);
+                }
 
-            NormalPoint3f {
-                position: points[i],
-                normal,
-            }
-        })
+                NormalPoint3f {
+                    position: points[i],
+                    normal,
+                }
+            },
+        )
         .collect();
 
     Ok(PointCloud::from_points(normals))

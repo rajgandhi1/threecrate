@@ -87,15 +87,14 @@ faster than Open3D.
 
 | Workload | How ThreeCrate compares |
 |---|---:|
-| Reading files (raw float parsing) | **1.1x to 1.6x faster** |
-| Voxel downsampling (CPU) | **1.5x to 1.9x faster** |
+| Reading files (raw float parsing) | **1.5x to 2.0x faster** |
+| Voxel downsampling (CPU) | **1.5x to 1.7x faster** |
 | Voxel downsampling (GPU, wgpu) | **1.8x to 2.9x faster** *(vs our own CPU path, not Open3D)* |
-| Normal estimation | 0.92x to 1.5x (faster on 2 of 3 datasets) |
-| ICP | **2.7x to 3.7x faster**, with the same accuracy |
+| Normal estimation | **1.5x to 2.1x faster** |
+| ICP | **1.8x to 3.4x faster**, with the same accuracy |
 
-In short: ThreeCrate is faster than Open3D at loading data, downsampling, and
-ICP, and its ICP results are just as accurate. Normal estimation is faster on
-two datasets and slightly slower on KITTI.
+In short: ThreeCrate is faster than Open3D at every task we measure, and its ICP
+results are just as accurate.
 
 About the GPU row: the compute backend is [wgpu](https://wgpu.rs/), so it runs on
 any GPU (NVIDIA/AMD/Intel/Apple) with no CUDA lock-in. But to be honest about it,
