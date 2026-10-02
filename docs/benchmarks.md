@@ -13,9 +13,9 @@ this machine, and the caveats are stated plainly rather than buried.
 - Composite score across the 12 shared rows: **209.7 at full resolution** and
   **199.5 at the 20k-point cap**. Without the `read` rows it is 194.7 and 180.3,
   so the lead does not come from file reading.
-- **PCL is not in these numbers yet.** The PCL benchmark is written
-  (`scripts/pcl_bench/`) but has not been run here. Do not quote a PCL
-  comparison from this page.
+- **PCL is now measured** in a Linux container next to Open3D (see "ThreeCrate
+  vs Open3D vs PCL"). ThreeCrate's ICP is 6x to 12x faster than PCL's with the
+  same accuracy; in that container ThreeCrate and Open3D are close overall.
 
 ## Environment
 
@@ -226,19 +226,68 @@ benchmark. Each is covered by unit tests (210 passing).
 
 ## Known remaining gaps (honest)
 
-- **PCL is not measured here yet.** The executable exists (below) but is not wired
-  into these numbers.
+- **Too many threads in VMs.** ThreeCrate uses every CPU it sees, which was
+  slower than using half of them inside the Docker VM (see "ThreeCrate vs Open3D
+  vs PCL").
 
-## PCL benchmark executable (ready, not yet integrated)
+## ThreeCrate vs Open3D vs PCL (Linux container)
 
-`scripts/pcl_bench/` contains a PCL benchmark binary (`pcl_bench.cpp` +
-`CMakeLists.txt`) that mirrors this harness exactly — same point cap, voxel size,
-normal `k`, ICP iteration count, and the same synthetic rigid target transform —
-and prints the same CSV row format. It compiles cleanly (PCL 1.14 via the provided
-`Dockerfile`) and runs on the KITTI/nuScenes files. It is **not** yet folded into
-the published table; doing so fairly requires running all three libraries in one
-environment (the `Dockerfile` is set up for exactly that). Until then, treat PCL
-as future work, not as a measured comparison.
+All three libraries ran in one Docker container (Ubuntu 24.04, PCL 1.14,
+Open3D 0.19) on the same laptop, so they share the OS, compiler and CPUs. The
+container sees 16 CPUs. Each library uses its default threading. Full
+resolution, median of 5 runs, lower is better.
+
+| Task | Dataset | ThreeCrate (ms) | Open3D (ms) | PCL (ms) |
+| --- | --- | ---: | ---: | ---: |
+| voxel | TUM | 7.7 | 6.3 | n/a |
+| voxel | KITTI | 10.9 | 13.5 | 5.0 |
+| voxel | nuScenes | 3.6 | 2.0 | 1.4 |
+| normals | TUM | 85 | 100 | n/a |
+| normals | KITTI | 46 | 37 | 47 |
+| normals | nuScenes | 11 | 13 | 15 |
+| icp | TUM | 308 | 358 | n/a |
+| icp | KITTI | 123 | 124 | 1462 |
+| icp | nuScenes | 85 | 47 | 534 |
+
+ICP accuracy (same test as "ICP accuracy" above, at most 50 iterations):
+
+| Dataset | Library | Rotation error | Translation error | Time |
+| --- | --- | ---: | ---: | ---: |
+| KITTI | ThreeCrate | 0.105° | 8.7 mm | 263 ms |
+| KITTI | Open3D | 0.104° | 8.8 mm | 172 ms |
+| KITTI | PCL | 0.089° | 8.5 mm | 3639 ms |
+| nuScenes | ThreeCrate | 0.972° | 517 mm | 152 ms |
+| nuScenes | Open3D | 0.972° | 518 mm | 62 ms |
+| nuScenes | PCL | 0.955° | 519 mm | 1743 ms |
+
+What this shows:
+
+- **PCL:** ThreeCrate's ICP is 6x to 12x faster than PCL's, with the same
+  accuracy. Normals are about even. PCL's voxel filter is the fastest of the
+  three.
+- **Open3D:** in this container the two are close overall, not the clear
+  ThreeCrate lead of the Windows tables. ThreeCrate is ahead on TUM, even on
+  KITTI ICP, and behind on nuScenes ICP and on KITTI normals.
+
+Why the container numbers differ from Windows:
+
+- **Threads in the VM.** ThreeCrate uses every CPU it sees by default. Inside
+  this VM, 16 threads were slower than 8 (KITTI ICP at 20k points: 49 ms with
+  16 threads, 18 ms with 8, 78 ms with 1), because the threads compete for the
+  VM's virtual CPUs. We kept the default for the published numbers rather than
+  tune ThreeCrate alone. Choosing a better thread count automatically is future
+  work.
+- **No `read` row.** Files were read through Docker's shared-folder mount, which
+  adds about 20 ms for every library, so those timings measure the mount, not the
+  libraries.
+- **No PCL numbers for TUM.** TUM frames are depth images, and the PCL harness
+  has no loader for them. It reports them as unavailable instead of guessing.
+- PCL ICP uses its default stopping rule and the same 1.0 m match distance as the
+  other two.
+
+To reproduce, build the image with `docker build -t threecrate-bench
+scripts/pcl_bench`, then run `scripts/bench_cross_library.py` inside it with
+`--pcl-bench-exe /opt/pcl_bench/build/pcl_bench` (see the `Dockerfile` header).
 
 ## Reproduce (Open3D vs ThreeCrate)
 
