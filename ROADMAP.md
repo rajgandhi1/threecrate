@@ -21,7 +21,7 @@ for the full tables and reproduction command.
 | Normal estimation | ✅ Ahead | 1.5x to 2.1x faster |
 | ICP speed | ✅ Ahead | 1.8x to 3.4x faster |
 | ICP accuracy | ✅ Same as Open3D | all 3 datasets |
-| PCL comparison | ✅ Measured | ICP 6x to 12x faster than PCL |
+| PCL comparison | ✅ Measured | ICP 8x to 15x faster than PCL |
 
 ## Near-term: close the honest gaps
 
@@ -44,10 +44,11 @@ credibility story. In rough priority order:
   The k-nearest search no longer allocates per point. KITTI normals went from
   0.92x to 1.54x vs Open3D.
 - ~~**Integrate PCL into the benchmark table**~~: **done** ([#179](https://github.com/rajgandhi1/threecrate/issues/179)).
-  All three libraries ran in one Linux container. ThreeCrate's ICP is 6x to 12x
+  All three libraries ran in one Linux container. ThreeCrate's ICP is 8x to 15x
   faster than PCL's with the same accuracy.
-- **Pick a better thread count automatically.** In the Docker VM, using all 16
-  CPUs was slower than using 8.
+- ~~**Too many threads slow down small clouds in VMs**~~: **done** ([#194](https://github.com/rajgandhi1/threecrate/issues/194)).
+  ICP now makes one parallel pass per iteration with at least 512 points per
+  task. In the Docker VM that made ICP 2x to 3x faster on small clouds.
 - ~~**ICP accuracy comparison**~~: **done** ([#180](https://github.com/rajgandhi1/threecrate/issues/180)).
   New `icp_accuracy` benchmark with a known offset.
 - ~~**Fix the ICP stopping rule**~~: **done** ([#187](https://github.com/rajgandhi1/threecrate/issues/187)).

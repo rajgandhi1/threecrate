@@ -103,7 +103,7 @@ ICP is 2.6x to 3.4x faster and normal estimation 1.2x to 2.4x faster than our
 [docs/benchmarks.md](docs/benchmarks.md).
 
 I also ran ThreeCrate, Open3D and PCL together in one Linux Docker container.
-There, ThreeCrate's ICP is 6x to 12x faster than PCL's with the same accuracy,
+There, ThreeCrate's ICP is 8x to 15x faster than PCL's with the same accuracy,
 normals are about even, and PCL's voxel filter is fastest. ThreeCrate and Open3D
 are close overall in that container, so the Windows lead above is not universal.
 

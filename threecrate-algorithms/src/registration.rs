@@ -119,6 +119,12 @@ fn max_distance_sq(max_distance: Option<f32>) -> f32 {
 ///
 /// Returns `(target_index, squared_distance)` per source point, or `None` when
 /// no target point lies within `max_dist_sq`.
+/// Fewest points one parallel ICP task handles. ICP makes light passes over the
+/// cloud many times per run; splitting them finer wakes more threads than the
+/// work is worth, which is especially slow in VMs (waking a thread there costs
+/// far more than matching a few hundred points).
+const MIN_POINTS_PER_TASK: usize = 512;
+
 fn find_correspondences_seeded(
     source: &[Point3f],
     transform: &Isometry3<f32>,
@@ -130,12 +136,43 @@ fn find_correspondences_seeded(
     source
         .par_iter()
         .zip(previous.par_iter())
+        .with_min_len(MIN_POINTS_PER_TASK)
         .map(|(point, prev)| {
             let moved = transform * point;
             let seed = prev.map(|(idx, _)| (idx, (moved - target[idx]).magnitude_squared()));
             target_tree.find_nearest_bounded(&moved, max_dist_sq, seed)
         })
         .collect()
+}
+
+/// One ICP iteration's parallel work in a single pass: re-match every source
+/// point (moved by `transform`, seeded with its previous match, updated in
+/// place in `matches`) and sum the statistics for the update. Doing both in
+/// one pass halves how often worker threads are woken per iteration.
+fn match_and_collect(
+    source: &[Point3f],
+    transform: &Isometry3<f32>,
+    target: &[Point3f],
+    target_tree: &KdTree,
+    matches: &mut [Option<(usize, f32)>],
+    max_dist_sq: f32,
+) -> CorrespondenceStats {
+    source
+        .par_chunks(MIN_POINTS_PER_TASK)
+        .zip(matches.par_chunks_mut(MIN_POINTS_PER_TASK))
+        .map(|(points, slots)| {
+            let mut stats = CorrespondenceStats::zero();
+            for (point, slot) in points.iter().zip(slots) {
+                let moved = transform * point;
+                let seed = slot.map(|(idx, _)| (idx, (moved - target[idx]).magnitude_squared()));
+                *slot = target_tree.find_nearest_bounded(&moved, max_dist_sq, seed);
+                if let Some((idx, _)) = *slot {
+                    stats = stats.add(&moved, &target[idx]);
+                }
+            }
+            stats
+        })
+        .reduce(CorrespondenceStats::zero, CorrespondenceStats::merge)
 }
 
 /// Brute-force fallback used only if the KD-tree cannot be built.
@@ -229,6 +266,7 @@ impl CorrespondenceStats {
         source
             .par_iter()
             .zip(matches.par_iter())
+            .with_min_len(MIN_POINTS_PER_TASK)
             .fold(Self::zero, |stats, (point, m)| match m {
                 Some((idx, _)) => stats.add(&(transform * point), &target[*idx]),
                 None => stats,
@@ -570,16 +608,14 @@ fn icp_point_to_point_local(
     for iteration in 0..max_iters {
         // Find correspondences for the source moved by the current estimate,
         // seeded with last iteration's matches
-        matches = find_correspondences_seeded(
+        let stats = match_and_collect(
             source,
             &current_transform,
             target,
             &target_tree,
-            &matches,
+            &mut matches,
             max_dist_sq,
         );
-
-        let stats = CorrespondenceStats::collect(source, &current_transform, target, &matches);
 
         if stats.count < 3 {
             return Err(Error::Algorithm(
