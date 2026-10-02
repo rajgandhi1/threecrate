@@ -1,5 +1,6 @@
 //! GPU-accelerated filtering
 
+use crate::spatial::{GpuKdTree, KD_TREE_WGSL};
 use crate::GpuContext;
 use threecrate_core::{Point3f, PointCloud, Result};
 
@@ -57,48 +58,41 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 }
 "#;
 
-const RADIUS_OUTLIER_SHADER: &str = r#"
-struct GpuPoint {
-    position: vec3<f32>,
-    _padding: f32,  // Ensure 16-byte alignment
-}
-
-@group(0) @binding(0) var<storage, read> input_points: array<GpuPoint>;
-@group(0) @binding(1) var<storage, read_write> is_outlier: array<u32>;
-@group(0) @binding(2) var<uniform> params: RadiusOutlierParams;
-
+/// Radius outlier kernel: one thread per kd-tree node. Counts the other points
+/// within `radius` with the shared tree walk, stopping as soon as it has
+/// `min_neighbors`, since the point is then known to stay.
+fn radius_outlier_shader() -> String {
+    format!(
+        "{}{}",
+        KD_TREE_WGSL,
+        r#"
 struct RadiusOutlierParams {
-    num_points: u32,
-    radius: f32,
+    num_nodes: u32,
+    radius_sq: f32,
     min_neighbors: u32,
     _padding: u32,
 }
 
+@group(0) @binding(1) var<storage, read_write> is_outlier: array<u32>;
+@group(0) @binding(2) var<uniform> params: RadiusOutlierParams;
+
 @compute @workgroup_size(64)
-fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
-    let index = global_id.x;
-    if (index >= params.num_points) {
+fn radius_outlier(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let node_id = gid.x;
+    if (node_id >= params.num_nodes) {
         return;
     }
-    
-    let center_point = input_points[index].position;
-    var neighbor_count = 0u;
-    
-    // Count neighbors within radius
-    for (var i = 0u; i < params.num_points; i++) {
-        if (i != index) {
-            let neighbor_point = input_points[i].position;
-            let distance = length(center_point - neighbor_point);
-            if (distance <= params.radius) {
-                neighbor_count++;
-            }
-        }
-    }
-    
-    // Mark as outlier if neighbor count is below threshold
-    is_outlier[index] = select(0u, 1u, neighbor_count < params.min_neighbors);
+    let count = count_within(
+        nodes[node_id].pos,
+        params.radius_sq,
+        node_id,
+        params.min_neighbors,
+    );
+    is_outlier[nodes[node_id].index] = select(0u, 1u, count < params.min_neighbors);
 }
-"#;
+"#
+    )
+}
 
 const VOXEL_GRID_SHADER: &str = r#"
 struct GpuPoint {
@@ -414,7 +408,11 @@ impl GpuContext {
         }
     }
 
-    /// Remove radius outliers from point cloud using GPU acceleration
+    /// Remove radius outliers from point cloud using GPU acceleration.
+    ///
+    /// A point is kept when at least `min_neighbors` other points lie within
+    /// `radius` of it. Points with a NaN or infinite coordinate have no
+    /// neighbors, so they are removed whenever `min_neighbors > 0`.
     pub async fn remove_radius_outliers(
         &self,
         points: &[Point3f],
@@ -425,197 +423,88 @@ impl GpuContext {
             return Ok(Vec::new());
         }
 
-        // Convert points to GPU format with proper alignment
-        #[repr(C)]
-        #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-        struct GpuPoint {
-            position: [f32; 3],
-            _padding: f32,
-        }
-
-        let point_data: Vec<GpuPoint> = points
-            .iter()
-            .map(|p| GpuPoint {
-                position: [p.x, p.y, p.z],
-                _padding: 0.0,
-            })
-            .collect();
-
-        // Create buffers
-        let input_buffer =
-            self.create_buffer_init("Input Points", &point_data, wgpu::BufferUsages::STORAGE);
-
-        let outlier_buffer = self.create_buffer(
+        let tree = GpuKdTree::new(self, points)?;
+        // Every point starts flagged as an outlier unless no neighbors are
+        // required; the kernel then decides for each finite point.
+        let initial_flag = (min_neighbors > 0) as u32;
+        let outlier_buffer = self.create_buffer_init(
             "Outlier Flags",
-            (point_data.len() * std::mem::size_of::<u32>()) as u64,
+            &vec![initial_flag; points.len()],
             wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
         );
 
-        #[repr(C)]
-        #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-        struct RadiusOutlierParams {
-            num_points: u32,
-            radius: f32,
-            min_neighbors: u32,
-            _padding: u32,
+        if !tree.is_empty() {
+            #[repr(C)]
+            #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+            struct RadiusOutlierParams {
+                num_nodes: u32,
+                radius_sq: f32,
+                min_neighbors: u32,
+                _padding: u32,
+            }
+            let params = RadiusOutlierParams {
+                num_nodes: tree.node_to_index.len() as u32,
+                // A negative radius matches nothing (as the old brute-force
+                // kernel did); squaring it would make it a valid range.
+                radius_sq: if radius < 0.0 { -1.0 } else { radius * radius },
+                min_neighbors: min_neighbors.min(u32::MAX as usize) as u32,
+                _padding: 0,
+            };
+            let params_buffer = self.create_buffer_init(
+                "Radius Outlier Params",
+                &[params],
+                wgpu::BufferUsages::UNIFORM,
+            );
+
+            let pipeline = self.cached_pipeline(
+                &self.pipelines.radius_outlier,
+                "Radius Outlier Filter",
+                radius_outlier_shader,
+                "radius_outlier",
+            );
+            let bind_group = self.create_bind_group(
+                "Radius Outlier Filter",
+                &pipeline.get_bind_group_layout(0),
+                &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: tree.nodes.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: outlier_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: params_buffer.as_entire_binding(),
+                    },
+                ],
+            );
+
+            let mut encoder = self
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("Radius Outlier Filter"),
+                });
+            {
+                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("Radius Outlier Filter"),
+                    timestamp_writes: None,
+                });
+                pass.set_pipeline(pipeline);
+                pass.set_bind_group(0, &bind_group, &[]);
+                pass.dispatch_workgroups(tree.node_to_index.len().div_ceil(64) as u32, 1, 1);
+            }
+            self.queue.submit(std::iter::once(encoder.finish()));
         }
 
-        let params = RadiusOutlierParams {
-            num_points: points.len() as u32,
-            radius,
-            min_neighbors: min_neighbors as u32,
-            _padding: 0,
-        };
-
-        let params_buffer = self.create_buffer_init(
-            "Radius Outlier Params",
-            &[params],
-            wgpu::BufferUsages::UNIFORM,
-        );
-
-        // Create shader
-        let shader = self.create_shader_module("Radius Outlier Filter", RADIUS_OUTLIER_SHADER);
-
-        // Create bind group layout
-        let bind_group_layout = self.create_bind_group_layout(
-            "Radius Outlier Filter",
-            &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-            ],
-        );
-
-        // Create compute pipeline
-        let pipeline = self
-            .device
-            .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some("Radius Outlier Filter Pipeline"),
-                layout: Some(&self.device.create_pipeline_layout(
-                    &wgpu::PipelineLayoutDescriptor {
-                        label: Some("Radius Outlier Filter Layout"),
-                        bind_group_layouts: &[Some(&bind_group_layout)],
-                        immediate_size: 0,
-                    },
-                )),
-                module: &shader,
-                entry_point: Some("main"),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                cache: None,
-            });
-
-        // Create bind group
-        let bind_group = self.create_bind_group(
-            "Radius Outlier Filter",
-            &bind_group_layout,
-            &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: input_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: outlier_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: params_buffer.as_entire_binding(),
-                },
-            ],
-        );
-
-        // Execute compute shader
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Radius Outlier Filter"),
-            });
-
-        {
-            let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("Radius Outlier Filter Pass"),
-                timestamp_writes: None,
-            });
-            compute_pass.set_pipeline(&pipeline);
-            compute_pass.set_bind_group(0, &bind_group, &[]);
-            let workgroup_count = (points.len() + 63) / 64;
-            compute_pass.dispatch_workgroups(workgroup_count as u32, 1, 1);
-        }
-
-        // Read back results
-        let staging_buffer = self.create_buffer(
-            "Radius Outlier Staging",
-            (point_data.len() * std::mem::size_of::<u32>()) as u64,
-            wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-        );
-
-        encoder.copy_buffer_to_buffer(
-            &outlier_buffer,
-            0,
-            &staging_buffer,
-            0,
-            (point_data.len() * std::mem::size_of::<u32>()) as u64,
-        );
-
-        self.queue.submit(std::iter::once(encoder.finish()));
-
-        // Map and read results
-        let buffer_slice = staging_buffer.slice(..);
-        let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
-        buffer_slice.map_async(wgpu::MapMode::Read, move |v| sender.send(v).unwrap());
-
-        self.device.poll(wgpu::PollType::Wait {
-            submission_index: None,
-            timeout: None,
-        });
-
-        if let Some(Ok(())) = receiver.receive().await {
-            let data = buffer_slice.get_mapped_range();
-            let outlier_flags: Vec<u32> = bytemuck::cast_slice(&data).to_vec();
-
-            let filtered_points: Vec<Point3f> = points
-                .iter()
-                .zip(outlier_flags.iter())
-                .filter(|&(_, &is_outlier)| is_outlier == 0)
-                .map(|(point, _)| *point)
-                .collect();
-
-            drop(data);
-            staging_buffer.unmap();
-
-            Ok(filtered_points)
-        } else {
-            Err(threecrate_core::Error::Gpu(
-                "Failed to read GPU radius outlier filtering results".to_string(),
-            ))
-        }
+        let outlier_flags: Vec<u32> = self.read_buffer(&outlier_buffer)?;
+        Ok(points
+            .iter()
+            .zip(&outlier_flags)
+            .filter(|&(_, &is_outlier)| is_outlier == 0)
+            .map(|(point, _)| *point)
+            .collect())
     }
 
     /// Voxel grid filtering using GPU acceleration
@@ -1267,6 +1156,61 @@ mod tests {
         }
 
         PointCloud::from_points(points)
+    }
+
+    #[tokio::test]
+    async fn test_gpu_radius_outlier_removal_matches_cpu() {
+        let Some(gpu_context) = try_create_gpu_context().await else {
+            return;
+        };
+
+        // Uneven density: a dense patch, a sparse patch, and scattered points
+        let mut state = 7u32;
+        let mut next = || {
+            state = state.wrapping_mul(1664525).wrapping_add(1013904223);
+            (state >> 8) as f32 / (1u32 << 24) as f32
+        };
+        let mut cloud = PointCloud::new();
+        for _ in 0..15_000 {
+            cloud.push(Point3f::new(next(), next(), 0.1 * next()));
+        }
+        for _ in 0..3_000 {
+            cloud.push(Point3f::new(2.0 + 3.0 * next(), 3.0 * next(), next()));
+        }
+        cloud.push(Point3f::new(f32::NAN, 0.0, 0.0));
+
+        let gpu = gpu_radius_outlier_removal(&gpu_context, &cloud, 0.05, 4)
+            .await
+            .unwrap();
+        let finite = PointCloud::from_points(
+            cloud
+                .points
+                .iter()
+                .copied()
+                .filter(|p| p.coords.iter().all(|c| c.is_finite()))
+                .collect(),
+        );
+        let cpu = threecrate_algorithms::radius_outlier_removal(&finite, 0.05, 4).unwrap();
+
+        assert_eq!(gpu.len(), cpu.len());
+        assert!(gpu.points.iter().zip(&cpu.points).all(|(g, c)| g == c));
+    }
+
+    #[tokio::test]
+    async fn test_gpu_radius_outlier_removal_negative_radius() {
+        let Some(gpu_context) = try_create_gpu_context().await else {
+            return;
+        };
+        let cloud = PointCloud::from_points(
+            (0..50)
+                .map(|i| Point3f::new(i as f32 * 0.01, 0.0, 0.0))
+                .collect(),
+        );
+        // A negative radius matches nothing, so every point is an outlier
+        let filtered = gpu_radius_outlier_removal(&gpu_context, &cloud, -0.2, 3)
+            .await
+            .unwrap();
+        assert!(filtered.is_empty());
     }
 
     #[tokio::test]

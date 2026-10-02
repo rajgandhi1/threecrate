@@ -21,6 +21,22 @@ struct KdNode {
     axis: u8,              // splitting axis: 0=x, 1=y, 2=z
 }
 
+/// Read-only view of one kd-tree node, for code that walks the tree itself
+/// (e.g. the GPU search in `threecrate-gpu`). See [`KdTree::flat_nodes`].
+#[derive(Debug, Clone, Copy)]
+pub struct FlatKdNode {
+    /// The point stored at this node.
+    pub point: Point3f,
+    /// Index of that point in the slice the tree was built from.
+    pub index: usize,
+    /// Position of the left child in [`KdTree::flat_nodes`], or [`KdTree::NO_CHILD`].
+    pub left: u32,
+    /// Position of the right child in [`KdTree::flat_nodes`], or [`KdTree::NO_CHILD`].
+    pub right: u32,
+    /// Splitting axis: 0 = x, 1 = y, 2 = z.
+    pub axis: u8,
+}
+
 /// Efficient KD-Tree implementation for nearest neighbor search.
 ///
 /// Nodes live in a single contiguous `Vec` (`nodes`); children are referenced by
@@ -32,6 +48,24 @@ pub struct KdTree {
 }
 
 impl KdTree {
+    /// Child value in [`FlatKdNode`] meaning "no child".
+    pub const NO_CHILD: u32 = NIL;
+
+    /// The tree's nodes in their stored order. The root is the first node (when
+    /// the tree is not empty), and children are referenced by position in this
+    /// sequence. A query walks it like any binary kd-tree: go to the child on
+    /// the query's side of the split, and visit the other child only if the
+    /// split plane is closer than the current best match.
+    pub fn flat_nodes(&self) -> impl ExactSizeIterator<Item = FlatKdNode> + '_ {
+        self.nodes.iter().map(|node| FlatKdNode {
+            point: node.point,
+            index: node.original_index,
+            left: node.left,
+            right: node.right,
+            axis: node.axis,
+        })
+    }
+
     /// Create a new KD-tree from a slice of points.
     ///
     /// Points with a NaN or infinite coordinate are left out of the tree and are
@@ -40,6 +74,12 @@ impl KdTree {
     /// value would send every query down one side and make the finite points on
     /// the other side unreachable.
     pub fn new(points: &[Point3f]) -> Result<Self> {
+        Self::from_points(points.to_vec())
+    }
+
+    /// Like [`KdTree::new`], but takes ownership of the points instead of
+    /// copying them (useful when the caller already built a converted copy).
+    pub fn from_points(points: Vec<Point3f>) -> Result<Self> {
         let mut points_with_indices: Vec<(Point3f, usize)> = points
             .iter()
             .enumerate()
@@ -51,7 +91,7 @@ impl KdTree {
             return Ok(Self {
                 nodes: Vec::new(),
                 root: None,
-                points: points.to_vec(),
+                points,
             });
         }
 
@@ -72,7 +112,7 @@ impl KdTree {
         Ok(Self {
             nodes,
             root: Some(0),
-            points: points.to_vec(),
+            points,
         })
     }
 

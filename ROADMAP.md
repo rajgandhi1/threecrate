@@ -54,9 +54,11 @@ credibility story. In rough priority order:
 
 ## Medium-term
 
-- **Competitive GPU compute** — cache pipelines, async readbacks, and a
-  GPU-resident spatial index so GPU knn/normals/icp beat CPU (voxel and TSDF
-  already do). → [#178](https://github.com/rajgandhi1/threecrate/issues/178)
+- ~~**Competitive GPU compute**~~: **done** ([#178](https://github.com/rajgandhi1/threecrate/issues/178)).
+  GPU k-NN, normals, ICP and the radius outlier filter now search a kd-tree kept
+  on the GPU instead of checking every point, and pipelines are built once. On
+  an RTX 3050 Ti, GPU ICP is 2.6x to 3.4x and normals 1.2x to 2.4x faster than
+  the CPU.
 - ~~Fix the GPU TSDF buffer-cast panic~~ — **done** ([#175](https://github.com/rajgandhi1/threecrate/issues/175)).
   The readback cast a mapped GPU buffer (8-byte aligned) straight into
   `repr(align(16))` structs; now it copies into a correctly aligned `Vec`. All

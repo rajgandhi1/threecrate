@@ -872,7 +872,8 @@ fn icp(
 ///     target: Target (reference) point cloud.
 ///     max_iterations: Maximum ICP iterations (default 50).
 ///     max_correspondence_distance: Maximum distance for accepting a match (default 1.0).
-///     convergence_threshold: Stop when |ΔMSE| is below this value (default 1e-6).
+///     convergence_threshold: Stop when the RMSE improves by less than this
+///         fraction, or an update barely moves the points (default 1e-6).
 ///     k_correspondences: Neighbours used to estimate per-point covariances (default 20).
 ///     init_transform: Optional 4×4 float32 or float64 initial pose. Defaults to identity.
 #[pyfunction]

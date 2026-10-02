@@ -247,78 +247,103 @@ impl CorrespondenceStats {
 
     /// Compute the optimal transformation using SVD
     fn transformation(&self) -> Result<Isometry3<f32>> {
-        if self.count == 0 {
-            return Err(Error::InvalidData(
-                "Point correspondence mismatch".to_string(),
-            ));
-        }
-
-        let n = self.count as f64;
-        let source_centroid = self.sum_source / n;
-        let target_centroid = self.sum_target / n;
-
-        // Covariance H = Σ (p − p̄)(q − q̄)ᵀ, accumulated in f64 but decomposed
-        // in f32: nalgebra's f64 SVD fails to converge on some rank-deficient
-        // matrices (e.g. [[8,8,0],[8,8,0],[0,0,0]] from collinear clouds).
-        let h: Matrix3<f32> =
-            (self.sum_outer - source_centroid * target_centroid.transpose() * n).cast::<f32>();
-
-        // SVD decomposition, capped so a non-converging case errors, not hangs
-        const SVD_MAX_ITERATIONS: usize = 1000;
-        let svd = h
-            .try_svd(true, true, f32::EPSILON * 5.0, SVD_MAX_ITERATIONS)
-            .ok_or_else(|| Error::Algorithm("SVD did not converge".to_string()))?;
-        let u = svd
-            .u
-            .ok_or_else(|| Error::Algorithm("SVD U matrix not available".to_string()))?;
-        let v_t = svd
-            .v_t
-            .ok_or_else(|| Error::Algorithm("SVD V^T matrix not available".to_string()))?;
-
-        // Compute rotation matrix
-        let mut r = v_t.transpose() * u.transpose();
-
-        // Ensure proper rotation (det(R) = 1)
-        if r.determinant() < 0.0 {
-            let mut v_t_corrected = v_t;
-            v_t_corrected.set_row(2, &(-v_t.row(2)));
-            r = v_t_corrected.transpose() * u.transpose();
-        }
-
-        // Convert to unit quaternion
-        let rotation = UnitQuaternion::from_matrix(&r);
-
-        // Compute translation
-        let translation = target_centroid - rotation.cast::<f64>() * source_centroid;
-
-        Ok(Isometry3::from_parts(
-            Translation3::from(translation.cast::<f32>()),
-            rotation,
-        ))
+        rigid_transform_from_sums(
+            self.count as f64,
+            &self.sum_source,
+            &self.sum_target,
+            &self.sum_outer,
+        )
     }
 }
 
-/// Where a cloud sits and how big it is: its centroid and the RMS distance of
-/// its points from that centroid. Both are used to judge whether an ICP update
+/// Best rigid transform taking a set of source points onto their matched
+/// target points (Kabsch / SVD), from running sums over the matched pairs:
+/// the pair count, the sums of source and target points, and the sum of
+/// `source * targetᵀ`. Used by the CPU ICP and by the GPU ICP in
+/// `threecrate-gpu`, which computes the sums on the GPU.
+pub fn rigid_transform_from_sums(
+    count: f64,
+    sum_source: &Vector3<f64>,
+    sum_target: &Vector3<f64>,
+    sum_outer: &Matrix3<f64>,
+) -> Result<Isometry3<f32>> {
+    if count <= 0.0 {
+        return Err(Error::InvalidData(
+            "Point correspondence mismatch".to_string(),
+        ));
+    }
+
+    let source_centroid = sum_source / count;
+    let target_centroid = sum_target / count;
+
+    // Covariance H = Σ (p − p̄)(q − q̄)ᵀ, accumulated in f64 but decomposed
+    // in f32: nalgebra's f64 SVD fails to converge on some rank-deficient
+    // matrices (e.g. [[8,8,0],[8,8,0],[0,0,0]] from collinear clouds).
+    let h: Matrix3<f32> =
+        (sum_outer - source_centroid * target_centroid.transpose() * count).cast::<f32>();
+
+    // SVD decomposition, capped so a non-converging case errors, not hangs
+    const SVD_MAX_ITERATIONS: usize = 1000;
+    let svd = h
+        .try_svd(true, true, f32::EPSILON * 5.0, SVD_MAX_ITERATIONS)
+        .ok_or_else(|| Error::Algorithm("SVD did not converge".to_string()))?;
+    let u = svd
+        .u
+        .ok_or_else(|| Error::Algorithm("SVD U matrix not available".to_string()))?;
+    let v_t = svd
+        .v_t
+        .ok_or_else(|| Error::Algorithm("SVD V^T matrix not available".to_string()))?;
+
+    // Compute rotation matrix
+    let mut r = v_t.transpose() * u.transpose();
+
+    // Ensure proper rotation (det(R) = 1)
+    if r.determinant() < 0.0 {
+        let mut v_t_corrected = v_t;
+        v_t_corrected.set_row(2, &(-v_t.row(2)));
+        r = v_t_corrected.transpose() * u.transpose();
+    }
+
+    // Convert to unit quaternion
+    let rotation = UnitQuaternion::from_matrix(&r);
+
+    // Compute translation
+    let translation = target_centroid - rotation.cast::<f64>() * source_centroid;
+
+    Ok(Isometry3::from_parts(
+        Translation3::from(translation.cast::<f32>()),
+        rotation,
+    ))
+}
+
+/// True when every coordinate of `p` is finite.
+fn is_finite_point(p: &Point3f) -> bool {
+    p.coords.iter().all(|c| c.is_finite())
+}
+
+/// Where a cloud sits and how big it is: the centroid of its finite points
+/// and their RMS distance from it. ICP uses both to judge whether an update
 /// still moves the points by a meaningful amount.
-struct CloudScale {
-    centroid: Point3f,
-    radius: f32,
+#[derive(Debug, Clone, Copy)]
+pub struct CloudScale {
+    pub centroid: Point3f,
+    pub radius: f32,
 }
 
 impl CloudScale {
-    fn of(points: &[Point3f]) -> Self {
-        let n = points.len().max(1) as f64;
-        let (sum, sum_sq) = points
+    pub fn of(points: &[Point3f]) -> Self {
+        let (sum, sum_sq, count) = points
             .par_iter()
+            .filter(|p| is_finite_point(p))
             .map(|p| {
                 let v = p.coords.cast::<f64>();
-                (v, v.norm_squared())
+                (v, v.norm_squared(), 1usize)
             })
             .reduce(
-                || (Vector3::zeros(), 0.0),
-                |(a, a_sq), (b, b_sq)| (a + b, a_sq + b_sq),
+                || (Vector3::zeros(), 0.0, 0),
+                |(a, a_sq, a_n), (b, b_sq, b_n)| (a + b, a_sq + b_sq, a_n + b_n),
             );
+        let n = count.max(1) as f64;
         let centroid = sum / n;
         let radius_sq = (sum_sq / n - centroid.norm_squared()).max(0.0);
         Self {
@@ -328,49 +353,64 @@ impl CloudScale {
     }
 }
 
-/// A frame centred on the target cloud, in which ICP runs.
+/// A frame centred on a point cloud, for running registration in `f32`.
 ///
 /// Far from the origin (e.g. map coordinates millions of metres away), `f32`
 /// cannot represent small moves, so ICP would stall well short of alignment.
-/// Moving both clouds next to the origin first keeps full precision; the final
-/// transform is converted back to the original frame. Clouds already near the
-/// origin (e.g. in sensor coordinates) skip this and avoid the extra copies.
-struct LocalFrame {
-    origin: Vector3<f64>,
+/// Moving the clouds next to the origin first keeps full precision; results
+/// are converted back to the original frame.
+#[derive(Debug, Clone, Copy)]
+pub struct LocalFrame {
+    /// The original-frame point that becomes this frame's origin.
+    pub origin: Vector3<f64>,
 }
 
 impl LocalFrame {
+    /// A frame centred on the mean of the finite points (a single NaN would
+    /// otherwise make every local coordinate NaN).
+    pub fn centred_on(points: &[Point3f]) -> Self {
+        let (sum, count) = points
+            .par_iter()
+            .filter(|p| is_finite_point(p))
+            .map(|p| (p.coords.cast::<f64>(), 1usize))
+            .reduce(
+                || (Vector3::zeros(), 0),
+                |(a, a_n), (b, b_n)| (a + b, a_n + b_n),
+            );
+        Self {
+            origin: sum / count.max(1) as f64,
+        }
+    }
+
     /// A frame centred on `points`, or `None` when they are close enough to
     /// the origin (within 100x their own size) that `f32` loses nothing.
-    fn if_far_from_origin(points: &[Point3f]) -> Option<Self> {
+    /// Clouds in sensor coordinates take the `None` path and skip the copies.
+    pub fn if_far_from_origin(points: &[Point3f]) -> Option<Self> {
         let scale = CloudScale::of(points);
         if scale.centroid.coords.norm() <= 100.0 * scale.radius {
             return None;
         }
-        let sum = points
-            .par_iter()
-            .map(|p| p.coords.cast::<f64>())
-            .reduce(Vector3::zeros, |a, b| a + b);
-        Some(Self {
-            origin: sum / points.len().max(1) as f64,
-        })
+        Some(Self::centred_on(points))
     }
 
-    fn points_to_local(&self, points: &[Point3f]) -> Vec<Point3f> {
-        points
-            .par_iter()
-            .map(|p| Point3f::from((p.coords.cast::<f64>() - self.origin).cast::<f32>()))
-            .collect()
+    /// `p` in this frame.
+    pub fn point_to_local(&self, p: &Point3f) -> Point3f {
+        Point3f::from((p.coords.cast::<f64>() - self.origin).cast::<f32>())
     }
 
-    /// `T` in the original frame, expressed in this frame.
-    fn to_local(&self, transform: &Isometry3<f32>) -> Isometry3<f32> {
+    /// Every point of `points` in this frame (in parallel).
+    pub fn points_to_local(&self, points: &[Point3f]) -> Vec<Point3f> {
+        points.par_iter().map(|p| self.point_to_local(p)).collect()
+    }
+
+    /// A transform given in the original frame, expressed in this frame.
+    pub fn transform_to_local(&self, transform: &Isometry3<f32>) -> Isometry3<f32> {
         let shift = Translation3::from(self.origin);
         (shift.inverse() * transform.cast::<f64>() * shift).cast::<f32>()
     }
 
-    /// `T` in this frame, expressed in the original frame.
-    fn to_world(&self, transform: &Isometry3<f32>) -> Isometry3<f32> {
+    /// A transform given in this frame, expressed in the original frame.
+    pub fn transform_to_world(&self, transform: &Isometry3<f32>) -> Isometry3<f32> {
         let shift = Translation3::from(self.origin);
         (shift * transform.cast::<f64>() * shift.inverse()).cast::<f32>()
     }
@@ -392,7 +432,7 @@ impl LocalFrame {
 ///   from the origin (e.g. map coordinates) still takes every useful step.
 ///
 /// `centroid` is the source centroid before `delta` was applied.
-fn has_converged(
+pub fn icp_converged(
     previous_mse: f32,
     current_mse: f32,
     delta: &Isometry3<f32>,
@@ -502,12 +542,12 @@ pub fn icp_detailed(
     let mut result = icp_point_to_point_local(
         &frame.points_to_local(&source.points),
         &frame.points_to_local(&target.points),
-        frame.to_local(&init),
+        frame.transform_to_local(&init),
         max_iters,
         max_correspondence_distance,
         convergence_threshold,
     )?;
-    result.transformation = frame.to_world(&result.transformation);
+    result.transformation = frame.transform_to_world(&result.transformation);
     Ok(result)
 }
 
@@ -558,7 +598,7 @@ fn icp_point_to_point_local(
         let current_mse = stats.mse();
 
         // Check for convergence
-        if has_converged(
+        if icp_converged(
             previous_mse,
             current_mse,
             &delta_transform,
@@ -771,12 +811,12 @@ pub fn icp_point_to_plane_detailed(
         &frame.points_to_local(&source.points),
         &frame.points_to_local(&target.points),
         target_normals,
-        frame.to_local(&init),
+        frame.transform_to_local(&init),
         max_iters,
         max_correspondence_distance,
         convergence_threshold,
     )?;
-    result.transformation = frame.to_world(&result.transformation);
+    result.transformation = frame.transform_to_world(&result.transformation);
     Ok(result)
 }
 
@@ -840,7 +880,7 @@ fn icp_point_to_plane_local(
         current_transform = delta * current_transform;
 
         let current_mse = compute_point_to_plane_mse(&valid_source, &valid_target, &valid_normals);
-        if has_converged(
+        if icp_converged(
             previous_mse,
             current_mse,
             &delta,

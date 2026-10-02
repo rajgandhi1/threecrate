@@ -41,6 +41,7 @@ pub mod nearest_neighbor;
 pub mod normals;
 pub mod renderer;
 pub mod segmentation;
+mod spatial;
 pub mod tsdf;
 pub mod utils;
 

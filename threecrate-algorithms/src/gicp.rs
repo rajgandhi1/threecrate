@@ -14,7 +14,7 @@ use threecrate_core::{
 };
 
 use crate::nearest_neighbor::KdTree;
-use crate::registration::ICPResult;
+use crate::registration::{icp_converged, CloudScale, ICPResult};
 
 // ---------------------------------------------------------------------------
 // Config
@@ -27,7 +27,8 @@ pub struct GicpConfig {
     pub max_iterations: usize,
     /// Maximum Euclidean distance for accepting a source–target correspondence.
     pub max_correspondence_distance: f32,
-    /// Convergence threshold: stop when |ΔMSE| < this value.
+    /// Stop when the RMSE improves by less than this fraction of its previous
+    /// value, or an update barely moves the points (same rule as ICP).
     pub convergence_threshold: f32,
     /// Number of nearest neighbours used to estimate per-point covariance matrices.
     pub k_correspondences: usize,
@@ -54,6 +55,30 @@ fn skew_sym(v: &nalgebra::Vector3<f32>) -> Matrix3<f32> {
     Matrix3::new(0.0, -v.z, v.y, v.z, 0.0, -v.x, -v.y, v.x, 0.0)
 }
 
+/// Replace a neighbourhood covariance with the "plane" covariance from the GICP
+/// paper: same principal directions, but spread (1, 1, ε) with ε for the
+/// surface normal. This keeps every local surface a thin plate whatever the
+/// scene size; a fixed regularisation term would swamp small scenes and vanish
+/// in large ones.
+///
+/// A neighbourhood with no clear plane (all points in one spot, e.g. stacked
+/// duplicate returns, or on a line) has no meaningful normal, so it gets an
+/// isotropic covariance instead of a plane in a random orientation.
+fn plane_covariance(cov: Matrix3<f32>) -> Matrix3<f32> {
+    const EPSILON: f32 = 1e-3;
+    let eigen = cov.symmetric_eigen();
+    let largest = eigen.eigenvalues.max();
+    let middle = eigen.eigenvalues.sum() - largest - eigen.eigenvalues.min();
+    if !(largest > 0.0) || middle <= 1e-6 * largest {
+        return Matrix3::identity();
+    }
+    let normal_axis = eigen.eigenvalues.imin();
+    let mut spread = nalgebra::Vector3::new(1.0, 1.0, 1.0);
+    spread[normal_axis] = EPSILON;
+    let v = eigen.eigenvectors;
+    v * Matrix3::from_diagonal(&spread) * v.transpose()
+}
+
 /// Estimate per-point 3×3 covariance matrices from k nearest neighbours.
 ///
 /// Returns a `Vec` of length `points.len()`, aligned index-for-index.
@@ -67,8 +92,9 @@ fn compute_covariances(points: &[Point3f], k: usize) -> Result<Vec<Matrix3<f32>>
             let neighbours = tree.find_k_nearest(p, k);
             let n = neighbours.len();
             if n < 3 {
-                // Sparse neighbourhood: isotropic fallback.
-                return Matrix3::identity() * 1e-3_f32;
+                // Sparse neighbourhood: isotropic fallback (same scale as the
+                // normalised covariances below).
+                return Matrix3::identity();
             }
 
             let nf = n as f32;
@@ -83,11 +109,8 @@ fn compute_covariances(points: &[Point3f], k: usize) -> Result<Vec<Matrix3<f32>>
                 let d = points[*idx].coords - mean;
                 cov += d * d.transpose();
             }
-            let mut cov = cov / (nf - 1.0).max(1.0);
-            // Regularise: add a small isotropic term so that locally planar or
-            // collinear neighbourhoods still have an invertible covariance matrix.
-            cov += Matrix3::identity() * 1e-4_f32;
-            cov
+            let cov = cov / (nf - 1.0).max(1.0);
+            plane_covariance(cov)
         })
         .collect();
 
@@ -109,7 +132,9 @@ fn compute_covariances(points: &[Point3f], k: usize) -> Result<Vec<Matrix3<f32>>
 ///    c. Build the weighted 6×6 Gauss-Newton system using combined covariances
 ///       `M_i = C_i^T + R C_i^S R^T`.
 ///    d. Solve for the incremental 6-DOF update and compose with the current transform.
-///    e. Declare convergence when |ΔMSE| < `convergence_threshold`.
+///    e. Declare convergence when the RMSE improves by less than
+///       `convergence_threshold` as a fraction, or the update barely moves the
+///       points. Both tests are relative, so they work at any scene size.
 ///
 /// # References
 /// Segal, A., Haehnel, D., & Thrun, S. (2009). *Generalized-ICP.*
@@ -175,6 +200,7 @@ pub fn gicp(
 
     let mut current_transform = init;
     let mut prev_mse = f32::INFINITY;
+    let source_scale = CloudScale::of(&source.points);
     let mut final_corr: Vec<(usize, usize)> = Vec::new();
 
     for iteration in 0..config.max_iterations {
@@ -277,10 +303,18 @@ pub fn gicp(
             * UnitQuaternion::from_axis_angle(&Vector3f::x_axis(), delta[0]);
         let delta_iso =
             Isometry3::from_parts(Translation3::new(delta[3], delta[4], delta[5]), delta_rot);
+        let moved_centroid = current_transform * source_scale.centroid;
         current_transform = delta_iso * current_transform;
 
         // Convergence check.
-        if (prev_mse - mse).abs() < config.convergence_threshold {
+        if icp_converged(
+            prev_mse,
+            mse,
+            &delta_iso,
+            &moved_centroid,
+            source_scale.radius,
+            config.convergence_threshold,
+        ) {
             return Ok(ICPResult {
                 transformation: current_transform,
                 mse,
@@ -330,6 +364,64 @@ mod tests {
             ));
         }
         cloud
+    }
+
+    #[test]
+    fn test_plane_covariance_degenerate_neighbourhoods() {
+        // No spread at all (duplicate points): isotropic, not a random plane
+        assert_eq!(plane_covariance(Matrix3::zeros()), Matrix3::identity());
+        // Points on a line along x: no normal either
+        let line = Matrix3::from_diagonal(&nalgebra::Vector3::new(4.0, 0.0, 0.0));
+        assert_eq!(plane_covariance(line), Matrix3::identity());
+        // A plane in x/y: thin along z
+        let plane = Matrix3::from_diagonal(&nalgebra::Vector3::new(4.0, 2.0, 0.0));
+        let c = plane_covariance(plane);
+        assert_relative_eq!(c[(2, 2)], 1e-3, epsilon = 1e-6);
+        assert_relative_eq!(c[(0, 0)], 1.0, epsilon = 1e-6);
+    }
+
+    #[test]
+    fn test_gicp_convergence_is_scale_invariant() {
+        // The same problem at 1x and at 1/100 scale. Before, an absolute MSE
+        // stopping rule and a fixed covariance term both broke the small copy.
+        let solve = |scale: f32| {
+            let mut source = PointCloud::new();
+            for i in 0..30 {
+                for j in 0..30 {
+                    let (x, y) = (i as f32 * 0.1, j as f32 * 0.1);
+                    let z = 0.3 * (1.3 * x).sin() * (0.7 * y).cos();
+                    source.push(Point3f::new(x, y, z) * scale);
+                }
+            }
+            let truth = Isometry3::from_parts(
+                Translation3::new(0.2 * scale, -0.12 * scale, 0.06 * scale),
+                UnitQuaternion::from_euler_angles(0.0, 0.0, 0.1),
+            );
+            let target = PointCloud::from_points(source.points.iter().map(|p| truth * p).collect());
+            let config = GicpConfig {
+                max_iterations: 100,
+                max_correspondence_distance: scale,
+                ..Default::default()
+            };
+            let result = gicp(&source, &target, Isometry3::identity(), config).unwrap();
+            let rotation_error =
+                (result.transformation.rotation.inverse() * truth.rotation).angle();
+            let translation_error =
+                (result.transformation.translation.vector - truth.translation.vector).norm()
+                    / scale;
+            (rotation_error, translation_error)
+        };
+
+        let (rot_big, trans_big) = solve(1.0);
+        let (rot_small, trans_small) = solve(0.01);
+        assert!(
+            rot_big < 1e-6 && trans_big < 1e-5,
+            "1x: rot {rot_big}, trans {trans_big}"
+        );
+        assert!(
+            rot_small < 1e-6 && trans_small < 1e-5,
+            "1/100 scale stopped early: rot {rot_small}, trans {trans_small}"
+        );
     }
 
     #[test]

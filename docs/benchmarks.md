@@ -101,6 +101,27 @@ What this shows:
 Before [#187], ThreeCrate stopped too early on TUM (0.68° and 34 mm off). See
 "What changed" below.
 
+## GPU vs CPU (ThreeCrate only)
+
+Measured on an **NVIDIA RTX 3050 Ti Laptop GPU** (Vulkan backend). The CPU
+column is our own 16-core CPU path. Full resolution.
+
+| Task | Dataset | CPU (ms) | GPU (ms) | GPU speedup |
+| --- | --- | ---: | ---: | ---: |
+| ICP (10 iters) | TUM | 207 | 63 | 3.30x |
+| ICP (10 iters) | KITTI | 62 | 24 | 2.56x |
+| ICP (10 iters) | nuScenes | 38 | 11 | 3.44x |
+| normals (k=10) | TUM | 60 | 25 | 2.43x |
+| normals (k=10) | KITTI | 37 | 17 | 2.15x |
+| normals (k=10) | nuScenes | 8.4 | 7.0 | 1.20x |
+| voxel | TUM | 7.0 | 4.9 | 1.43x |
+| voxel | KITTI | 8.9 | 3.3 | 2.73x |
+| voxel | nuScenes | 2.2 | 1.5 | 1.50x |
+
+GPU and CPU give the same ICP result, and GPU normals match the CPU on over 99%
+of points in the tests. On the laptop's integrated AMD GPU, GPU ICP is still
+faster than the CPU (1.1x to 1.6x) and GPU normals are close (0.7x to 1.0x).
+
 ## Caveats
 
 - **The TUM `read` row is not a fair I/O test.** ThreeCrate's number is the
@@ -118,7 +139,24 @@ voxel downsampling, normal estimation, and ICP, with the same ICP accuracy.**
 ## What changed in this branch (and why it matters)
 
 These code changes were made to close real algorithmic gaps, not to flatter the
-benchmark. Each is covered by unit tests (208 passing).
+benchmark. Each is covered by unit tests (210 passing).
+
+- **GPU k-NN, normals and ICP rewritten** ([#178]). All three used to compare
+  every point with every other point, and GPU normals even did that on the
+  CPU first. They now build a kd-tree on the CPU, upload it once, and search it
+  on the GPU. Pipelines are built once per context instead of on every call.
+  GPU ICP also had a bug: it read 12-byte points as 16-byte ones and returned a
+  wrong answer (a 54.7 m shift for a 0.05 m move). It now keeps the target tree
+  and match results on the GPU and reads back only small sums each iteration.
+  The GPU radius outlier filter got the same treatment. At the 20k cap on KITTI
+  (RTX 3050 Ti): normals 111 to 3.5 ms, ICP 66 ms (wrong) to 5.6 ms (correct),
+  k-NN 14 to 2.1 ms, radius filter 6.1 to 1.9 ms. A NaN point no longer breaks
+  the GPU search. GPU ICP now stops with the same scale-free rule as the CPU,
+  and GPU point-to-plane ICP builds its 6x6 system on the GPU.
+- **GICP works at any scene size.** It now uses the same scale-free stopping
+  rule as ICP ([#187]), and its covariances follow the GICP paper (spread 1, 1,
+  0.001) instead of adding a fixed 1e-4 m². Before, a scene at 1/100 scale
+  ended up to 0.13 rad off; now it matches the full-size result.
 
 - **Faster k-nearest search for normals** ([#190]). Profiling KITTI showed the
   neighbor search was almost all of the time; the PCA step was tiny. The search
@@ -188,9 +226,6 @@ benchmark. Each is covered by unit tests (208 passing).
 
 ## Known remaining gaps (honest)
 
-- **GPU knn/normals/icp are not competitive yet** (per-call shader/pipeline rebuilds,
-  blocking readbacks, no GPU-side spatial index). `gpu_voxel` and TSDF are the
-  exceptions. GPU rows are reported separately and never enter the composite.
 - **PCL is not measured here yet.** The executable exists (below) but is not wired
   into these numbers.
 
@@ -245,5 +280,6 @@ For the accuracy table, use `--tasks icp_accuracy --max-icp-iters 50`.
 [#180]: https://github.com/rajgandhi1/threecrate/issues/180
 [#187]: https://github.com/rajgandhi1/threecrate/issues/187
 [#190]: https://github.com/rajgandhi1/threecrate/issues/190
+[#178]: https://github.com/rajgandhi1/threecrate/issues/178
 </content>
 </invoke>
