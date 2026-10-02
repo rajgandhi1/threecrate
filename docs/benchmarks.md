@@ -6,13 +6,12 @@ this machine, and the caveats are stated plainly rather than buried.
 
 ## TL;DR
 
-- On real point-cloud datasets, ThreeCrate (CPU) is **faster than Open3D at
-  reading files, voxel downsampling, and ICP** (ICP is **2.7x to 3.7x** faster
-  at full resolution). Normal estimation is faster on two of three datasets and
-  slightly slower on full-resolution KITTI (0.92x).
-- **ICP accuracy now matches Open3D** on all three datasets (see "ICP accuracy").
-- Composite score across the 12 shared rows: **183.0 at full resolution** and
-  **188.6 at the 20k-point cap**. Without the `read` rows it is 179.1 and 174.7,
+- On real point-cloud datasets, ThreeCrate (CPU) is **faster than Open3D on every
+  task we measure**: reading files, voxel downsampling, normal estimation (1.5x
+  to 2.1x), and ICP (1.8x to 3.4x) at full resolution.
+- **ICP accuracy matches Open3D** on all three datasets (see "ICP accuracy").
+- Composite score across the 12 shared rows: **209.7 at full resolution** and
+  **199.5 at the 20k-point cap**. Without the `read` rows it is 194.7 and 180.3,
   so the lead does not come from file reading.
 - **PCL is not in these numbers yet.** The PCL benchmark is written
   (`scripts/pcl_bench/`) but has not been run here. Do not quote a PCL
@@ -27,6 +26,8 @@ this machine, and the caveats are stated plainly rather than buried.
   (frame `0000000000`), nuScenes `v1.0-mini` (one `LIDAR_TOP` sample)
 - Generated: 2026-10-02
 - 5 iterations, 2 warmups, median milliseconds (lower is better)
+- Both libraries ran in the same session, so ratios are fair even though the
+  machine was busier than in earlier runs (absolute times are higher).
 
 ## Results at full resolution
 
@@ -34,20 +35,20 @@ Full frames: TUM about 230k points, KITTI about 121k, nuScenes about 35k.
 
 | Task | Dataset | Open3D (ms) | ThreeCrate (ms) | Ratio (Open3D/TC) |
 | --- | --- | ---: | ---: | ---: |
-| read | TUM_Freiburg1_XYZ | 15.242 | 3.361 | 4.53x ✅ |
-| read | KITTI | 1.380 | 0.888 | 1.55x ✅ |
-| read | NuScenesMini | 0.274 | 0.260 | 1.05x ✅ |
-| voxel | TUM_Freiburg1_XYZ | 10.274 | 6.670 | 1.54x ✅ |
-| voxel | KITTI | 16.906 | 9.122 | 1.85x ✅ |
-| voxel | NuScenesMini | 3.763 | 2.412 | 1.56x ✅ |
-| normals | TUM_Freiburg1_XYZ | 106.346 | 93.299 | 1.14x ✅ |
-| normals | KITTI | 59.174 | 64.345 | 0.92x ❌ |
-| normals | NuScenesMini | 18.956 | 12.710 | 1.49x ✅ |
-| icp | TUM_Freiburg1_XYZ | 515.311 | 188.979 | 2.73x ✅ |
-| icp | KITTI | 204.748 | 55.575 | 3.68x ✅ |
-| icp | NuScenesMini | 90.980 | 33.580 | 2.71x ✅ |
+| read | TUM_Freiburg1_XYZ | 23.908 | 4.061 | 5.89x ✅ |
+| read | KITTI | 1.568 | 1.040 | 1.51x ✅ |
+| read | NuScenesMini | 0.385 | 0.190 | 2.03x ✅ |
+| voxel | TUM_Freiburg1_XYZ | 15.241 | 10.384 | 1.47x ✅ |
+| voxel | KITTI | 18.142 | 10.473 | 1.73x ✅ |
+| voxel | NuScenesMini | 4.468 | 2.838 | 1.57x ✅ |
+| normals | TUM_Freiburg1_XYZ | 175.365 | 82.430 | 2.13x ✅ |
+| normals | KITTI | 86.181 | 55.907 | 1.54x ✅ |
+| normals | NuScenesMini | 32.323 | 16.456 | 1.96x ✅ |
+| icp | TUM_Freiburg1_XYZ | 816.946 | 320.869 | 2.55x ✅ |
+| icp | KITTI | 292.445 | 86.429 | 3.38x ✅ |
+| icp | NuScenesMini | 110.298 | 61.003 | 1.81x ✅ |
 
-Composite (geometric mean of ratios, all 12 rows): **183.0**.
+Composite (geometric mean of ratios, all 12 rows): **209.7**.
 
 ## Results with a 20,000-point cap
 
@@ -55,20 +56,20 @@ Capping hides how things scale. Trust the full-resolution table first.
 
 | Task | Dataset | Open3D (ms) | ThreeCrate (ms) | Ratio |
 | --- | --- | ---: | ---: | ---: |
-| read | TUM_Freiburg1_XYZ | 15.454 | 3.485 | 4.43x ✅ |
-| read | KITTI | 1.394 | 0.902 | 1.55x ✅ |
-| read | NuScenesMini | 0.283 | 0.145 | 1.95x ✅ |
-| voxel | TUM_Freiburg1_XYZ | 0.735 | 0.575 | 1.28x ✅ |
-| voxel | KITTI | 3.350 | 2.017 | 1.66x ✅ |
-| voxel | NuScenesMini | 1.417 | 1.202 | 1.18x ✅ |
-| normals | TUM_Freiburg1_XYZ | 9.871 | 6.988 | 1.41x ✅ |
-| normals | KITTI | 10.180 | 8.478 | 1.20x ✅ |
-| normals | NuScenesMini | 11.318 | 6.949 | 1.63x ✅ |
-| icp | TUM_Freiburg1_XYZ | 29.860 | 11.418 | 2.62x ✅ |
-| icp | KITTI | 29.201 | 7.903 | 3.69x ✅ |
-| icp | NuScenesMini | 37.501 | 16.517 | 2.27x ✅ |
+| read | TUM_Freiburg1_XYZ | 19.030 | 4.281 | 4.45x ✅ |
+| read | KITTI | 2.485 | 1.258 | 1.98x ✅ |
+| read | NuScenesMini | 0.397 | 0.176 | 2.26x ✅ |
+| voxel | TUM_Freiburg1_XYZ | 0.932 | 0.658 | 1.42x ✅ |
+| voxel | KITTI | 5.668 | 2.883 | 1.97x ✅ |
+| voxel | NuScenesMini | 2.571 | 1.462 | 1.76x ✅ |
+| normals | TUM_Freiburg1_XYZ | 16.020 | 11.046 | 1.45x ✅ |
+| normals | KITTI | 18.619 | 12.039 | 1.55x ✅ |
+| normals | NuScenesMini | 20.264 | 11.100 | 1.83x ✅ |
+| icp | TUM_Freiburg1_XYZ | 54.528 | 28.027 | 1.95x ✅ |
+| icp | KITTI | 50.607 | 18.289 | 2.77x ✅ |
+| icp | NuScenesMini | 55.284 | 29.659 | 1.86x ✅ |
 
-Composite (all 12 rows): **188.6**.
+Composite (all 12 rows): **199.5**.
 
 ## ICP accuracy
 
@@ -84,12 +85,12 @@ Errors are measured against the known offset. Lower is better.
 
 | Dataset | Library | Rotation error | Translation error | Inlier RMSE | Time |
 | --- | --- | ---: | ---: | ---: | ---: |
-| TUM | Open3D | 0.029° | 4.7 mm | 2.8 mm | 1202 ms |
-| TUM | ThreeCrate | 0.029° | 4.7 mm | 2.8 mm | 708 ms |
-| KITTI | Open3D | 0.104° | 8.8 mm | 94.1 mm | 334 ms |
-| KITTI | ThreeCrate | 0.105° | 8.7 mm | 94.1 mm | 90 ms |
-| nuScenes | Open3D | 0.972° | 517.7 mm | 300.2 mm | 92 ms |
-| nuScenes | ThreeCrate | 0.972° | 517.4 mm | 300.2 mm | 54 ms |
+| TUM | Open3D | 0.029° | 4.7 mm | 2.8 mm | 1799 ms |
+| TUM | ThreeCrate | 0.029° | 4.7 mm | 2.8 mm | 1197 ms |
+| KITTI | Open3D | 0.104° | 8.8 mm | 94.1 mm | 546 ms |
+| KITTI | ThreeCrate | 0.105° | 8.7 mm | 94.1 mm | 171 ms |
+| nuScenes | Open3D | 0.972° | 517.7 mm | 300.2 mm | 168 ms |
+| nuScenes | ThreeCrate | 0.972° | 517.4 mm | 300.2 mm | 86 ms |
 
 What this shows:
 
@@ -107,17 +108,25 @@ Before [#187], ThreeCrate stopped too early on TUM (0.68° and 34 mm off). See
   The KITTI and nuScenes read rows are fair (both parse raw `float32`).
 - **`voxel` is a fair win** on every dataset. Both return the per-voxel centroid.
 - **The ICP speed rows measure speed only.** Accuracy is in "ICP accuracy" above.
-- **Normals are not a clean sweep.** Full-resolution KITTI is still 0.92x.
+- **Run-to-run noise is real.** ICP ratios moved between runs (nuScenes was 2.7x
+  in the previous run, 1.8x here) with no ICP code change. Treat single rows as
+  rough.
 
 The fair one-line claim: **on CPU, ThreeCrate is faster than Open3D at reading,
-voxel downsampling, and ICP with the same ICP accuracy, and faster at normal
-estimation except on full-resolution KITTI.**
+voxel downsampling, normal estimation, and ICP, with the same ICP accuracy.**
 
 ## What changed in this branch (and why it matters)
 
 These code changes were made to close real algorithmic gaps, not to flatter the
-benchmark. Each is covered by unit tests (206 passing).
+benchmark. Each is covered by unit tests (208 passing).
 
+- **Faster k-nearest search for normals** ([#190]). Profiling KITTI showed the
+  neighbor search was almost all of the time; the PCA step was tiny. The search
+  allocated three buffers per point. It now reuses one buffer per thread and
+  skips far branches that can no longer help. Same-machine A/B: normals TUM
+  163 to 91 ms, KITTI 120 to 55 ms, nuScenes 25 to 14 ms. KITTI went from 0.92x
+  to 1.54x vs Open3D. Outlier removal and FPFH features use the same search, so
+  they get faster too.
 - **ICP stopping rule is now scale-free** ([#187]). ICP used to stop when the
   error changed by less than a fixed amount. On small indoor scenes the error is
   tiny, so it stopped early (TUM: 0.68° and 34 mm off). It now stops when the
@@ -179,9 +188,6 @@ benchmark. Each is covered by unit tests (206 passing).
 
 ## Known remaining gaps (honest)
 
-- **Normal estimation still trails Open3D on full-resolution KITTI** (0.92x),
-  though it is now ahead on TUM and nuScenes. The remaining cost there is
-  per-point k-NN + PCA, not tree construction.
 - **GPU knn/normals/icp are not competitive yet** (per-call shader/pipeline rebuilds,
   blocking readbacks, no GPU-side spatial index). `gpu_voxel` and TSDF are the
   exceptions. GPU rows are reported separately and never enter the composite.
@@ -238,5 +244,6 @@ For the accuracy table, use `--tasks icp_accuracy --max-icp-iters 50`.
 [#177]: https://github.com/rajgandhi1/threecrate/issues/177
 [#180]: https://github.com/rajgandhi1/threecrate/issues/180
 [#187]: https://github.com/rajgandhi1/threecrate/issues/187
+[#190]: https://github.com/rajgandhi1/threecrate/issues/190
 </content>
 </invoke>

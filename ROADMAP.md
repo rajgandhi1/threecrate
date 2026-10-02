@@ -16,10 +16,10 @@ for the full tables and reproduction command.
 
 | Workload | Status | vs Open3D |
 |---|---|---:|
-| File read (raw float parse) | ✅ Ahead | 1.1x to 1.6x faster |
-| Voxel downsampling (centroid) | ✅ Ahead | 1.5x to 1.9x faster |
-| Normal estimation | ⚠️ Ahead on 2 of 3 | 0.92x to 1.5x |
-| ICP speed | ✅ Ahead | 2.7x to 3.7x faster |
+| File read (raw float parse) | ✅ Ahead | 1.5x to 2.0x faster |
+| Voxel downsampling (centroid) | ✅ Ahead | 1.5x to 1.7x faster |
+| Normal estimation | ✅ Ahead | 1.5x to 2.1x faster |
+| ICP speed | ✅ Ahead | 1.8x to 3.4x faster |
 | ICP accuracy | ✅ Same as Open3D | all 3 datasets |
 | PCL comparison | ⏳ Not yet measured | — |
 
@@ -40,8 +40,9 @@ credibility story. In rough priority order:
   covariance/MSE loops. With an introselect + parallel build, an allocation-free
   nearest query, and a parallel reduction, ICP went from **0.71x–0.99x to
   2.7x–4.3x** vs Open3D, and normals from 0.57x–1.09x to 0.92x–1.76x.
-- **Close the last normals gap** — full-resolution KITTI normals are still 0.92x.
-  The remaining cost is per-point k-NN + PCA on a sparse LiDAR ring scan.
+- ~~**Close the last normals gap**~~: **done** ([#190](https://github.com/rajgandhi1/threecrate/issues/190)).
+  The k-nearest search no longer allocates per point. KITTI normals went from
+  0.92x to 1.54x vs Open3D.
 - **Integrate PCL into the benchmark table** — the PCL harness is written and
   builds ([`scripts/pcl_bench/`](scripts/pcl_bench)); it just needs to be run in a
   shared environment and folded into the published numbers. → [#179](https://github.com/rajgandhi1/threecrate/issues/179)
