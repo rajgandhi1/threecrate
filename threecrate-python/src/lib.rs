@@ -15,11 +15,11 @@ use threecrate_algorithms::{
     icp_point_to_plane as tc_icp_point_to_plane, icp_point_to_point_default,
     kiss_icp::{kiss_icp as tc_kiss_icp, KissIcpConfig},
     mesh_difference as tc_mesh_difference, mesh_intersection as tc_mesh_intersection,
-    mesh_union as tc_mesh_union, ndt_registration as tc_ndt_registration, radius_outlier_removal,
-    segment_plane as tc_segment_plane, smooth_hc, smooth_laplacian, smooth_taubin,
-    statistical_outlier_removal, voxel_grid_filter, CameraIntrinsics, ColorizationConfig,
-    GlobalRegistrationConfig, HcSmoothingConfig, KdTree as TcKdTree, LaplacianSmoothingConfig,
-    NdtConfig, RgbImageView, TaubinSmoothingConfig,
+    mesh_union as tc_mesh_union, ndt_registration as tc_ndt_registration,
+    orient_normals_consistent, radius_outlier_removal, segment_plane as tc_segment_plane,
+    smooth_hc, smooth_laplacian, smooth_taubin, statistical_outlier_removal, voxel_grid_filter,
+    CameraIntrinsics, ColorizationConfig, GlobalRegistrationConfig, HcSmoothingConfig,
+    KdTree as TcKdTree, LaplacianSmoothingConfig, NdtConfig, RgbImageView, TaubinSmoothingConfig,
 };
 use threecrate_core::{
     ColoredNormalPoint3f, ColoredPoint3f, NearestNeighborSearch, NormalPoint3f, Point3f,
@@ -33,7 +33,7 @@ use threecrate_io::{
 use threecrate_reconstruction::{
     alpha_shape_reconstruction as tc_alpha_shape, auto_reconstruct,
     ball_pivoting_reconstruction as tc_ball_pivoting, delaunay_triangulation as tc_delaunay,
-    moving_least_squares as tc_moving_least_squares, poisson_reconstruction_default,
+    moving_least_squares as tc_moving_least_squares, poisson_reconstruction, PoissonConfig,
 };
 use threecrate_simplification::{MeshSimplifier, QuadricErrorSimplifier};
 
@@ -832,6 +832,20 @@ fn py_estimate_normals(cloud: &PyPointCloud, k_neighbors: usize) -> PyResult<PyN
         .map_err(to_py_err)
 }
 
+/// Flip normals so neighbouring normals agree all the way around the object.
+///
+/// `estimate_normals()` points every normal toward one viewpoint, which suits a
+/// single scan but leaves many normals of a closed object pointing inward.
+/// Call this before `poisson_reconstruct()` on full 3D objects. Returns a new
+/// cloud; positions are unchanged.
+#[pyfunction]
+#[pyo3(signature = (cloud, k_neighbors = 10))]
+fn orient_normals(cloud: &PyNormalPointCloud, k_neighbors: usize) -> PyResult<PyNormalPointCloud> {
+    let mut inner = cloud.inner.clone();
+    orient_normals_consistent(&mut inner, k_neighbors).map_err(to_py_err)?;
+    Ok(PyNormalPointCloud { inner })
+}
+
 // ---------------------------------------------------------------------------
 // Registration
 // ---------------------------------------------------------------------------
@@ -1505,10 +1519,32 @@ fn reconstruct(cloud: &PyPointCloud) -> PyResult<PyTriangleMesh> {
 /// Run Poisson surface reconstruction on a cloud that already has normals.
 ///
 /// Produces a watertight mesh. Call `estimate_normals()` first if you have a
-/// plain `PointCloud`.
+/// plain `PointCloud`, and `orient_normals()` for a full 3D object. Normals
+/// should point out of the surface.
+///
+/// Args:
+///     cloud: Points with normals.
+///     depth: The grid has 2^depth cells per side, 3 to 8 (default 7). Each
+///         step up gives finer detail and takes about 8x longer.
+///     smoothing: How far each normal is spread, in point spacings (default
+///         1.0). Raise it to fill bigger holes.
+///     trim_distance: Drop triangles farther than this from every input point
+///         (default None, keep the closed surface). Useful for open scans.
 #[pyfunction]
-fn poisson_reconstruct(cloud: &PyNormalPointCloud) -> PyResult<PyTriangleMesh> {
-    poisson_reconstruction_default(&cloud.inner)
+#[pyo3(signature = (cloud, depth = 7, smoothing = 1.0, trim_distance = None))]
+fn poisson_reconstruct(
+    cloud: &PyNormalPointCloud,
+    depth: u32,
+    smoothing: f32,
+    trim_distance: Option<f32>,
+) -> PyResult<PyTriangleMesh> {
+    let config = PoissonConfig {
+        depth,
+        smoothing,
+        trim_distance,
+        ..PoissonConfig::default()
+    };
+    poisson_reconstruction(&cloud.inner, &config)
         .map(|m| PyTriangleMesh { inner: m })
         .map_err(to_py_err)
 }
@@ -2536,6 +2572,7 @@ fn threecrate(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Normal estimation
     m.add_function(wrap_pyfunction!(py_estimate_normals, m)?)?;
+    m.add_function(wrap_pyfunction!(orient_normals, m)?)?;
 
     // Registration
     m.add_function(wrap_pyfunction!(icp, m)?)?;
