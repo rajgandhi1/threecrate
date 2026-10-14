@@ -469,7 +469,36 @@ impl MeshSimplifier for QuadricErrorSimplifier {
             }
         }
 
+        if collapse_counter == 0 && faces.len() > target_face_count {
+            return Err(self.no_collapse_error(mesh, &boundary_edges));
+        }
+
         Ok(self.rebuild_mesh(&vertices, &faces))
+    }
+}
+
+impl QuadricErrorSimplifier {
+    /// Explain why not a single edge could be collapsed, instead of quietly
+    /// returning the mesh unchanged.
+    fn no_collapse_error(
+        &self,
+        mesh: &TriangleMesh,
+        boundary_edges: &HashSet<(usize, usize)>,
+    ) -> Error {
+        let on_boundary = self.get_boundary_vertices(boundary_edges).len();
+        if self.preserve_boundary && on_boundary > 0 {
+            Error::Algorithm(format!(
+                "Could not simplify: every edge touches an open edge of the mesh \
+                 ({on_boundary} of {} vertices are on a hole or border), and \
+                 preserve_boundary keeps those vertices fixed. Fill the holes or \
+                 set preserve_boundary to false.",
+                mesh.vertices.len()
+            ))
+        } else {
+            Error::Algorithm(
+                "Could not simplify: no edge can be collapsed (check max_edge_length)".to_string(),
+            )
+        }
     }
 }
 
@@ -690,5 +719,43 @@ mod tests {
         assert!(preserved_boundary_count as f32 / boundary_positions.len() as f32 > 0.9,
             "Expected at least 90% of boundary vertices to be preserved, but only {}% were preserved",
             (preserved_boundary_count as f32 / boundary_positions.len() as f32 * 100.0));
+    }
+
+    /// A strip of triangles: every vertex lies on the outer border.
+    fn strip(n: usize) -> TriangleMesh {
+        let vertices = (0..n)
+            .flat_map(|i| {
+                [
+                    Point3::new(i as f32, 0.0, 0.0),
+                    Point3::new(i as f32, 1.0, 0.0),
+                ]
+            })
+            .collect();
+        let faces = (0..n - 1)
+            .flat_map(|i| {
+                let (a, b, c, d) = (2 * i, 2 * i + 1, 2 * i + 2, 2 * i + 3);
+                [[a, c, b], [b, c, d]]
+            })
+            .collect();
+        TriangleMesh::from_vertices_and_faces(vertices, faces)
+    }
+
+    #[test]
+    fn test_all_boundary_mesh_reports_why_it_cannot_simplify() {
+        let err = QuadricErrorSimplifier::new()
+            .simplify(&strip(20), 0.5)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("preserve_boundary"), "{err}");
+        assert!(err.contains("40 of 40 vertices"), "{err}");
+        assert!(!err.contains("  "), "stray spaces: {err}");
+    }
+
+    #[test]
+    fn test_all_boundary_mesh_simplifies_without_boundary_preservation() {
+        let mesh = strip(20);
+        let simplifier = QuadricErrorSimplifier::with_params(None, false, 45.0_f32.to_radians());
+        let result = simplifier.simplify(&mesh, 0.5).unwrap();
+        assert!(result.faces.len() < mesh.faces.len());
     }
 }

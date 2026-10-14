@@ -1377,16 +1377,26 @@ fn mesh_difference(mesh_a: &PyTriangleMesh, mesh_b: &PyTriangleMesh) -> PyResult
 /// Args:
 ///     mesh: Input triangle mesh.
 ///     reduction_ratio: Fraction of faces to remove, in [0, 1] (default 0.5).
+///     preserve_boundary: Keep vertices on holes and open borders fixed
+///         (default True). A mesh with many holes may have no edge left to
+///         collapse; then this raises an error, and False lets it simplify.
 #[pyfunction]
-#[pyo3(signature = (mesh, reduction_ratio = 0.5))]
-fn simplify_mesh(mesh: &PyTriangleMesh, reduction_ratio: f32) -> PyResult<PyTriangleMesh> {
+#[pyo3(signature = (mesh, reduction_ratio = 0.5, preserve_boundary = true))]
+fn simplify_mesh(
+    mesh: &PyTriangleMesh,
+    reduction_ratio: f32,
+    preserve_boundary: bool,
+) -> PyResult<PyTriangleMesh> {
     if !(0.0..=1.0).contains(&reduction_ratio) {
         return Err(PyValueError::new_err("reduction_ratio must be in [0, 1]"));
     }
-    QuadricErrorSimplifier::new()
-        .simplify(&mesh.inner, reduction_ratio)
-        .map(|m| PyTriangleMesh { inner: m })
-        .map_err(to_py_err)
+    QuadricErrorSimplifier {
+        preserve_boundary,
+        ..QuadricErrorSimplifier::new()
+    }
+    .simplify(&mesh.inner, reduction_ratio)
+    .map(|m| PyTriangleMesh { inner: m })
+    .map_err(to_py_err)
 }
 
 // ---------------------------------------------------------------------------
