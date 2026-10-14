@@ -108,6 +108,44 @@ jobs:
           print('smoke test passed')
           "
 
+  # The MCP server's tests, run against the threecrate wheel built above, so
+  # library changes that break the server show up in the same PR.
+  mcp-test:
+    name: Test MCP server (${{ matrix.os }}, Python ${{ matrix.python }})
+    needs: [build]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.10", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wheels-*
+          merge-multiple: true
+          path: dist/
+
+      - name: Install
+        shell: bash
+        run: |
+          pip install "mcp>=2,<3" numpy pytest
+          pip install threecrate --no-index --only-binary=:all: --find-links dist/
+          # --no-deps: threecrate is the wheel above, which may be older than
+          # the release threecrate-mcp asks for until the version is bumped.
+          pip install --no-deps ./threecrate-mcp
+
+      - name: Test
+        working-directory: threecrate-mcp
+        run: python -m pytest -q
+
   publish:
     name: Publish to PyPI
     runs-on: ubuntu-latest

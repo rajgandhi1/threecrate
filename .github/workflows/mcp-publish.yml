@@ -1,0 +1,70 @@
+name: Publish MCP server
+
+# Manual only: run it from the Actions tab once the threecrate release that
+# threecrate-mcp depends on is on PyPI. Tests run in python.yml (mcp-test).
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build threecrate-mcp
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # A version PyPI already has can't be uploaded again, so stop here
+      # instead of "succeeding" without publishing anything.
+      - name: Check the version is new
+        working-directory: threecrate-mcp
+        run: |
+          version=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
+          status=$(curl -s -o /dev/null -w "%{http_code}" "https://pypi.org/pypi/threecrate-mcp/$version/json")
+          if [ "$status" = "200" ]; then
+            echo "::error::threecrate-mcp $version is already on PyPI. Bump the version in threecrate-mcp/pyproject.toml."
+            exit 1
+          fi
+          echo "Publishing threecrate-mcp $version"
+
+      - name: Build sdist and wheel
+        working-directory: threecrate-mcp
+        run: |
+          pip install build twine
+          python -m build --outdir ../dist
+          twine check ../dist/*
+
+      # Install the built wheel with its dependencies from PyPI, the way users
+      # will get it, and run the tests against it. Fails if the threecrate it
+      # needs isn't released yet.
+      - name: Test the built package
+        run: |
+          pip install dist/*.whl pytest
+          threecrate-mcp --help
+          # The src/ layout means the tests import the installed wheel, not the checkout.
+          cd threecrate-mcp && python -m pytest -q
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mcp-dist
+          path: dist/
+
+  publish:
+    name: Publish to PyPI
+    needs: [build]
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: mcp-dist
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/

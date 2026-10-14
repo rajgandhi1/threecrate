@@ -1,0 +1,39 @@
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "threecrate-mcp"
+version = "0.1.0"
+description = "MCP server that gives AI agents threecrate's 3D point cloud and mesh tools"
+readme = "README.md"
+license = { text = "MIT OR Apache-2.0" }
+# The MCP Python SDK needs 3.10+ (threecrate itself supports 3.8+).
+requires-python = ">=3.10"
+dependencies = [
+    "threecrate>=0.9.1",  # needs the Poisson, simplify and normal orientation fixes
+    "mcp>=2,<3",  # uses the 2.x MCPServer API
+    "numpy>=1.20",
+]
+keywords = ["mcp", "point-cloud", "3d", "lidar", "mesh", "agents"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Multimedia :: Graphics :: 3D Modeling",
+    "Intended Audience :: Science/Research",
+]
+
+[project.urls]
+Repository = "https://github.com/rajgandhi1/threecrate"
+
+[project.scripts]
+threecrate-mcp = "threecrate_mcp.server:main"
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/threecrate_mcp"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
