@@ -196,7 +196,7 @@ const EDGE_TABLE: [u16; 256] = [
 
 /// Triangle table: defines triangles for each cube configuration
 /// Each row contains up to 5 triangles (15 indices), terminated by -1
-const TRIANGLE_TABLE: [[i8; 16]; 256] = [
+pub(crate) const TRIANGLE_TABLE: [[i8; 16]; 256] = [
     [
         -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
     ],

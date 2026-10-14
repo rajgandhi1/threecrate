@@ -8,7 +8,7 @@ Surface reconstruction algorithms for generating meshes from point clouds.
 
 ## Algorithms
 
-- **Poisson Surface Reconstruction**: Watertight meshes from oriented point clouds; configurable octree depth
+- **Poisson Surface Reconstruction**: Watertight meshes from oriented point clouds
 - **Ball Pivoting Algorithm (BPA)**: Fast reconstruction for uniformly sampled clouds; multi-scale and adaptive radius
 - **Alpha Shapes**: Non-convex surface extraction via alpha complex; multiple levels of detail
 - **Delaunay Triangulation**: Complete 3D triangulation with multiple projection methods
@@ -51,9 +51,10 @@ let mesh = ball_pivoting_reconstruction(&cloud, config)?;
 ## Algorithm Details
 
 ### Poisson Parameters
-- **Octree Depth**: Controls mesh resolution (6-10 recommended)
-- **Sample Density**: Point density factor (0.5-2.0)
-- **Confidence Threshold**: Quality filtering (0.0-1.0)
+- **depth**: the grid has 2^depth cells per side (3 to 8, default 7). Each step up gives finer detail and takes about 8x longer. Depth 7 runs in about 1 second.
+- **smoothing**: how far each normal is spread, in point spacings (default 1.0). Raise it to fill bigger holes.
+- **trim_distance**: drop triangles farther than this from any input point. Poisson always closes the surface, so use this on open scans.
+- **iso_offset**: move the surface in (positive) or out (negative).
 
 ### Ball Pivoting Parameters
 - **Ball Radius**: Reconstruction radius (depends on point density)
