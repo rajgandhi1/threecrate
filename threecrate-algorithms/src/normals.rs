@@ -358,6 +358,94 @@ pub fn estimate_normals_with_config(
     Ok(PointCloud::from_points(normals))
 }
 
+/// Flip normals so neighbouring normals agree, all the way around the object.
+///
+/// `estimate_normals` points every normal toward one viewpoint, which is right
+/// for a single scan but leaves about half the normals of a closed object
+/// pointing inward. This walks a minimum spanning tree over the `k` nearest
+/// neighbours, preferring nearly parallel pairs, and flips each normal to agree
+/// with the one it was reached from (Hoppe et al. 1992). Each connected piece
+/// starts from its highest point, whose normal is turned upward, so closed
+/// objects end up with outward normals. Positions are not changed.
+pub fn orient_normals_consistent(cloud: &mut PointCloud<NormalPoint3f>, k: usize) -> Result<()> {
+    use std::cmp::Reverse;
+    use std::collections::BinaryHeap;
+
+    let n = cloud.points.len();
+    if n < 2 {
+        return Ok(());
+    }
+    if k < 1 {
+        return Err(Error::InvalidData("k must be at least 1".to_string()));
+    }
+    let positions: Vec<Point3f> = cloud.points.iter().map(|p| p.position).collect();
+    let tree = KdTree::new(&positions)?;
+    let k = k.min(n - 1);
+    let neighbours: Vec<Vec<usize>> = positions
+        .par_iter()
+        .enumerate()
+        .map_init(Vec::new, |found, (i, p)| {
+            tree.find_k_nearest_into(p, k + 1, found);
+            found
+                .iter()
+                .map(|&(j, _)| j)
+                .filter(|&j| j != i)
+                .take(k)
+                .collect()
+        })
+        .collect();
+
+    /// A candidate tree edge; cheaper edges join more parallel normals.
+    #[derive(PartialEq)]
+    struct Edge(f32, usize, usize);
+    impl Eq for Edge {}
+    impl PartialOrd for Edge {
+        fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+            Some(self.cmp(other))
+        }
+    }
+    impl Ord for Edge {
+        fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+            self.0.total_cmp(&other.0)
+        }
+    }
+
+    let points = &mut cloud.points;
+    let mut visited = vec![false; n];
+    let mut heap = BinaryHeap::new();
+    // Seeds, highest first, so every piece starts from its top.
+    let mut seeds: Vec<usize> = (0..n).collect();
+    seeds.sort_unstable_by(|&a, &b| positions[b].z.total_cmp(&positions[a].z));
+
+    for seed in seeds {
+        if visited[seed] {
+            continue;
+        }
+        visited[seed] = true;
+        if points[seed].normal.z < 0.0 {
+            points[seed].normal = -points[seed].normal;
+        }
+        let push = |heap: &mut BinaryHeap<Reverse<Edge>>, from: usize, points: &[NormalPoint3f]| {
+            for &to in &neighbours[from] {
+                let cost = 1.0 - points[from].normal.dot(&points[to].normal).abs();
+                heap.push(Reverse(Edge(cost, from, to)));
+            }
+        };
+        push(&mut heap, seed, points);
+        while let Some(Reverse(Edge(_, from, to))) = heap.pop() {
+            if visited[to] {
+                continue;
+            }
+            visited[to] = true;
+            if points[from].normal.dot(&points[to].normal) < 0.0 {
+                points[to].normal = -points[to].normal;
+            }
+            push(&mut heap, to, points);
+        }
+    }
+    Ok(())
+}
+
 /// Estimate normals using radius-based neighbor search
 ///
 /// # Arguments
@@ -623,5 +711,41 @@ mod tests {
 
         let neighbors_radius = find_neighbors(&points, 0, &config_radius);
         assert_eq!(neighbors_radius.len(), 2); // Points at (1,0,0) and (0,1,0) are within radius 1.5
+    }
+
+    #[test]
+    fn test_orient_normals_consistent_points_sphere_normals_outward() {
+        let n = 2000;
+        let golden = std::f32::consts::PI * (1.0 + 5f32.sqrt());
+        let points: Vec<Point3f> = (0..n)
+            .map(|i| {
+                let t = i as f32 + 0.5;
+                let phi = (1.0 - 2.0 * t / n as f32).acos();
+                let theta = golden * t;
+                Point3f::new(theta.cos() * phi.sin(), theta.sin() * phi.sin(), phi.cos())
+            })
+            .collect();
+        let mut cloud = estimate_normals(&PointCloud::from_points(points), 10).unwrap();
+        let outward = |c: &PointCloud<NormalPoint3f>| {
+            c.points
+                .iter()
+                .filter(|p| p.normal.dot(&p.position.coords) > 0.0)
+                .count()
+        };
+        // The viewpoint rule gets the lower half of the sphere wrong.
+        assert!(outward(&cloud) < n * 9 / 10);
+        orient_normals_consistent(&mut cloud, 10).unwrap();
+        assert_eq!(outward(&cloud), n);
+    }
+
+    #[test]
+    fn test_orient_normals_consistent_handles_tiny_clouds() {
+        let mut empty = PointCloud::<NormalPoint3f>::new();
+        orient_normals_consistent(&mut empty, 10).unwrap();
+        let mut one = PointCloud::from_points(vec![NormalPoint3f {
+            position: Point3f::origin(),
+            normal: Vector3f::new(0.0, 0.0, -1.0),
+        }]);
+        orient_normals_consistent(&mut one, 10).unwrap();
     }
 }

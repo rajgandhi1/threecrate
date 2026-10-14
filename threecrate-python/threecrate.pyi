@@ -312,6 +312,14 @@ def estimate_normals(
     """Estimate surface normals using K-nearest neighbours."""
     ...
 
+def orient_normals(
+    cloud: NormalPointCloud,
+    k_neighbors: int = 10,
+) -> NormalPointCloud:
+    """Flip normals so neighbours agree all around the object (outward for
+    closed shapes). Use before poisson_reconstruct on full 3D objects."""
+    ...
+
 # ---------------------------------------------------------------------------
 # Registration
 # ---------------------------------------------------------------------------
@@ -506,8 +514,18 @@ def reconstruct(cloud: PointCloud) -> TriangleMesh:
     """Auto-detect and run the best reconstruction algorithm."""
     ...
 
-def poisson_reconstruct(cloud: NormalPointCloud) -> TriangleMesh:
-    """Poisson surface reconstruction — requires normals."""
+def poisson_reconstruct(
+    cloud: NormalPointCloud,
+    depth: int = 7,
+    smoothing: float = 1.0,
+    trim_distance: Optional[float] = None,
+) -> TriangleMesh:
+    """Poisson surface reconstruction. Needs normals pointing out of the surface.
+
+    depth: grid of 2^depth cells per side, 3 to 8. Higher is finer and about
+    8x slower per step. smoothing: normal spread in point spacings; raise it to
+    fill bigger holes. trim_distance: drop triangles farther than this from
+    every input point, for open scans."""
     ...
 
 def ball_pivoting_reconstruct(

@@ -638,13 +638,15 @@ pub fn poisson_reconstruction_default(cloud: &PointCloud<NormalPoint3f>) -> Resu
     poisson_reconstruction(cloud, &PoissonConfig::default())
 }
 
-/// Estimate normals with `k` neighbours, then run Poisson reconstruction.
+/// Estimate normals with `k` neighbours, orient them consistently, then run
+/// Poisson reconstruction.
 pub fn poisson_reconstruction_with_normals(
     cloud: &PointCloud<Point3f>,
     k: usize,
     config: &PoissonConfig,
 ) -> Result<TriangleMesh> {
-    let normals_cloud = threecrate_algorithms::estimate_normals(cloud, k)?;
+    let mut normals_cloud = threecrate_algorithms::estimate_normals(cloud, k)?;
+    threecrate_algorithms::orient_normals_consistent(&mut normals_cloud, k)?;
     poisson_reconstruction(&normals_cloud, config)
 }
 
@@ -811,6 +813,24 @@ mod tests {
         cloud.points[0].normal = Vector3f::zeros(); // unusable, skipped
         let mesh = poisson_reconstruction(
             &cloud,
+            &PoissonConfig {
+                depth: 6,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(sphere_error(&mesh, 1.0, Point3f::origin()) < 0.02);
+    }
+
+    #[test]
+    fn test_plain_points_get_consistent_normals() {
+        // estimate_normals alone leaves the lower half pointing inward; the
+        // orientation step must fix that or the surface comes out wrong.
+        let cloud = sphere(2000, 1.0, Point3f::origin());
+        let plain = PointCloud::from_points(cloud.points.iter().map(|p| p.position).collect());
+        let mesh = poisson_reconstruction_with_normals(
+            &plain,
+            10,
             &PoissonConfig {
                 depth: 6,
                 ..Default::default()
