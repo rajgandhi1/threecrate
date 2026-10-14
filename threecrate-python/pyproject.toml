@@ -4,6 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "threecrate"
+dynamic = ["version"]
 requires-python = ">=3.8"
 description = "Python bindings for threecrate: a high-performance 3D point cloud and mesh processing library"
 readme = "README.md"

@@ -459,8 +459,13 @@ def mesh_difference(mesh_a: TriangleMesh, mesh_b: TriangleMesh) -> TriangleMesh:
 def simplify_mesh(
     mesh: TriangleMesh,
     reduction_ratio: float = 0.5,
+    preserve_boundary: bool = True,
 ) -> TriangleMesh:
-    """Simplify using quadric error decimation. reduction_ratio ∈ [0, 1]."""
+    """Simplify using quadric error decimation. reduction_ratio ∈ [0, 1].
+
+    preserve_boundary keeps vertices on holes and open borders fixed. Raises
+    if no edge can be collapsed (e.g. a mesh that is mostly holes); pass
+    preserve_boundary=False to simplify it anyway."""
     ...
 
 # ---------------------------------------------------------------------------
