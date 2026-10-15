@@ -57,6 +57,19 @@ impl TriangleMesh {
         self.vertices.is_empty() || self.faces.is_empty()
     }
 
+    /// Check that every face index points at an existing vertex. Meshes from
+    /// files or user arrays can hold any number; algorithms index without checks.
+    pub fn validate_faces(&self) -> crate::Result<()> {
+        let n = self.vertices.len();
+        match self.faces.iter().position(|f| f.iter().any(|&i| i >= n)) {
+            None => Ok(()),
+            Some(face) => Err(crate::Error::InvalidData(format!(
+                "face {face} uses vertex index {:?}, but the mesh has only {n} vertices",
+                self.faces[face]
+            ))),
+        }
+    }
+
     /// Add a vertex to the mesh
     pub fn add_vertex(&mut self, vertex: Point3f) -> usize {
         let index = self.vertices.len();
@@ -144,5 +157,24 @@ impl ColoredTriangleMesh {
 impl Default for ColoredTriangleMesh {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validate_faces_rejects_out_of_range_indices() {
+        let vertices = vec![Point3f::origin(); 3];
+        assert!(
+            TriangleMesh::from_vertices_and_faces(vertices.clone(), vec![[0, 1, 2]])
+                .validate_faces()
+                .is_ok()
+        );
+        let err = TriangleMesh::from_vertices_and_faces(vertices, vec![[0, 1, 2], [0, 1, 99]])
+            .validate_faces()
+            .unwrap_err();
+        assert!(err.to_string().contains("face 1"), "{err}");
     }
 }
