@@ -15,10 +15,12 @@ Install into a virtual environment, never the system Python:
 
 ```bash
 python -m venv .venv
-.venv/bin/pip install threecrate numpy        # Windows: .venv\Scripts\pip
+.venv/bin/pip install threecrate numpy
 ```
 
-Run scripts with `.venv/bin/python` (Windows: `.venv\Scripts\python`).
+Then run scripts with `.venv/bin/python`. On Windows the folder is `Scripts`, not `bin`: use `.venv/Scripts/pip` and `.venv/Scripts/python` in Git Bash or PowerShell, or `.venv\Scripts\python` in cmd.
+
+`orient_normals` and the `poisson_reconstruct` options below need threecrate 0.10.0 or newer. Check with `pip show threecrate`.
 
 ## Workflow
 
@@ -49,10 +51,14 @@ import threecrate as tc
 cloud = tc.read_point_cloud("scan.ply")              # PLY, PCD, XYZ, CSV
 pts = cloud.to_numpy()                               # (N, 3) float32
 cloud = tc.PointCloud(pts)                           # and back
+s = 0.01  # REPLACE with median_spacing from scripts/inspect_cloud.py. Every size below
+          # scales with it, and a value far too small makes the filters delete real points.
 
-# Clean
+# Clean. Statistical removal handles general noise; follow it with radius
+# removal to drop isolated strays it leaves behind.
 cloud = tc.remove_statistical_outliers(cloud, k_neighbors=20, std_ratio=2.0)
-cloud = tc.voxel_downsample(cloud, 0.01)
+cloud = tc.remove_radius_outliers(cloud, radius=3 * s, min_neighbors=5)  # s: median spacing
+cloud = tc.voxel_downsample(cloud, 2 * s)
 
 # Normals (oriented toward a viewpoint above the cloud; fine for one scan)
 normals = tc.estimate_normals(cloud, k_neighbors=10)
@@ -71,18 +77,25 @@ result = tc.global_registration(source, target)
 print(result.icp_mse, result.inlier_ratio)
 
 # Floor or wall, then separate objects
-plane = tc.segment_plane(cloud, threshold=0.01)
+plane = tc.segment_plane(cloud, threshold=1.5 * s)
 a, b, c, d = plane.plane_coefficients()              # ax + by + cz + d = 0
+if c < 0:                                            # the sign varies between runs;
+    a, b, c, d = -a, -b, -c, -d                      # make the normal point up
 pts = cloud.to_numpy()                               # the same cloud the indices refer to
 on_plane = np.zeros(len(pts), dtype=bool)
 on_plane[plane.inlier_indices()] = True
-rest = tc.PointCloud(pts[~on_plane])
-objects = tc.extract_clusters(rest, tolerance=0.03, min_cluster_size=100)  # largest first
+rest = pts[~on_plane]
+above = rest[rest @ np.array([a, b, c]) + d > 0]     # only what sits on top of the floor
+objects = tc.extract_clusters(tc.PointCloud(above), tolerance=3 * s, min_cluster_size=100)
+# extract_clusters returns a list of PointClouds, largest first
+for i, obj in enumerate(objects):
+    tc.write_point_cloud(obj, f"object_{i}.ply")
+tc.write_point_cloud(tc.PointCloud(np.vstack([o.to_numpy() for o in objects])), "objects.ply")
 
 # Meshes
 quick = tc.reconstruct(cloud)                                 # picks a method
-detailed = tc.ball_pivoting_reconstruct(cloud, radius=0.02)   # keeps detail, may leave holes
-open_scan = tc.poisson_reconstruct(normals, depth=7, trim_distance=0.03)  # one-sided scan
+detailed = tc.ball_pivoting_reconstruct(cloud, radius=2 * s)  # keeps detail, may leave holes
+open_scan = tc.poisson_reconstruct(normals, depth=7, trim_distance=2.5 * s)  # one-sided scan
 mesh = tc.poisson_reconstruct(normals, depth=7)               # smooth, watertight
 mesh = tc.simplify_mesh(mesh, reduction_ratio=0.5)            # fails on meshes full of holes
 mesh = tc.smooth_mesh_taubin(mesh, iterations=10)

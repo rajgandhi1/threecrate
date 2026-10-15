@@ -1,0 +1,28 @@
+{
+  "name": "threecrate",
+  "version": "0.10.0",
+  "description": "Inspect, clean, align and mesh 3D point clouds and meshes with the threecrate Python library.",
+  "author": {
+    "name": "Raj Gandhi",
+    "url": "https://github.com/rajgandhi1"
+  },
+  "homepage": "https://github.com/rajgandhi1/threecrate",
+  "repository": "https://github.com/rajgandhi1/threecrate",
+  "license": "MIT OR Apache-2.0",
+  "keywords": ["point-cloud", "mesh", "3d", "lidar", "registration", "reconstruction"],
+  "skills": "./",
+  "interface": {
+    "displayName": "threecrate",
+    "shortDescription": "3D point clouds and meshes",
+    "longDescription": "Inspect, clean, align and mesh 3D scans (PLY, PCD, XYZ, CSV, OBJ) with the threecrate Python library.",
+    "developerName": "Raj Gandhi",
+    "category": "Developer Tools",
+    "capabilities": ["Instructions"],
+    "websiteURL": "https://github.com/rajgandhi1/threecrate",
+    "defaultPrompt": [
+      "Inspect scan.ply and suggest cleanup settings.",
+      "Align scan_b.ply to scan_a.ply.",
+      "Turn this point cloud into a smooth mesh."
+    ]
+  }
+}

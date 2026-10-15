@@ -1,0 +1,5 @@
+{
+  "name": "threecrate",
+  "version": "0.10.0",
+  "description": "Inspect, clean, align and mesh 3D point clouds and meshes with the threecrate Python library."
+}

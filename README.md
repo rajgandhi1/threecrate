@@ -67,10 +67,27 @@ tc.write_mesh(mesh, "output.ply")
 
 ## Use with AI agents
 
-Let Claude, Codex, OpenCode, Cursor and other agents work with your point clouds:
+Let Claude Code, Codex, Gemini CLI, OpenCode, Cursor and other agents inspect, clean, align and mesh your scans. The [threecrate skill](skills/threecrate/SKILL.md) teaches the agent to use the Python library.
 
-- **MCP server:** [threecrate-mcp](threecrate-mcp/README.md) gives agents tools to inspect, clean, align and mesh scans. In Claude Code: `claude mcp add threecrate -- uvx threecrate-mcp`.
-- **Agent Skill:** [skills/threecrate](skills/threecrate/SKILL.md) teaches an agent to use the Python library directly. Copy the folder into your agent's skills folder (for Claude Code, `~/.claude/skills/`).
+**Claude Code**
+
+```
+/plugin marketplace add rajgandhi1/threecrate
+```
+```
+/plugin install threecrate@threecrate
+```
+
+**Codex**
+
+```bash
+codex plugin marketplace add rajgandhi1/threecrate
+codex plugin add threecrate@threecrate
+```
+
+**Gemini CLI, OpenCode, Cursor and others:** see [INSTALL.md](INSTALL.md).
+
+Prefer MCP tools? [threecrate-mcp](threecrate-mcp/README.md) works in any MCP client: `claude mcp add threecrate -- uvx threecrate-mcp`.
 
 ## Comparison
 
