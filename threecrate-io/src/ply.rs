@@ -757,7 +757,7 @@ impl RobustPlyReader {
         let mut elements = HashMap::new();
 
         for element_def in &header.elements {
-            let mut element_data = Vec::with_capacity(element_def.count);
+            let mut element_data = Vec::with_capacity(crate::capacity_hint(element_def.count));
 
             for _ in 0..element_def.count {
                 let mut instance = HashMap::new();
@@ -816,7 +816,7 @@ impl RobustPlyReader {
                 let count_value = Self::read_binary_property_value_mmap_le(reader, count_type)?;
                 let count = count_value.as_usize()?;
 
-                let mut list = Vec::with_capacity(count);
+                let mut list = Vec::with_capacity(crate::capacity_hint(count));
                 for _ in 0..count {
                     let item = Self::read_binary_property_value_mmap_le(reader, item_type)?;
                     list.push(item);
@@ -846,7 +846,7 @@ impl RobustPlyReader {
                 let count_value = Self::read_binary_property_value_mmap_be(reader, count_type)?;
                 let count = count_value.as_usize()?;
 
-                let mut list = Vec::with_capacity(count);
+                let mut list = Vec::with_capacity(crate::capacity_hint(count));
                 for _ in 0..count {
                     let item = Self::read_binary_property_value_mmap_be(reader, item_type)?;
                     list.push(item);
@@ -1016,7 +1016,7 @@ impl RobustPlyReader {
         let mut elements = HashMap::new();
 
         for element_def in &header.elements {
-            let mut element_data = Vec::with_capacity(element_def.count);
+            let mut element_data = Vec::with_capacity(crate::capacity_hint(element_def.count));
 
             for _ in 0..element_def.count {
                 let mut instance = HashMap::new();
@@ -1137,7 +1137,7 @@ impl RobustPlyReader {
                 let count_value = Self::read_ascii_property_value(values, value_idx, count_type)?;
                 let count = count_value.as_usize()?;
 
-                let mut list = Vec::with_capacity(count);
+                let mut list = Vec::with_capacity(crate::capacity_hint(count));
                 for _ in 0..count {
                     let item = Self::read_ascii_property_value(values, value_idx, item_type)?;
                     list.push(item);
@@ -1166,7 +1166,7 @@ impl RobustPlyReader {
                 let count_value = Self::read_binary_property_value::<E, _>(reader, count_type)?;
                 let count = count_value.as_usize()?;
 
-                let mut list = Vec::with_capacity(count);
+                let mut list = Vec::with_capacity(crate::capacity_hint(count));
                 for _ in 0..count {
                     let item = Self::read_binary_property_value::<E, _>(reader, item_type)?;
                     list.push(item);
@@ -1779,7 +1779,7 @@ impl PlyMeshStreamingReader {
             .find(|e| e.name == "vertex")
             .ok_or_else(|| Error::InvalidData("No vertex element found in PLY file".to_string()))?;
 
-        let mut vertices = Vec::with_capacity(vertex_element.count);
+        let mut vertices = Vec::with_capacity(crate::capacity_hint(vertex_element.count));
 
         // Read vertices first
         for _ in 0..vertex_element.count {
