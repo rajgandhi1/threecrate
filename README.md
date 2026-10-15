@@ -60,9 +60,17 @@ import threecrate as tc
 cloud = tc.read_point_cloud("scan.ply")
 cloud = tc.voxel_downsample(cloud, voxel_size=0.05)
 normal_cloud = tc.estimate_normals(cloud)
+normal_cloud = tc.orient_normals(normal_cloud)  # needed for full 3D objects
 mesh = tc.poisson_reconstruct(normal_cloud)
 tc.write_mesh(mesh, "output.ply")
 ```
+
+## Use with AI agents
+
+Let Claude, Codex, OpenCode, Cursor and other agents work with your point clouds:
+
+- **MCP server:** [threecrate-mcp](threecrate-mcp/README.md) gives agents tools to inspect, clean, align and mesh scans. In Claude Code: `claude mcp add threecrate -- uvx threecrate-mcp`.
+- **Agent Skill:** [skills/threecrate](skills/threecrate/SKILL.md) teaches an agent to use the Python library directly. Copy the folder into your agent's skills folder (for Claude Code, `~/.claude/skills/`).
 
 ## Comparison
 

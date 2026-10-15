@@ -378,26 +378,33 @@ pub fn orient_normals_consistent(cloud: &mut PointCloud<NormalPoint3f>, k: usize
     if k < 1 {
         return Err(Error::InvalidData("k must be at least 1".to_string()));
     }
+    if n > u32::MAX as usize {
+        return Err(Error::InvalidData(
+            "too many points to orient (limit is about 4 billion)".to_string(),
+        ));
+    }
     let positions: Vec<Point3f> = cloud.points.iter().map(|p| p.position).collect();
     let tree = KdTree::new(&positions)?;
     let k = k.min(n - 1);
-    let neighbours: Vec<Vec<usize>> = positions
-        .par_iter()
+    // One flat row of `k` neighbours per point (u32 to halve memory on large
+    // clouds); NONE pads rows with fewer neighbours.
+    const NONE: u32 = u32::MAX;
+    let mut neighbours = vec![NONE; n * k];
+    neighbours
+        .par_chunks_mut(k)
         .enumerate()
-        .map_init(Vec::new, |found, (i, p)| {
-            tree.find_k_nearest_into(p, k + 1, found);
-            found
-                .iter()
-                .map(|&(j, _)| j)
-                .filter(|&j| j != i)
-                .take(k)
-                .collect()
-        })
-        .collect();
+        .for_each_init(Vec::new, |found, (i, row)| {
+            tree.find_k_nearest_into(&positions[i], k + 1, found);
+            let others = found.iter().map(|&(j, _)| j).filter(|&j| j != i);
+            for (slot, j) in row.iter_mut().zip(others) {
+                *slot = j as u32;
+            }
+        });
 
-    /// A candidate tree edge; cheaper edges join more parallel normals.
+    /// A candidate tree edge (cost, from, to); cheaper edges join more
+    /// parallel normals.
     #[derive(PartialEq)]
-    struct Edge(f32, usize, usize);
+    struct Edge(f32, u32, u32);
     impl Eq for Edge {}
     impl PartialOrd for Edge {
         fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
@@ -413,6 +420,19 @@ pub fn orient_normals_consistent(cloud: &mut PointCloud<NormalPoint3f>, k: usize
     let points = &mut cloud.points;
     let mut visited = vec![false; n];
     let mut heap = BinaryHeap::new();
+    // Queue edges only towards points not yet in the tree, so the heap stays
+    // far smaller than n * k.
+    let push = |heap: &mut BinaryHeap<Reverse<Edge>>,
+                from: usize,
+                points: &[NormalPoint3f],
+                visited: &[bool]| {
+        for &to in &neighbours[from * k..(from + 1) * k] {
+            if to != NONE && !visited[to as usize] {
+                let cost = 1.0 - points[from].normal.dot(&points[to as usize].normal).abs();
+                heap.push(Reverse(Edge(cost, from as u32, to)));
+            }
+        }
+    };
     // Seeds, highest first, so every piece starts from its top.
     let mut seeds: Vec<usize> = (0..n).collect();
     seeds.sort_unstable_by(|&a, &b| positions[b].z.total_cmp(&positions[a].z));
@@ -425,14 +445,9 @@ pub fn orient_normals_consistent(cloud: &mut PointCloud<NormalPoint3f>, k: usize
         if points[seed].normal.z < 0.0 {
             points[seed].normal = -points[seed].normal;
         }
-        let push = |heap: &mut BinaryHeap<Reverse<Edge>>, from: usize, points: &[NormalPoint3f]| {
-            for &to in &neighbours[from] {
-                let cost = 1.0 - points[from].normal.dot(&points[to].normal).abs();
-                heap.push(Reverse(Edge(cost, from, to)));
-            }
-        };
-        push(&mut heap, seed, points);
+        push(&mut heap, seed, points, &visited);
         while let Some(Reverse(Edge(_, from, to))) = heap.pop() {
+            let (from, to) = (from as usize, to as usize);
             if visited[to] {
                 continue;
             }
@@ -440,7 +455,7 @@ pub fn orient_normals_consistent(cloud: &mut PointCloud<NormalPoint3f>, k: usize
             if points[from].normal.dot(&points[to].normal) < 0.0 {
                 points[to].normal = -points[to].normal;
             }
-            push(&mut heap, to, points);
+            push(&mut heap, to, points, &visited);
         }
     }
     Ok(())
