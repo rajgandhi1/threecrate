@@ -43,7 +43,7 @@ approx = "0.5"
 # Algorithms
 rayon = "1.10"
 kdtree = "0.8"
-kiddo = "5.2"
+kiddo = "6.3"
 ndarray = "0.17"
 itertools = "0.15"
 rand = "0.9"
