@@ -71,7 +71,16 @@ foreach ($doc in $docs) {
     Update-File (Join-Path $root $doc) $oldRe $Version
 }
 
-# 5. Release notes scaffold.
+# 5. Agent plugin manifests that carry the release version.
+$pluginManifests = @(
+    'gemini-extension.json',
+    'skills\.codex-plugin\plugin.json'
+)
+foreach ($manifest in $pluginManifests) {
+    Update-File (Join-Path $root $manifest) "(`"version`"\s*:\s*`")$oldRe(`")" "`${1}$Version`${2}"
+}
+
+# 6. Release notes scaffold.
 $releaseNotes = Join-Path $root "RELEASE_NOTES_v$Version.md"
 if (-not (Test-Path -LiteralPath $releaseNotes)) {
     $notes = @"
@@ -95,10 +104,10 @@ All crates and the PyPI package are bumped to ``$Version``.
     Write-Host "Release notes already exist: $releaseNotes"
 }
 
-# 6. Anything still mentioning the old version needs a manual look.
+# 7. Anything still mentioning the old version needs a manual look.
 Write-Host ''
 Write-Host "Remaining mentions of $old (check these by hand):"
-$leftover = & git -C $root grep -n -F "$old" -- '*.toml' '*.md' ':!Cargo.lock' ':!RELEASE_NOTES_v*' 2>$null
+$leftover = & git -C $root grep -n -F "$old" -- '*.toml' '*.md' '*.json' ':!Cargo.lock' ':!RELEASE_NOTES_v*' 2>$null
 if ($leftover) { $leftover | ForEach-Object { Write-Host "  $_" } } else { Write-Host '  none' }
 
 Write-Host ''

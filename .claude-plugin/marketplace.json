@@ -1,0 +1,17 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "threecrate",
+  "description": "3D point cloud and mesh processing for AI agents, powered by threecrate.",
+  "owner": {
+    "name": "Raj Gandhi",
+    "url": "https://github.com/rajgandhi1"
+  },
+  "plugins": [
+    {
+      "name": "threecrate",
+      "description": "Inspect, clean, align and mesh 3D scans (PLY, PCD, XYZ, CSV, OBJ) with the threecrate Python library.",
+      "source": "./skills",
+      "category": "development"
+    }
+  ]
+}

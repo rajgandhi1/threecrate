@@ -1,0 +1,22 @@
+{
+  "name": "threecrate",
+  "description": "Inspect, clean, align and mesh 3D point clouds and meshes with the threecrate Python library.",
+  "author": {
+    "name": "Raj Gandhi",
+    "url": "https://github.com/rajgandhi1"
+  },
+  "homepage": "https://github.com/rajgandhi1/threecrate",
+  "repository": "https://github.com/rajgandhi1/threecrate",
+  "license": "MIT OR Apache-2.0",
+  "keywords": [
+    "point-cloud",
+    "mesh",
+    "3d",
+    "lidar",
+    "registration",
+    "reconstruction"
+  ],
+  "skills": [
+    "./"
+  ]
+}

@@ -89,9 +89,9 @@ supports). Writable: PLY, PCD, XYZ, CSV.
 ## Agent Skill
 
 If you would rather not run a server, the [threecrate skill](../skills/threecrate/SKILL.md)
-teaches an agent to do the same work with short Python scripts. Copy the
-`skills/threecrate` folder into your agent's skills folder (for Claude Code,
-`~/.claude/skills/`).
+teaches an agent to do the same work with short Python scripts. See
+[INSTALL.md](../INSTALL.md) for Claude Code, Codex, Gemini CLI, OpenCode and
+Cursor.
 
 ## Development
 
