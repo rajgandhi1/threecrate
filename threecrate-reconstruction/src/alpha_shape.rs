@@ -392,7 +392,7 @@ impl AlphaComplex {
         }
 
         // Use median distance as basis for adaptive alpha
-        distances.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        distances.sort_by(|a, b| a.total_cmp(b));
         let median_dist = distances[distances.len() / 2];
 
         // Adaptive alpha is a multiple of local density
@@ -563,7 +563,7 @@ pub fn estimate_optimal_alpha(cloud: &PointCloud<Point3f>, k: usize) -> Result<f
             .map(|(_, other)| (point - other).magnitude())
             .collect();
 
-        point_distances.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        point_distances.sort_by(|a, b| a.total_cmp(b));
 
         if point_distances.len() >= k {
             distances.push(point_distances[k - 1]);
@@ -575,7 +575,7 @@ pub fn estimate_optimal_alpha(cloud: &PointCloud<Point3f>, k: usize) -> Result<f
     }
 
     // Use median distance as basis for alpha
-    distances.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    distances.sort_by(|a, b| a.total_cmp(b));
     let median_dist = distances[distances.len() / 2];
 
     // Optimal alpha is typically 1.5-2.0 times the k-th nearest neighbor distance

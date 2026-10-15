@@ -151,7 +151,7 @@ fn project_using_pca(points: &[Point3f]) -> Result<Vec<Point2<f64>>> {
         .collect();
 
     // Sort by eigenvalue in descending order
-    eigen_pairs.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
+    eigen_pairs.sort_by(|a, b| b.0.total_cmp(&a.0));
 
     let u = eigen_pairs[0].1.normalize();
     let v = eigen_pairs[1].1.normalize();
@@ -324,7 +324,7 @@ pub fn auto_select_projection(points: &[Point3f]) -> ProjectionMethod {
     let min_extent_idx = extents
         .iter()
         .enumerate()
-        .min_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+        .min_by(|a, b| a.1.total_cmp(b.1))
         .map(|(idx, _)| idx)
         .unwrap();
 
@@ -358,6 +358,16 @@ pub fn delaunay_triangulation_auto(cloud: &PointCloud<Point3f>) -> Result<Triang
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_nan_point_does_not_panic() {
+        let mut points: Vec<Point3f> = (0..50)
+            .map(|i| Point3f::new((i % 7) as f32, (i / 7) as f32, 0.0))
+            .collect();
+        points.push(Point3f::new(f32::NAN, 0.5, 0.0));
+        // Either a mesh or an error is fine; a panic is not.
+        let _ = delaunay_triangulation_auto(&PointCloud::from_points(points));
+    }
     use nalgebra::Point3;
 
     #[test]

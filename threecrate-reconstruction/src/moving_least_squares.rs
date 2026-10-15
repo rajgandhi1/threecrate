@@ -161,7 +161,7 @@ impl SpatialIndex {
             distances.push((distance, i));
         }
 
-        distances.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+        distances.sort_by(|a, b| a.0.total_cmp(&b.0));
         distances.into_iter().take(k).map(|(_, idx)| idx).collect()
     }
 }
@@ -367,7 +367,7 @@ impl MLSSurface {
                     .enumerate()
                     .map(|(i, p)| ((query_point - p).magnitude(), i))
                     .collect();
-                distances.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+                distances.sort_by(|a, b| a.0.total_cmp(&b.0));
                 neighbors = distances.into_iter().take(k).map(|(_, idx)| idx).collect();
             } else {
                 for (i, point) in self.points.iter().enumerate() {
@@ -622,7 +622,7 @@ pub fn estimate_optimal_support_radius(cloud: &PointCloud<Point3f>) -> Result<f3
         return Ok(0.1);
     }
 
-    distances.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    distances.sort_by(|a, b| a.total_cmp(b));
     let median_dist = distances[distances.len() / 2];
 
     // Support radius should be about 3-4 times the median nearest neighbor distance
