@@ -54,3 +54,33 @@ def test_tool_errors_keep_their_message(ws, monkeypatch):
                 asyncio.run(server.mcp.call_tool("downsample", {"path": "scan.ply", "voxel_size": 0.1}))
     finally:
         server._ws.cache_clear()
+
+
+def test_bad_mesh_is_an_error_not_a_crash(ws, monkeypatch):
+    """A face index past the vertex count used to panic inside Rust and kill the server."""
+    (ws.root / "bad.ply").write_text(
+        "ply\nformat ascii 1.0\nelement vertex 4\nproperty float x\nproperty float y\n"
+        "property float z\nelement face 1\nproperty list uchar int vertex_indices\nend_header\n"
+        "0 0 0\n1 0 0\n0 1 0\n0 0 1\n3 0 1 99\n"
+    )
+    monkeypatch.setenv("THREECRATE_MCP_ROOT", str(ws.root))
+    server._ws.cache_clear()
+    try:
+        with pytest.raises(ToolError, match="vertex index"):
+            asyncio.run(server.mcp.call_tool("smooth_mesh", {"path": "bad.ply"}))
+    finally:
+        server._ws.cache_clear()
+
+
+def test_non_exception_failures_reach_the_agent(monkeypatch):
+    """A Rust panic arrives as a BaseException (pyo3 PanicException); it must not escape."""
+
+    class FakePanic(BaseException):
+        pass
+
+    def boom(*args, **kwargs):
+        raise FakePanic("rust panicked")
+
+    monkeypatch.setattr(server.ops, "inspect_mesh", boom)
+    with pytest.raises(ToolError, match="rust panicked"):
+        asyncio.run(server.mcp.call_tool("inspect_mesh", {"path": "x.ply"}))

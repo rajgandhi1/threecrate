@@ -52,9 +52,11 @@ def tool(fn: F) -> F:
     def wrapper(*args: Any, **kwargs: Any) -> Any:
         try:
             return fn(*args, **kwargs)
-        except ToolError:
+        except (ToolError, KeyboardInterrupt, SystemExit):
             raise
-        except Exception as exc:  # noqa: BLE001 - surface every failure to the agent
+        # BaseException: a Rust panic arrives as pyo3's PanicException, which
+        # is not an Exception and would otherwise take the server down.
+        except BaseException as exc:  # noqa: BLE001 - surface every failure to the agent
             raise ToolError(str(exc) or type(exc).__name__) from exc
 
     mcp.tool()(wrapper)

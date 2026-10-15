@@ -82,7 +82,7 @@ impl PointCloud2Info {
     /// Total number of points described by this layout.
     #[inline]
     pub fn num_points(&self) -> usize {
-        (self.width * self.height) as usize
+        self.width as usize * self.height as usize
     }
 }
 
@@ -194,12 +194,36 @@ fn read_rgb_packed(data: &[u8], base: usize, field: &PointField, big: bool) -> R
 
 /// Validate that the data buffer is large enough for the declared layout.
 fn check_buffer(data: &[u8], info: &PointCloud2Info) -> Result<()> {
+    let bad = |msg: String| Err(Error::InvalidData(format!("PointCloud2 layout: {msg}")));
+    let point_step = info.point_step as usize;
+    for f in &info.fields {
+        let end = f.offset as usize + f.element_size() * f.count.max(1) as usize;
+        if end > point_step {
+            return bad(format!(
+                "field '{}' ends at byte {end}, past point_step {point_step}",
+                f.name
+            ));
+        }
+    }
+    if info.num_points() == 0 {
+        return Ok(());
+    }
+    if point_step == 0 {
+        return bad("point_step is 0".into());
+    }
+    // Each row must hold `width` points, and the buffer every row.
+    if (info.width as usize).checked_mul(point_step) > Some(info.row_step as usize) {
+        return bad(format!(
+            "row_step {} is smaller than width {} x point_step {point_step}",
+            info.row_step, info.width
+        ));
+    }
     let required = info.height as usize * info.row_step as usize;
     if data.len() < required {
-        return Err(Error::InvalidData(format!(
-            "PointCloud2 data too short: need {required} bytes, got {}",
+        return bad(format!(
+            "data too short: need {required} bytes, got {}",
             data.len()
-        )));
+        ));
     }
     Ok(())
 }
@@ -663,6 +687,25 @@ mod tests {
             is_bigendian: false,
             is_dense: true,
         }
+    }
+
+    #[test]
+    fn inconsistent_layouts_are_errors_not_panics() {
+        let data = vec![0u8; 36];
+        // row_step too small for the points in a row
+        let mut info = xyz_fields(12);
+        info.row_step = 0;
+        assert!(pointcloud2_to_xyz(&[], &info).is_err());
+        // a field reaching past point_step
+        let mut info = xyz_fields(12);
+        info.fields[2].offset = 20;
+        assert!(pointcloud2_to_xyz(&data, &info).is_err());
+        // zero point_step with points declared
+        let mut info = xyz_fields(0);
+        info.fields.clear();
+        assert!(pointcloud2_to_xyz(&data, &info).is_err());
+        // the valid layout still parses
+        assert_eq!(pointcloud2_to_xyz(&data, &xyz_fields(12)).unwrap().len(), 3);
     }
 
     // ---- organized round-trip ----
