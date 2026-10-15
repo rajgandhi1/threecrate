@@ -128,10 +128,29 @@ fn numpy_to_isometry(arr: Option<Bound<'_, PyAny>>) -> PyResult<Isometry3<f32>> 
         ));
     };
 
+    // Only rigid transforms can become an Isometry3. NaN or inf would also make
+    // the rotation fit below loop forever while holding the GIL.
+    if m.iter().flatten().any(|v| !v.is_finite()) {
+        return Err(PyValueError::new_err(
+            "transform contains NaN or infinite values",
+        ));
+    }
     let rot = nalgebra::Matrix3::new(
         m[0][0], m[0][1], m[0][2], m[1][0], m[1][1], m[1][2], m[2][0], m[2][1], m[2][2],
     );
-    let rotation = nalgebra::UnitQuaternion::from_matrix(&rot);
+    let orthonormal = (rot.transpose() * rot - nalgebra::Matrix3::identity()).amax() < 1e-3;
+    if !orthonormal || rot.determinant() <= 0.0 || m[3] != [0.0, 0.0, 0.0, 1.0] {
+        return Err(PyValueError::new_err(
+            "transform must be rigid: a rotation (no scale, shear or mirroring) plus a \
+             translation, with last row [0, 0, 0, 1]",
+        ));
+    }
+    let rotation = nalgebra::UnitQuaternion::from_matrix_eps(
+        &rot,
+        1e-7,
+        100,
+        nalgebra::UnitQuaternion::identity(),
+    );
     let translation = nalgebra::Translation3::new(m[0][3], m[1][3], m[2][3]);
     Ok(Isometry3::from_parts(translation, rotation))
 }
@@ -214,10 +233,16 @@ fn read_mx3_faces(arr: &Bound<'_, PyAny>) -> PyResult<Vec<[usize; 3]>> {
                         shape
                     )));
                 }
-                let m = shape[0];
-                return Ok((0..m)
-                    .map(|i| [a[[i, 0]] as usize, a[[i, 1]] as usize, a[[i, 2]] as usize])
-                    .collect());
+                let index = |v| {
+                    usize::try_from(v).map_err(|_| {
+                        PyValueError::new_err(format!("face index {v} is negative or too large"))
+                    })
+                };
+                return a
+                    .rows()
+                    .into_iter()
+                    .map(|r| Ok([index(r[0])?, index(r[1])?, index(r[2])?]))
+                    .collect();
             }
         };
     }
@@ -457,9 +482,10 @@ impl PyTriangleMesh {
     fn from_numpy(vertices: &Bound<'_, PyAny>, faces: &Bound<'_, PyAny>) -> PyResult<Self> {
         let verts = read_nx3_points(vertices)?;
         let face_indices = read_mx3_faces(faces)?;
-        Ok(Self {
-            inner: TriangleMesh::from_vertices_and_faces(verts, face_indices),
-        })
+        // Negative indices wrap to huge values here, so this catches them too.
+        let inner = TriangleMesh::from_vertices_and_faces(verts, face_indices);
+        inner.validate_faces().map_err(to_py_err)?;
+        Ok(Self { inner })
     }
 
     #[getter]
@@ -669,15 +695,20 @@ impl PyPlaneSegmentationResult {
     }
 
     /// Extract a new PointCloud containing only the inlier points.
-    fn inlier_cloud(&self, cloud: &PyPointCloud) -> PyPointCloud {
+    fn inlier_cloud(&self, cloud: &PyPointCloud) -> PyResult<PyPointCloud> {
         let points = self
             .inliers
             .iter()
-            .map(|&i| cloud.inner.points[i])
-            .collect();
-        PyPointCloud {
+            .map(|&i| cloud.inner.points.get(i).copied())
+            .collect::<Option<Vec<_>>>()
+            .ok_or_else(|| {
+                PyValueError::new_err(
+                    "cloud is smaller than the one segment_plane ran on; pass the same cloud",
+                )
+            })?;
+        Ok(PyPointCloud {
             inner: PointCloud::from_points(points),
-        }
+        })
     }
 
     fn __repr__(&self) -> String {

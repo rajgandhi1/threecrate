@@ -311,7 +311,7 @@ def register(
         raise WorkspaceError("voxel_size must be positive")
     if method == "global" and initial_transform is not None:
         raise WorkspaceError("method='global' finds its own starting pose; drop initial_transform")
-    init = None if initial_transform is None else _matrix(initial_transform).astype(np.float32)
+    init = None if initial_transform is None else _matrix(initial_transform)
     source_path, source_cloud = _read_cloud(ws, source)
     target_path, target_cloud = _read_cloud(ws, target)
     out = None
@@ -362,7 +362,7 @@ def register(
     if voxel_size:
         summary["registered_on"] = {"voxel_size": voxel_size, "source_points": len(src), "target_points": len(tgt)}
     if out is not None:
-        _write_cloud(tc.transform_point_cloud(source_cloud, transform.astype(np.float32)), out)
+        _write_cloud(tc.transform_point_cloud(source_cloud, transform), out)
         summary["aligned_output"] = ws.relative(out)
     return summary
 
@@ -378,7 +378,7 @@ def transform(
     resolved, cloud = _read_cloud(ws, path)
     out = ws.output_path(output, inputs=[resolved], default_suffix="transformed",
                          allowed=POINT_CLOUD_WRITE_FORMATS, overwrite=overwrite)
-    result = tc.transform_point_cloud(cloud, matrix.astype(np.float32))
+    result = tc.transform_point_cloud(cloud, matrix)
     _write_cloud(result, out)
     return {"output": ws.relative(out), **_cloud_summary(result)}
 

@@ -580,7 +580,10 @@ def transform_point_cloud(
     cloud: PointCloud,
     transform: NDArray,
 ) -> PointCloud:
-    """Apply a 4×4 rigid transform to every point in the cloud."""
+    """Apply a 4×4 rigid transform to every point in the cloud.
+
+    Raises ValueError for NaN or infinite values, or a matrix that scales,
+    shears or mirrors (only rotation plus translation is allowed)."""
     ...
 
 # ---------------------------------------------------------------------------
