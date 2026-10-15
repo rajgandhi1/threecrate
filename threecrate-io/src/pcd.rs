@@ -179,7 +179,7 @@ impl RobustPcdReader {
         reader: &mut MmapReader,
         header: &PcdHeader,
     ) -> Result<Vec<PcdPoint>> {
-        let mut points = Vec::with_capacity(header.width * header.height);
+        let mut points = Vec::with_capacity(crate::capacity_hint(header.width * header.height));
 
         for _ in 0..(header.width * header.height) {
             let mut point = PcdPoint::new();
@@ -201,7 +201,7 @@ impl RobustPcdReader {
         reader: &mut MmapReader,
         field: &PcdField,
     ) -> Result<Vec<PcdValue>> {
-        let mut field_values = Vec::with_capacity(field.count);
+        let mut field_values = Vec::with_capacity(crate::capacity_hint(field.count));
 
         for _ in 0..field.count {
             let value = match field.field_type {
@@ -396,13 +396,15 @@ impl RobustPcdReader {
             ));
         }
 
+        // Everything after this multiplies width * height, so it must fit.
+        let total = width.checked_mul(height).ok_or_else(|| {
+            Error::InvalidData(format!("PCD WIDTH {width} x HEIGHT {height} is too large"))
+        })?;
         // If POINTS is specified and different from WIDTH * HEIGHT, validate it
         if let Some(points) = points {
-            if points != width * height {
+            if points != total {
                 return Err(Error::InvalidData(format!(
-                    "POINTS ({}) doesn't match WIDTH * HEIGHT ({})",
-                    points,
-                    width * height
+                    "POINTS ({points}) doesn't match WIDTH * HEIGHT ({total})"
                 )));
             }
         }
@@ -430,11 +432,18 @@ impl RobustPcdReader {
 
     /// Read ASCII format points
     fn read_ascii_points<R: BufRead>(reader: &mut R, header: &PcdHeader) -> Result<Vec<PcdPoint>> {
-        let mut points = Vec::with_capacity(header.width * header.height);
+        let total = header.width * header.height;
+        let mut points = Vec::with_capacity(crate::capacity_hint(total));
 
-        for _ in 0..(header.width * header.height) {
+        // Blank lines don't count as points, and the data must not run out early.
+        while points.len() < total {
             let mut line = String::new();
-            reader.read_line(&mut line)?;
+            if reader.read_line(&mut line)? == 0 {
+                return Err(Error::InvalidData(format!(
+                    "PCD data ended after {} of {total} points",
+                    points.len()
+                )));
+            }
             let line = line.trim();
 
             if line.is_empty() {
@@ -458,7 +467,7 @@ impl RobustPcdReader {
 
     /// Read binary format points
     fn read_binary_points<R: Read>(reader: &mut R, header: &PcdHeader) -> Result<Vec<PcdPoint>> {
-        let mut points = Vec::with_capacity(header.width * header.height);
+        let mut points = Vec::with_capacity(crate::capacity_hint(header.width * header.height));
 
         for _ in 0..(header.width * header.height) {
             let mut point = PcdPoint::new();
@@ -480,7 +489,7 @@ impl RobustPcdReader {
         value_idx: &mut usize,
         field: &PcdField,
     ) -> Result<Vec<PcdValue>> {
-        let mut field_values = Vec::with_capacity(field.count);
+        let mut field_values = Vec::with_capacity(crate::capacity_hint(field.count));
 
         for _ in 0..field.count {
             if *value_idx >= values.len() {
@@ -544,7 +553,7 @@ impl RobustPcdReader {
         reader: &mut R,
         field: &PcdField,
     ) -> Result<Vec<PcdValue>> {
-        let mut field_values = Vec::with_capacity(field.count);
+        let mut field_values = Vec::with_capacity(crate::capacity_hint(field.count));
 
         for _ in 0..field.count {
             let value = match field.field_type {

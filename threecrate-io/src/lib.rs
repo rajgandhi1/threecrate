@@ -67,6 +67,13 @@ pub use xyz_csv::{
 use std::path::Path;
 use threecrate_core::{Point3f, PointCloud, Result, TriangleMesh};
 
+/// Up-front capacity for a count read from a file header. The header can claim
+/// any number, so reserve at most about a million items; the vector still grows
+/// to the real size as data is read, and a lying header can't abort the process.
+pub(crate) fn capacity_hint(count: usize) -> usize {
+    count.min(1 << 20)
+}
+
 // Legacy traits for backward compatibility
 /// Trait for reading point clouds from files
 pub trait PointCloudReader {

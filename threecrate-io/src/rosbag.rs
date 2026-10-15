@@ -171,7 +171,7 @@ fn parse_pointcloud2_cdr(payload: &[u8]) -> Result<(PointCloud2Info, &[u8])> {
 
     // fields: sequence<PointField>
     let n_fields = r.read_u32()? as usize;
-    let mut fields = Vec::with_capacity(n_fields);
+    let mut fields = Vec::with_capacity(crate::capacity_hint(n_fields));
     for _ in 0..n_fields {
         // PointField { name: string, offset: u32, datatype: u8, count: u32 }
         let name = r.read_string()?;
