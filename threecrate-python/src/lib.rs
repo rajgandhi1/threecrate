@@ -128,10 +128,29 @@ fn numpy_to_isometry(arr: Option<Bound<'_, PyAny>>) -> PyResult<Isometry3<f32>> 
         ));
     };
 
+    // Only rigid transforms can become an Isometry3. NaN or inf would also make
+    // the rotation fit below loop forever while holding the GIL.
+    if m.iter().flatten().any(|v| !v.is_finite()) {
+        return Err(PyValueError::new_err(
+            "transform contains NaN or infinite values",
+        ));
+    }
     let rot = nalgebra::Matrix3::new(
         m[0][0], m[0][1], m[0][2], m[1][0], m[1][1], m[1][2], m[2][0], m[2][1], m[2][2],
     );
-    let rotation = nalgebra::UnitQuaternion::from_matrix(&rot);
+    let orthonormal = (rot.transpose() * rot - nalgebra::Matrix3::identity()).amax() < 1e-3;
+    if !orthonormal || rot.determinant() <= 0.0 || m[3] != [0.0, 0.0, 0.0, 1.0] {
+        return Err(PyValueError::new_err(
+            "transform must be rigid: a rotation (no scale, shear or mirroring) plus a \
+             translation, with last row [0, 0, 0, 1]",
+        ));
+    }
+    let rotation = nalgebra::UnitQuaternion::from_matrix_eps(
+        &rot,
+        1e-7,
+        100,
+        nalgebra::UnitQuaternion::identity(),
+    );
     let translation = nalgebra::Translation3::new(m[0][3], m[1][3], m[2][3]);
     Ok(Isometry3::from_parts(translation, rotation))
 }
