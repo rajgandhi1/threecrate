@@ -231,3 +231,13 @@ def test_estimate_normals_orientation(ws: Workspace):
     assert outward("c.ply") == 1.0  # the sphere is centred at the origin
     assert outward("v.ply") < 0.9  # one viewpoint can't face every side
     assert viewpoint["output"] == "v.ply"
+
+
+@pytest.mark.parametrize("bad", [
+    [[1e39, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]],  # inf in float32: used to hang
+    [[2, 0, 0, 0], [0, 2, 0, 0], [0, 0, 2, 0], [0, 0, 0, 1]],  # scale: used to be dropped silently
+    [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]],  # mirror
+])
+def test_transform_rejects_non_rigid_or_non_finite(ws: Workspace, bad):
+    with pytest.raises(ValueError, match="NaN or infinite|must be rigid"):
+        ops.transform(ws, "sphere.ply", bad)
