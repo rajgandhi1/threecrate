@@ -381,19 +381,17 @@ impl XyzCsvReader {
             }
         }
 
-        // Parse position (required)
-        let x = parts
-            [x_idx.ok_or_else(|| Error::InvalidData("Missing x coordinate".to_string()))?]
-        .parse::<f32>()
-        .map_err(|_| Error::InvalidData("Invalid x coordinate".to_string()))?;
-        let y = parts
-            [y_idx.ok_or_else(|| Error::InvalidData("Missing y coordinate".to_string()))?]
-        .parse::<f32>()
-        .map_err(|_| Error::InvalidData("Invalid y coordinate".to_string()))?;
-        let z = parts
-            [z_idx.ok_or_else(|| Error::InvalidData("Missing z coordinate".to_string()))?]
-        .parse::<f32>()
-        .map_err(|_| Error::InvalidData("Invalid z coordinate".to_string()))?;
+        // Parse position (required). A row can be shorter than the header.
+        let coordinate = |idx: Option<usize>, axis: &str| -> Result<f32> {
+            let text = idx.and_then(|i| parts.get(i)).ok_or_else(|| {
+                Error::InvalidData(format!("Missing {axis} coordinate in row: {line}"))
+            })?;
+            text.parse::<f32>()
+                .map_err(|_| Error::InvalidData(format!("Invalid {axis} coordinate: {text}")))
+        };
+        let x = coordinate(x_idx, "x")?;
+        let y = coordinate(y_idx, "y")?;
+        let z = coordinate(z_idx, "z")?;
 
         let position = Point3f::new(x, y, z);
 
@@ -787,6 +785,24 @@ impl crate::registry::PointCloudWriter for XyzCsvWriter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_short_row_is_an_error_not_a_panic() {
+        let path = std::env::temp_dir().join(format!("tc_short_row_{}.csv", std::process::id()));
+        std::fs::write(
+            &path,
+            "id,a,b,x,y,z
+1,2,3
+",
+        )
+        .unwrap();
+        let result = XyzCsvReader::read_point_cloud(&path);
+        std::fs::remove_file(&path).ok();
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Missing x coordinate"));
+    }
     use std::fs;
 
     #[test]

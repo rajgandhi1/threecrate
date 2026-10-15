@@ -160,7 +160,8 @@ fn bucket_points(
 
     for (idx, p) in points.iter().enumerate() {
         let r = (p.x * p.x + p.y * p.y).sqrt();
-        if r > cfg.max_range {
+        // NaN/inf points can't be placed in a patch; treat them as out of range.
+        if r.is_nan() || r > cfg.max_range || !p.z.is_finite() {
             out_of_range[idx] = true;
             continue;
         }
@@ -212,7 +213,7 @@ fn pca(points: &[Point3f], indices: &[usize]) -> Option<(Vector3<f32>, [f32; 3],
     // Symmetric eigendecomposition.
     let eig = cov.symmetric_eigen();
     let mut idx = [0usize, 1, 2];
-    idx.sort_by(|&a, &b| eig.eigenvalues[a].partial_cmp(&eig.eigenvalues[b]).unwrap());
+    idx.sort_by(|&a, &b| eig.eigenvalues[a].total_cmp(&eig.eigenvalues[b]));
     let vals = [
         eig.eigenvalues[idx[0]],
         eig.eigenvalues[idx[1]],
@@ -239,7 +240,7 @@ fn fit_patch(
 
     // Initial seeds: points whose z is within seed_selection_threshold of min z.
     let mut sorted_by_z: Vec<usize> = patch.to_vec();
-    sorted_by_z.sort_by(|&a, &b| points[a].z.partial_cmp(&points[b].z).unwrap());
+    sorted_by_z.sort_by(|&a, &b| points[a].z.total_cmp(&points[b].z));
 
     let seed_count = cfg.num_seed_points.min(sorted_by_z.len());
     let z_min_mean = {
@@ -422,6 +423,17 @@ pub fn segment_ground(
 mod tests {
     use super::*;
     use rand::prelude::*;
+
+    #[test]
+    fn nan_points_are_not_ground_and_do_not_panic() {
+        let mut cloud = build_scene(1.723, false);
+        let n = cloud.points.len();
+        cloud.points.push(Point3f::new(3.5, 3.0, f32::NAN));
+        cloud.points.push(Point3f::new(f32::NAN, 1.0, -1.7));
+        let result = segment_ground(&cloud, 1.723).unwrap();
+        assert!(!result.labels[n]);
+        assert!(!result.labels[n + 1]);
+    }
 
     fn build_scene(sensor_height: f32, with_obstacles: bool) -> PointCloud<Point3f> {
         let mut cloud = PointCloud::new();

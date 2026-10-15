@@ -255,7 +255,7 @@ impl BallPivotingReconstructor {
                 .filter(|&&j| j != i)
                 .map(|&j| (point - &points[j]).magnitude())
                 .collect();
-            distances.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            distances.sort_by(|a, b| a.total_cmp(b));
 
             let k = 10.min(distances.len());
             if k > 0 {
@@ -269,7 +269,7 @@ impl BallPivotingReconstructor {
         }
 
         // Sort densities to compute percentiles
-        local_densities.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        local_densities.sort_by(|a, b| a.total_cmp(b));
 
         // Generate adaptive radii based on percentiles
         self.adaptive_radii.clear();
@@ -284,8 +284,7 @@ impl BallPivotingReconstructor {
         self.adaptive_radii.extend(&self.config.additional_radii);
 
         // Remove duplicates and sort
-        self.adaptive_radii
-            .sort_by(|a, b| a.partial_cmp(b).unwrap());
+        self.adaptive_radii.sort_by(|a, b| a.total_cmp(b));
         self.adaptive_radii.dedup_by(|a, b| (*a - *b).abs() < 1e-6);
 
         Ok(())
@@ -908,7 +907,7 @@ pub fn estimate_optimal_radius(cloud: &PointCloud<Point3f>, percentile: f32) -> 
     }
 
     // Sort and take percentile
-    distances.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    distances.sort_by(|a, b| a.total_cmp(b));
     let index = ((distances.len() - 1) as f32 * percentile) as usize;
 
     // Optimal radius is typically 2-3 times the average nearest neighbor distance
@@ -918,6 +917,15 @@ pub fn estimate_optimal_radius(cloud: &PointCloud<Point3f>, percentile: f32) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_nan_point_does_not_panic() {
+        let mut points: Vec<Point3f> = (0..100)
+            .map(|i| Point3f::new((i % 10) as f32 * 0.1, (i / 10) as f32 * 0.1, 0.0))
+            .collect();
+        points.push(Point3f::new(f32::NAN, 0.5, 0.0));
+        let _ = ball_pivoting_reconstruction(&PointCloud::from_points(points), 0.15);
+    }
     use nalgebra::Point3;
 
     #[test]

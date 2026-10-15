@@ -43,54 +43,38 @@ pub fn voxel_grid_filter(
         return Ok(PointCloud::new());
     }
 
-    if voxel_size <= 0.0 {
+    if !voxel_size.is_finite() || voxel_size <= 0.0 {
         return Err(threecrate_core::Error::InvalidData(
             "voxel_size must be positive".to_string(),
         ));
     }
 
-    // Compute bounding box
-    let min_x = cloud
-        .points
-        .iter()
-        .map(|p| p.x)
-        .min_by(|a, b| a.partial_cmp(b).unwrap())
-        .unwrap();
-    let min_y = cloud
-        .points
-        .iter()
-        .map(|p| p.y)
-        .min_by(|a, b| a.partial_cmp(b).unwrap())
-        .unwrap();
-    let min_z = cloud
-        .points
-        .iter()
-        .map(|p| p.z)
-        .min_by(|a, b| a.partial_cmp(b).unwrap())
-        .unwrap();
-    let max_x = cloud
-        .points
-        .iter()
-        .map(|p| p.x)
-        .max_by(|a, b| a.partial_cmp(b).unwrap())
-        .unwrap();
-    let max_y = cloud
-        .points
-        .iter()
-        .map(|p| p.y)
-        .max_by(|a, b| a.partial_cmp(b).unwrap())
-        .unwrap();
-    let max_z = cloud
-        .points
-        .iter()
-        .map(|p| p.z)
-        .max_by(|a, b| a.partial_cmp(b).unwrap())
-        .unwrap();
-
-    // Compute grid dimensions (for reference, not used in hash-based approach)
-    let _grid_dim_x = ((max_x - min_x) / voxel_size).ceil() as i32 + 1;
-    let _grid_dim_y = ((max_y - min_y) / voxel_size).ceil() as i32 + 1;
-    let _grid_dim_z = ((max_z - min_z) / voxel_size).ceil() as i32 + 1;
+    // NaN or infinite points have no voxel; skip them (one NaN used to panic
+    // here, and one inf collapsed the whole grid).
+    let finite = || {
+        cloud
+            .points
+            .iter()
+            .filter(|p| p.coords.iter().all(|v| v.is_finite()))
+    };
+    let (mut min, mut max) = ([f32::INFINITY; 3], [f32::NEG_INFINITY; 3]);
+    for p in finite() {
+        for axis in 0..3 {
+            min[axis] = min[axis].min(p[axis]);
+            max[axis] = max[axis].max(p[axis]);
+        }
+    }
+    if min[0] > max[0] {
+        return Ok(PointCloud::new()); // no finite points
+    }
+    // Voxel indices are i32; a tiny voxel_size would overflow them and merge
+    // far-apart points into one voxel.
+    if (0..3).any(|axis| (max[axis] - min[axis]) / voxel_size >= i32::MAX as f32) {
+        return Err(threecrate_core::Error::InvalidData(format!(
+            "voxel_size {voxel_size} is too small for a cloud this large"
+        )));
+    }
+    let [min_x, min_y, min_z] = min;
 
     // Function to get voxel coordinates for a point
     let get_voxel_coords = |point: &Point3f| -> (i32, i32, i32) {
@@ -108,7 +92,7 @@ pub fn voxel_grid_filter(
     let mut voxel_map: std::collections::HashMap<(i32, i32, i32), ([f64; 3], usize)> =
         std::collections::HashMap::new();
 
-    for point in cloud.points.iter() {
+    for point in finite() {
         let voxel_coords = get_voxel_coords(point);
         let entry = voxel_map.entry(voxel_coords).or_insert(([0.0; 3], 0));
         entry.0[0] += point.x as f64;
@@ -398,6 +382,36 @@ pub fn statistical_outlier_removal_with_threshold(
 mod tests {
     use super::*;
     use threecrate_core::Point3f;
+
+    fn grid_10x10() -> Vec<Point3f> {
+        (0..100)
+            .map(|i| Point3f::new((i % 10) as f32, (i / 10) as f32, 0.0))
+            .collect()
+    }
+
+    #[test]
+    fn test_voxel_grid_skips_nan_and_inf_points() {
+        let clean = voxel_grid_filter(&PointCloud::from_points(grid_10x10()), 2.0).unwrap();
+        for bad in [f32::NAN, f32::NEG_INFINITY] {
+            let mut points = grid_10x10();
+            points.push(Point3f::new(bad, 0.0, 0.0));
+            let filtered = voxel_grid_filter(&PointCloud::from_points(points), 2.0).unwrap();
+            assert_eq!(filtered.len(), clean.len(), "with {bad}");
+        }
+        let only_nan = PointCloud::from_points(vec![Point3f::new(f32::NAN, 0.0, 0.0)]);
+        assert!(voxel_grid_filter(&only_nan, 1.0).unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_voxel_grid_rejects_unusable_voxel_sizes() {
+        let cloud = PointCloud::from_points(grid_10x10());
+        for size in [0.0, -1.0, f32::NAN, f32::INFINITY, 1e-30] {
+            assert!(
+                voxel_grid_filter(&cloud, size).is_err(),
+                "voxel_size {size}"
+            );
+        }
+    }
 
     #[test]
     fn test_statistical_outlier_removal_empty_cloud() {
