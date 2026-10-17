@@ -6,6 +6,7 @@
 //!
 //! Reference: Biber & Straßer (2003), "The Normal Distributions Transform: A New Approach to Laser Scan Matching"
 
+use crate::registration::LocalFrame;
 use nalgebra::{Matrix3, Translation3, UnitQuaternion, Vector3};
 use std::collections::HashMap;
 use threecrate_core::{Error, Isometry3, Point3f, PointCloud, Result};
@@ -120,9 +121,6 @@ fn compute_score_and_derivatives(
     transform: &Isometry3<f32>,
     resolution: f32,
 ) -> (f32, nalgebra::Vector6<f32>, nalgebra::Matrix6<f32>) {
-    let rot = transform.rotation.to_rotation_matrix();
-    let rot_mat = rot.matrix();
-
     let mut score = 0.0_f32;
     let mut gradient = nalgebra::Vector6::<f32>::zeros();
     let mut hessian = nalgebra::Matrix6::<f32>::zeros();
@@ -147,14 +145,13 @@ fn compute_score_and_derivatives(
         // Jacobian of transformed point w.r.t. 6-DOF params
         // [∂p/∂tx, ∂p/∂ty, ∂p/∂tz, ∂p/∂rx, ∂p/∂ry, ∂p/∂rz]
         // Translation part is identity
-        let src_vec = Vector3::new(src_pt.x, src_pt.y, src_pt.z);
         let dp_dtrans = Matrix3::identity();
-        // Rotation part: ∂(R*s)/∂angle via skew-symmetric
-        // ∂(R*s)/∂rx = R * skew([1,0,0]) * s_body (approximated as skew * R^T * p)
-        let rs = rot_mat * src_vec;
-        let dp_drx = Vector3::new(0.0, -rs[2], rs[1]); // skew([1,0,0]) * rs
-        let dp_dry = Vector3::new(rs[2], 0.0, -rs[0]); // skew([0,1,0]) * rs
-        let dp_drz = Vector3::new(-rs[1], rs[0], 0.0); // skew([0,0,1]) * rs
+        // Rotation part. The update is applied as `delta * transform`, which
+        // rotates the moved point p = R*s + t, so the columns are skew(axis) * p
+        // (using R*s alone breaks convergence once t is far from zero).
+        let dp_drx = Vector3::new(0.0, -p.z, p.y); // skew([1,0,0]) * p
+        let dp_dry = Vector3::new(p.z, 0.0, -p.x); // skew([0,1,0]) * p
+        let dp_drz = Vector3::new(-p.y, p.x, 0.0); // skew([0,0,1]) * p
 
         // Full jacobian: 3x6 matrix (rows=xyz, cols=6dof)
         let mut jac = nalgebra::Matrix3x6::<f32>::zeros();
@@ -200,7 +197,15 @@ pub fn ndt_registration(
         ));
     }
 
-    let grid = build_voxel_grid(target, config.resolution, config.min_points_per_voxel);
+    // Rotation steps turn about the origin, so solve in a frame centred on the
+    // target: far from the origin a tiny rotation would swing the cloud by
+    // metres and the solver would need many more steps (or never converge).
+    let frame = LocalFrame::centred_on(&target.points);
+    let target = PointCloud::from_points(frame.points_to_local(&target.points));
+    let source = frame.points_to_local(&source.points);
+    let initial_transform = frame.transform_to_local(&initial_transform);
+
+    let grid = build_voxel_grid(&target, config.resolution, config.min_points_per_voxel);
     if grid.is_empty() {
         return Err(Error::Algorithm(
             "NDT voxel grid is empty — try a larger resolution or lower min_points_per_voxel"
@@ -217,7 +222,7 @@ pub fn ndt_registration(
         iterations = iter + 1;
 
         let (s, grad, hess) =
-            compute_score_and_derivatives(&source.points, &grid, &transform, config.resolution);
+            compute_score_and_derivatives(&source, &grid, &transform, config.resolution);
         score = s;
 
         // Regularize hessian
@@ -252,7 +257,7 @@ pub fn ndt_registration(
     }
 
     Ok(NdtResult {
-        transformation: transform,
+        transformation: frame.transform_to_world(&transform),
         score,
         iterations,
         converged,
@@ -293,6 +298,58 @@ mod tests {
     fn apply_transform(cloud: &PointCloud<Point3f>, iso: &Isometry3<f32>) -> PointCloud<Point3f> {
         PointCloud {
             points: cloud.points.iter().map(|p| iso * p).collect(),
+        }
+    }
+
+    /// Max distance between the source moved by `estimate` and by `truth`.
+    fn alignment_error(
+        source: &PointCloud<Point3f>,
+        estimate: &Isometry3<f32>,
+        truth: &Isometry3<f32>,
+    ) -> f32 {
+        source
+            .points
+            .iter()
+            .map(|p| (estimate * p - truth * p).norm())
+            .fold(0.0, f32::max)
+    }
+
+    #[test]
+    fn test_ndt_works_with_a_large_initial_translation() {
+        // A scan near the origin aligned into a map 20 m away, starting from a
+        // rough guess (like GPS) that carries the 20 m. The same small motion
+        // must be solved as accurately as when the map is at the origin.
+        let surface: Vec<Point3f> = (0..1600)
+            .map(|i| {
+                let (x, y) = ((i % 40) as f32 * 0.1, (i / 40) as f32 * 0.1);
+                Point3f::new(x, y, 0.3 * (x * 1.5).sin() + 0.2 * (y * 2.0).cos())
+            })
+            .collect();
+        let motion = Isometry3::from_parts(
+            Translation3::new(0.1, 0.05, 0.0),
+            UnitQuaternion::from_euler_angles(0.0, 0.0, 0.08),
+        );
+        let source = PointCloud {
+            points: surface.iter().map(|p| motion.inverse() * p).collect(),
+        };
+        // Default iteration cap. Before the fix 50 m was 0.87 m off and 200 m
+        // was 9.6 m off.
+        let config = NdtConfig {
+            resolution: 0.5,
+            ..Default::default()
+        };
+        for offset in [0.0, 20.0, 200.0] {
+            let guess = Isometry3::translation(offset, 0.0, 0.0);
+            let target = apply_transform(
+                &PointCloud {
+                    points: surface.clone(),
+                },
+                &guess,
+            );
+            let truth = guess * motion;
+            let result = ndt_registration(&source, &target, guess, &config).unwrap();
+            let error = alignment_error(&source, &result.transformation, &truth);
+            assert!(error < 0.02, "offset {offset} m: error {error} m");
         }
     }
 
