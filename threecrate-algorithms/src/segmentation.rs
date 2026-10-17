@@ -214,8 +214,10 @@ pub fn segment_plane_parallel(
 
     let points = &cloud.points;
 
-    // Run RANSAC iterations in parallel
-    let results: Vec<_> = (0..max_iters)
+    // Run RANSAC iterations in parallel. Each try only counts its inliers; the
+    // list is built once for the winner (keeping a list per try used
+    // iterations x points memory: 1.5 GB for 1M points and 200 tries).
+    let best = (0..max_iters)
         .into_par_iter()
         .filter_map(|_| {
             let mut rng = rng();
@@ -233,20 +235,16 @@ pub fn segment_plane_parallel(
 
             // Try to create a plane model from these points
             PlaneModel::from_points(p1, p2, p3).map(|model| {
-                let inliers = model.get_inliers(points, threshold);
-                let score = inliers.len();
-                (model, inliers, score)
+                let score = model.count_inliers(points, threshold);
+                (model, score)
             })
         })
-        .collect();
-
-    // Find the best result
-    let best = results.into_iter().max_by_key(|(_, _, score)| *score);
+        .max_by_key(|(_, score)| *score);
 
     match best {
-        Some((model, inliers, _)) => Ok(PlaneSegmentationResult {
+        Some((model, _)) => Ok(PlaneSegmentationResult {
+            inliers: model.get_inliers(points, threshold),
             model,
-            inliers,
             iterations: max_iters,
         }),
         None => Err(Error::Algorithm(
