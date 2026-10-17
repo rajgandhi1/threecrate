@@ -4,13 +4,12 @@
 //! selects the best algorithm based on input data characteristics and user requirements.
 
 use crate::parallel;
-use std::collections::HashMap;
 use threecrate_core::{Error, NormalPoint3f, Point3f, PointCloud, Result, TriangleMesh};
 
 /// Reconstruction algorithm types available in the pipeline
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Algorithm {
-    /// Poisson surface reconstruction (requires normals)
+    /// Poisson surface reconstruction (estimates and orients normals if the cloud has none)
     Poisson,
     /// Ball Pivoting algorithm (good for uniform sampling)
     BallPivoting,
@@ -297,130 +296,14 @@ impl ReconstructionPipeline {
             return preferred;
         }
 
-        // Algorithm selection logic based on characteristics
-        let mut scores = HashMap::new();
-
-        // Initialize all algorithms with base scores
-        scores.insert(Algorithm::Delaunay, 0.5);
-        scores.insert(Algorithm::BallPivoting, 0.5);
-        scores.insert(Algorithm::MovingLeastSquares, 0.5);
-        scores.insert(Algorithm::MarchingCubes, 0.5);
-        scores.insert(
-            Algorithm::Poisson,
-            if characteristics.has_normals {
-                0.5
-            } else {
-                0.0
-            },
-        );
-
-        // Adjust scores based on point count
-        match characteristics.point_count {
-            0..=100 => {
-                *scores.get_mut(&Algorithm::Delaunay).unwrap() += 0.3;
-                *scores.get_mut(&Algorithm::MovingLeastSquares).unwrap() += 0.2;
-            }
-            101..=1000 => {
-                *scores.get_mut(&Algorithm::BallPivoting).unwrap() += 0.2;
-                *scores.get_mut(&Algorithm::Delaunay).unwrap() += 0.3;
-            }
-            1001..=10000 => {
-                *scores.get_mut(&Algorithm::BallPivoting).unwrap() += 0.3;
-                if characteristics.has_normals {
-                    *scores.get_mut(&Algorithm::Poisson).unwrap() += 0.3;
-                }
-            }
-            _ => {
-                if characteristics.has_normals {
-                    *scores.get_mut(&Algorithm::Poisson).unwrap() += 0.4;
-                }
-                *scores.get_mut(&Algorithm::MarchingCubes).unwrap() += 0.2;
-            }
-        }
-
-        // Adjust based on density uniformity
-        if characteristics.density_uniformity > 0.7 {
-            *scores.get_mut(&Algorithm::BallPivoting).unwrap() += 0.2;
-            if characteristics.has_normals {
-                *scores.get_mut(&Algorithm::Poisson).unwrap() += 0.2;
-            }
-        } else {
-            *scores.get_mut(&Algorithm::MovingLeastSquares).unwrap() += 0.3;
-            *scores.get_mut(&Algorithm::Delaunay).unwrap() += 0.2;
-        }
-
-        // Adjust based on noise level
-        if characteristics.noise_level > 0.3 {
-            *scores.get_mut(&Algorithm::MovingLeastSquares).unwrap() += 0.3;
-            *scores.get_mut(&Algorithm::Delaunay).unwrap() += 0.1;
-            // Penalize sensitive algorithms
-            *scores.get_mut(&Algorithm::BallPivoting).unwrap() -= 0.2;
-        }
-
-        // Adjust based on surface complexity
-        if characteristics.surface_complexity > 0.7 {
-            if characteristics.has_normals {
-                *scores.get_mut(&Algorithm::Poisson).unwrap() += 0.3;
-            }
-            *scores.get_mut(&Algorithm::MovingLeastSquares).unwrap() += 0.2;
-        }
-
-        // Adjust based on distribution type
+        // Delaunay suits flat (2.5D) clouds. Everything else gets Poisson, which
+        // estimates and orients normals itself when the cloud has none: it is
+        // the only method here that reliably gives a closed, consistently
+        // oriented mesh (see #204 and #220 for the others).
         match characteristics.distribution_type {
-            DistributionType::Planar => {
-                *scores.get_mut(&Algorithm::Delaunay).unwrap() += 0.3;
-            }
-            DistributionType::Spherical | DistributionType::Cylindrical => {
-                *scores.get_mut(&Algorithm::BallPivoting).unwrap() += 0.2;
-                *scores.get_mut(&Algorithm::MarchingCubes).unwrap() += 0.3;
-            }
-            DistributionType::Arbitrary => {
-                // No specific preference
-            }
+            DistributionType::Planar => Algorithm::Delaunay,
+            _ => Algorithm::Poisson,
         }
-
-        // Adjust based on quality requirements
-        match self.config.quality {
-            QualityLevel::Fast => {
-                *scores.get_mut(&Algorithm::Delaunay).unwrap() += 0.3;
-            }
-            QualityLevel::Balanced => {
-                *scores.get_mut(&Algorithm::BallPivoting).unwrap() += 0.2;
-            }
-            QualityLevel::HighQuality | QualityLevel::MaxQuality => {
-                if characteristics.has_normals {
-                    *scores.get_mut(&Algorithm::Poisson).unwrap() += 0.3;
-                }
-                *scores.get_mut(&Algorithm::MovingLeastSquares).unwrap() += 0.2;
-            }
-        }
-
-        // Adjust based on use case
-        match self.config.use_case {
-            UseCase::Engineering => {
-                *scores.get_mut(&Algorithm::Delaunay).unwrap() += 0.2;
-                if characteristics.has_normals {
-                    *scores.get_mut(&Algorithm::Poisson).unwrap() += 0.2;
-                }
-            }
-            UseCase::Organic => {
-                *scores.get_mut(&Algorithm::MovingLeastSquares).unwrap() += 0.3;
-                if characteristics.has_normals {
-                    *scores.get_mut(&Algorithm::Poisson).unwrap() += 0.2;
-                }
-            }
-            UseCase::Prototyping => {
-                *scores.get_mut(&Algorithm::Delaunay).unwrap() += 0.4;
-            }
-            _ => {}
-        }
-
-        // Find algorithm with highest score
-        scores
-            .into_iter()
-            .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
-            .map(|(algo, _)| algo)
-            .unwrap_or(Algorithm::Delaunay)
     }
 
     /// Reconstruct surface from point cloud without normals
@@ -436,9 +319,8 @@ impl ReconstructionPipeline {
         // Try reconstruction with selected algorithm
         let mesh = match self.try_algorithm(cloud, selected_algorithm) {
             Ok(mesh) => mesh,
-            Err(_) => {
+            Err(first_error) => {
                 // Try fallback algorithms
-                let mut last_error = Error::Algorithm("No algorithms succeeded".to_string());
                 for &fallback_algo in &self.config.fallback_algorithms {
                     if fallback_algo != selected_algorithm {
                         match self.try_algorithm(cloud, fallback_algo) {
@@ -455,11 +337,14 @@ impl ReconstructionPipeline {
                                     data_characteristics: characteristics,
                                 });
                             }
-                            Err(e) => last_error = e,
+                            Err(_) => {}
                         }
                     }
                 }
-                return Err(last_error);
+                // The selected method's error says what is wrong with the input.
+                return Err(Error::Algorithm(format!(
+                    "{selected_algorithm:?} failed: {first_error}"
+                )));
             }
         };
 
@@ -491,9 +376,8 @@ impl ReconstructionPipeline {
         // Try reconstruction with selected algorithm
         let mesh = match self.try_algorithm_with_normals(cloud, selected_algorithm) {
             Ok(mesh) => mesh,
-            Err(_) => {
+            Err(first_error) => {
                 // Try fallback algorithms
-                let mut last_error = Error::Algorithm("No algorithms succeeded".to_string());
                 for &fallback_algo in &self.config.fallback_algorithms {
                     if fallback_algo != selected_algorithm {
                         match self.try_algorithm_with_normals(cloud, fallback_algo) {
@@ -510,11 +394,14 @@ impl ReconstructionPipeline {
                                     data_characteristics: characteristics,
                                 });
                             }
-                            Err(e) => last_error = e,
+                            Err(_) => {}
                         }
                     }
                 }
-                return Err(last_error);
+                // The selected method's error says what is wrong with the input.
+                return Err(Error::Algorithm(format!(
+                    "{selected_algorithm:?} failed: {first_error}"
+                )));
             }
         };
 
@@ -738,12 +625,11 @@ impl ReconstructionPipeline {
                 )?;
                 mls.extract_mesh()
             }
-            Algorithm::Poisson => {
-                // Cannot use Poisson without normals
-                Err(Error::InvalidData(
-                    "Poisson reconstruction requires normals".to_string(),
-                ))
-            }
+            Algorithm::Poisson => crate::poisson::poisson_reconstruction_with_normals(
+                cloud,
+                10,
+                &crate::poisson::PoissonConfig::default(),
+            ),
         }
     }
 
@@ -846,6 +732,81 @@ pub fn auto_reconstruct_for_use_case(
 mod tests {
     use super::*;
     use nalgebra::Point3;
+    use std::collections::HashMap;
+    use threecrate_core::Vector3f;
+
+    /// Unit sphere, evenly spread, optionally with exact outward normals.
+    fn unit_sphere(n: usize) -> Vec<NormalPoint3f> {
+        let golden = std::f32::consts::PI * (1.0 + 5f32.sqrt());
+        (0..n)
+            .map(|i| {
+                let t = i as f32 + 0.5;
+                let phi = (1.0 - 2.0 * t / n as f32).acos();
+                let theta = golden * t;
+                let normal =
+                    Vector3f::new(theta.cos() * phi.sin(), theta.sin() * phi.sin(), phi.cos());
+                NormalPoint3f {
+                    position: Point3f::from(normal),
+                    normal,
+                }
+            })
+            .collect()
+    }
+
+    /// Edges used by exactly one face; 0 for a closed mesh.
+    fn open_edges(mesh: &TriangleMesh) -> usize {
+        let mut count: HashMap<(usize, usize), u32> = HashMap::new();
+        for f in &mesh.faces {
+            for (a, b) in [(f[0], f[1]), (f[1], f[2]), (f[2], f[0])] {
+                *count.entry((a.min(b), a.max(b))).or_default() += 1;
+            }
+        }
+        count.values().filter(|&&c| c == 1).count()
+    }
+
+    #[test]
+    fn test_auto_picks_poisson_for_a_closed_object_with_or_without_normals() {
+        let pipeline = ReconstructionPipeline::default();
+        let with_normals = PointCloud::from_points(unit_sphere(2000));
+        let plain =
+            PointCloud::from_points(with_normals.points.iter().map(|p| p.position).collect());
+
+        for result in [
+            pipeline.reconstruct_with_normals(&with_normals).unwrap(),
+            pipeline.reconstruct(&plain).unwrap(),
+        ] {
+            assert_eq!(result.algorithm_used, Algorithm::Poisson);
+            assert_eq!(open_edges(&result.mesh), 0, "mesh should be closed");
+        }
+    }
+
+    #[test]
+    fn test_auto_picks_delaunay_for_a_flat_cloud() {
+        let flat: Vec<Point3f> = (0..400)
+            .map(|i| Point3f::new((i % 20) as f32, (i / 20) as f32, 0.0))
+            .collect();
+        let pipeline = ReconstructionPipeline::default();
+        let result = pipeline
+            .reconstruct(&PointCloud::from_points(flat))
+            .unwrap();
+        assert_eq!(result.algorithm_used, Algorithm::Delaunay);
+    }
+
+    #[test]
+    fn test_failure_reports_the_real_error() {
+        let config = PipelineConfig {
+            preferred_algorithm: Some(Algorithm::Poisson),
+            fallback_algorithms: vec![],
+            ..Default::default()
+        };
+        let tiny = PointCloud::from_points(vec![Point3f::origin(); 3]);
+        let err = ReconstructionPipeline::new(config)
+            .reconstruct(&tiny)
+            .unwrap_err();
+        let message = err.to_string();
+        assert!(message.contains("Poisson failed"), "{message}");
+        assert!(!message.contains("No algorithms succeeded"), "{message}");
+    }
 
     #[test]
     fn test_pipeline_config_default() {
