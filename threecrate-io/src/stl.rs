@@ -79,16 +79,22 @@ fn is_binary_stl(path: &Path) -> Result<bool> {
     Ok(true)
 }
 
-fn quantize(v: f32) -> i32 {
-    // 1e-6 quantization grid for vertex deduplication.
-    (v * 1_000_000.0).round() as i32
+fn quantize(v: f32) -> i64 {
+    // 1e-6 grid for vertex deduplication. i64 so coordinates past ~2147 units
+    // (an i32 limit) don't saturate and merge distinct vertices; NaN and inf get
+    // their own keys instead of merging with 0.
+    if v.is_finite() {
+        (v as f64 * 1_000_000.0).round() as i64
+    } else {
+        i64::MIN + v.to_bits() as i64
+    }
 }
 
 struct MeshBuilder {
     vertices: Vec<Point3f>,
     face_normals: Vec<Vector3f>,
     faces: Vec<[usize; 3]>,
-    index: HashMap<(i32, i32, i32), usize>,
+    index: HashMap<(i64, i64, i64), usize>,
 }
 
 impl MeshBuilder {
@@ -397,6 +403,38 @@ mod tests {
         ];
         let faces = vec![[0, 1, 2], [0, 1, 3], [0, 2, 3], [1, 2, 3]];
         TriangleMesh::from_vertices_and_faces(vertices, faces)
+    }
+
+    #[test]
+    fn far_from_origin_vertices_stay_distinct() {
+        // Millimetre CAD parts easily pass 2147 units; the old i32 key merged
+        // 3000 and 4000 here and dropped the triangle as degenerate.
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("far.stl");
+        std::fs::write(
+            &path,
+            "solid far
+             facet normal 0 0 1
+outer loop
+vertex 3000 0 0
+vertex 4000 0 0
+             vertex 3000 1000 0
+endloop
+endfacet
+             facet normal 0 0 1
+outer loop
+vertex 0 0 0
+vertex 1 0 0
+             vertex 0 1 0
+endloop
+endfacet
+endsolid far
+",
+        )
+        .unwrap();
+        let mesh = read_stl(&path).unwrap();
+        assert_eq!(mesh.faces.len(), 2);
+        assert_eq!(mesh.vertices.len(), 6);
     }
 
     #[test]
