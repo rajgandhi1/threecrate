@@ -511,7 +511,8 @@ def smooth_mesh_hc(
 # ---------------------------------------------------------------------------
 
 def reconstruct(cloud: PointCloud) -> TriangleMesh:
-    """Auto-detect and run the best reconstruction algorithm."""
+    """Pick a method and reconstruct: Delaunay for flat clouds, otherwise Poisson
+    (normals are estimated and oriented first)."""
     ...
 
 def poisson_reconstruct(

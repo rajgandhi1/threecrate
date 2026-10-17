@@ -1537,9 +1537,9 @@ fn smooth_mesh_hc(
 
 /// Automatically select and run the best surface reconstruction algorithm.
 ///
-/// Analyses the point cloud characteristics and picks an appropriate algorithm.
-/// For best results with noisy or organic data, use `poisson_reconstruct()`
-/// after calling `estimate_normals()`.
+/// Flat clouds get Delaunay triangulation. Everything else gets Poisson, with
+/// normals estimated and oriented first. For control over depth or trimming,
+/// call `poisson_reconstruct()` directly.
 #[pyfunction]
 fn reconstruct(cloud: &PyPointCloud) -> PyResult<PyTriangleMesh> {
     auto_reconstruct(&cloud.inner)
