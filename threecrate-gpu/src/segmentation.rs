@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use nalgebra::{Vector3, Vector4};
 use threecrate_core::{Error, Point3f, PointCloud, Result};
 
+use crate::device::workgroup_grid;
 use crate::GpuContext;
 
 const RANSAC_SCORE_SHADER: &str = r#"
@@ -29,8 +30,8 @@ struct RansacParams {
 }
 
 @compute @workgroup_size(64)
-fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
-    let sample_idx = global_id.x;
+fn main(@builtin(global_invocation_id) global_id: vec3<u32>, @builtin(num_workgroups) nwg: vec3<u32>) {
+    let sample_idx = global_id.x + global_id.y * nwg.x * 64u;
     if (sample_idx >= params.num_samples) {
         return;
     }
@@ -78,8 +79,8 @@ struct InlierParams {
 }
 
 @compute @workgroup_size(64)
-fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
-    let index = global_id.x;
+fn main(@builtin(global_invocation_id) global_id: vec3<u32>, @builtin(num_workgroups) nwg: vec3<u32>) {
+    let index = global_id.x + global_id.y * nwg.x * 64u;
     if (index >= params.num_points) {
         return;
     }
@@ -410,7 +411,8 @@ impl GpuContext {
             });
             pass.set_pipeline(&pipeline);
             pass.set_bind_group(0, &bind_group, &[]);
-            pass.dispatch_workgroups(div_ceil(sample_count, 64) as u32, 1, 1);
+            let (x, y) = workgroup_grid(div_ceil(sample_count, 64));
+            pass.dispatch_workgroups(x, y, 1);
         }
 
         let candidates = self
@@ -728,7 +730,8 @@ impl GpuContext {
             });
             pass.set_pipeline(&pipeline);
             pass.set_bind_group(0, &bind_group, &[]);
-            pass.dispatch_workgroups(div_ceil(points.len(), 64) as u32, 1, 1);
+            let (x, y) = workgroup_grid(div_ceil(points.len(), 64));
+            pass.dispatch_workgroups(x, y, 1);
         }
 
         let flags = self

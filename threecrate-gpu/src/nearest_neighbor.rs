@@ -1,5 +1,6 @@
 //! GPU-accelerated nearest neighbor search
 
+use crate::device::workgroup_grid;
 use crate::spatial::{vec4s, GpuKdTree, KD_TREE_WGSL, MAX_K};
 use crate::GpuContext;
 use bytemuck::{Pod, Zeroable};
@@ -53,8 +54,8 @@ struct KnnParams {
 @group(0) @binding(3) var<uniform> params: KnnParams;
 
 @compute @workgroup_size(64)
-fn knn(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let q = gid.x;
+fn knn(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) nwg: vec3<u32>) {
+    let q = gid.x + gid.y * nwg.x * 64u;
     if (q >= params.num_queries) {
         return;
     }
@@ -155,7 +156,8 @@ impl GpuContext {
             });
             pass.set_pipeline(pipeline);
             pass.set_bind_group(0, &bind_group, &[]);
-            pass.dispatch_workgroups(query_points.len().div_ceil(64) as u32, 1, 1);
+            let (x, y) = workgroup_grid(query_points.len().div_ceil(64));
+            pass.dispatch_workgroups(x, y, 1);
         }
         self.queue.submit(std::iter::once(encoder.finish()));
 
