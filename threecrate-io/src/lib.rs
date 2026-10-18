@@ -17,6 +17,7 @@ pub mod obj;
 pub mod pasture;
 pub mod pcd;
 pub mod ply;
+mod records;
 pub mod registry;
 #[cfg(feature = "ros2")]
 pub mod ros2;
