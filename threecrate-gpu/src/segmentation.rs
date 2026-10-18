@@ -1,7 +1,5 @@
 //! GPU-accelerated point cloud segmentation.
 
-use std::collections::HashMap;
-
 use nalgebra::{Vector3, Vector4};
 use threecrate_core::{Error, Point3f, PointCloud, Result};
 
@@ -92,55 +90,6 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
     let distance = abs(dot(params.plane.xyz, points[index].xyz) + params.plane.w) / normal_len;
     flags[index] = select(0u, 1u, distance <= params.threshold);
-}
-"#;
-
-const RADIUS_NEIGHBOR_SHADER: &str = r#"
-@group(0) @binding(0) var<storage, read> points: array<vec4<f32>>;
-@group(0) @binding(1) var<storage, read> candidate_counts: array<u32>;
-@group(0) @binding(2) var<storage, read> candidates: array<array<u32, MAX_CANDIDATES>>;
-@group(0) @binding(3) var<storage, read_write> neighbor_counts: array<u32>;
-@group(0) @binding(4) var<storage, read_write> neighbors: array<array<u32, MAX_NEIGHBORS>>;
-@group(0) @binding(5) var<uniform> params: ClusterParams;
-
-struct ClusterParams {
-    num_points: u32,
-    max_neighbors: u32,
-    max_candidates: u32,
-    _pad0: u32,
-    tolerance: f32,
-    _pad1: u32,
-    _pad2: u32,
-    _pad3: u32,
-}
-
-@compute @workgroup_size(64)
-fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
-    let index = global_id.x;
-    if (index >= params.num_points) {
-        return;
-    }
-
-    let center = points[index].xyz;
-    var stored = 0u;
-    let candidate_count = min(candidate_counts[index], params.max_candidates);
-
-    for (var slot = 0u; slot < candidate_count; slot++) {
-        let candidate_index = candidates[index][slot];
-        if (candidate_index >= params.num_points || candidate_index == index) {
-            continue;
-        }
-
-        let distance = length(points[candidate_index].xyz - center);
-        if (distance <= params.tolerance) {
-            if (stored < params.max_neighbors) {
-                neighbors[index][stored] = candidate_index;
-                stored++;
-            }
-        }
-    }
-
-    neighbor_counts[index] = stored;
 }
 "#;
 
@@ -469,179 +418,27 @@ impl GpuContext {
             .collect())
     }
 
-    /// Extract Euclidean clusters using GPU-computed radius adjacency.
+    /// Extract Euclidean clusters. Runs on the CPU (`threecrate_algorithms`)
+    /// with a kd-tree radius search: the old GPU path capped each point's
+    /// candidates before checking distance, so it split real clusters, and it
+    /// ran out of buffer space above 65,536 points (#217). `max_neighbors` is
+    /// no longer used.
     pub async fn extract_euclidean_clusters(
         &self,
         points: &[Point3f],
         config: &GpuEuclideanClusterConfig,
     ) -> Result<GpuClusterExtractionResult> {
         validate_cluster_inputs(points, config)?;
-
-        let max_neighbors = config.max_neighbors.min(256).max(1);
-        let max_candidates = max_neighbors.saturating_mul(8).clamp(max_neighbors, 1024);
-        let point_data = points_to_vec4(points);
-        let (candidate_counts, candidate_indices) =
-            build_voxel_candidate_neighbors(points, config.tolerance, max_candidates)?;
-        let input_buffer =
-            self.create_buffer_init("Cluster Points", &point_data, wgpu::BufferUsages::STORAGE);
-        let candidate_counts_buffer = self.create_buffer_init(
-            "Cluster Candidate Counts",
-            &candidate_counts,
-            wgpu::BufferUsages::STORAGE,
+        let cpu_config = threecrate_algorithms::EuclideanClusterConfig::new(
+            config.tolerance,
+            config.min_cluster_size,
+            config.max_cluster_size,
         );
-        let candidates_buffer = self.create_buffer_init(
-            "Cluster Candidates",
-            &candidate_indices,
-            wgpu::BufferUsages::STORAGE,
-        );
-        let counts_buffer = self.create_buffer(
-            "Cluster Neighbor Counts",
-            (points.len() * std::mem::size_of::<u32>()) as u64,
-            wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-        );
-        let neighbors_buffer = self.create_buffer(
-            "Cluster Neighbors",
-            (points.len() * max_neighbors * std::mem::size_of::<u32>()) as u64,
-            wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-        );
-
-        #[repr(C)]
-        #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-        struct ClusterParams {
-            num_points: u32,
-            max_neighbors: u32,
-            max_candidates: u32,
-            _padding0: u32,
-            tolerance: f32,
-            _padding1: [u32; 3],
-        }
-
-        let params = ClusterParams {
-            num_points: points.len() as u32,
-            max_neighbors: max_neighbors as u32,
-            max_candidates: max_candidates as u32,
-            _padding0: 0,
-            tolerance: config.tolerance,
-            _padding1: [0; 3],
-        };
-        let params_buffer =
-            self.create_buffer_init("Cluster Params", &[params], wgpu::BufferUsages::UNIFORM);
-
-        let shader_source = RADIUS_NEIGHBOR_SHADER
-            .replace("MAX_NEIGHBORS", &max_neighbors.to_string())
-            .replace("MAX_CANDIDATES", &max_candidates.to_string());
-        let shader = self.create_shader_module("Cluster Radius Neighbor Shader", &shader_source);
-        let layout = self.create_bind_group_layout(
-            "Cluster Radius Neighbor Layout",
-            &[
-                storage_entry(0, true),
-                storage_entry(1, true),
-                storage_entry(2, true),
-                storage_entry(3, false),
-                storage_entry(4, false),
-                uniform_entry(5),
-            ],
-        );
-        let pipeline =
-            self.create_pipeline_with_layout("Cluster Radius Neighbor Pipeline", &shader, &layout);
-        let bind_group = self.create_bind_group(
-            "Cluster Radius Neighbor Bind Group",
-            &layout,
-            &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: input_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: candidate_counts_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: candidates_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: counts_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: neighbors_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 5,
-                    resource: params_buffer.as_entire_binding(),
-                },
-            ],
-        );
-
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Cluster Radius Neighbor Encoder"),
-            });
-        {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("Cluster Radius Neighbor Pass"),
-                timestamp_writes: None,
-            });
-            pass.set_pipeline(&pipeline);
-            pass.set_bind_group(0, &bind_group, &[]);
-            pass.dispatch_workgroups(div_ceil(points.len(), 64) as u32, 1, 1);
-        }
-
-        let counts = self
-            .read_storage_buffer::<u32>(
-                encoder,
-                &counts_buffer,
-                points.len(),
-                "Cluster Count Staging",
-            )
-            .await?;
-
-        let encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Cluster Neighbor Read Encoder"),
-            });
-        let neighbors = self
-            .read_storage_buffer::<u32>(
-                encoder,
-                &neighbors_buffer,
-                points.len() * max_neighbors,
-                "Cluster Neighbor Staging",
-            )
-            .await?;
-
-        let mut disjoint_set = DisjointSet::new(points.len());
-        for point_idx in 0..points.len() {
-            let count = counts[point_idx].min(max_neighbors as u32) as usize;
-            let base = point_idx * max_neighbors;
-
-            for &neighbor in &neighbors[base..base + count] {
-                let neighbor = neighbor as usize;
-                if neighbor < points.len() {
-                    disjoint_set.union(point_idx, neighbor);
-                }
-            }
-        }
-
-        let mut by_root: HashMap<usize, usize> = HashMap::new();
-        let mut clusters = Vec::new();
-        for point_idx in 0..points.len() {
-            let root = disjoint_set.find(point_idx);
-            let cluster_idx = *by_root.entry(root).or_insert_with(|| {
-                clusters.push(Vec::new());
-                clusters.len() - 1
-            });
-            clusters[cluster_idx].push(point_idx);
-        }
-
-        clusters.retain(|cluster| {
-            cluster.len() >= config.min_cluster_size && cluster.len() <= config.max_cluster_size
-        });
-        clusters.sort_by(|a, b| b.len().cmp(&a.len()));
-        Ok(GpuClusterExtractionResult { clusters })
+        let cloud = PointCloud::from_points(points.to_vec());
+        let result = threecrate_algorithms::extract_euclidean_clusters(&cloud, &cpu_config)?;
+        Ok(GpuClusterExtractionResult {
+            clusters: result.clusters,
+        })
     }
 
     async fn plane_inlier_indices(
@@ -916,66 +713,6 @@ fn points_to_vec4(points: &[Point3f]) -> Vec<[f32; 4]> {
     points.iter().map(|p| [p.x, p.y, p.z, 0.0]).collect()
 }
 
-fn build_voxel_candidate_neighbors(
-    points: &[Point3f],
-    tolerance: f32,
-    max_candidates: usize,
-) -> Result<(Vec<u32>, Vec<u32>)> {
-    let total_candidates = points
-        .len()
-        .checked_mul(max_candidates)
-        .ok_or_else(|| Error::InvalidData("Cluster candidate buffer is too large".to_string()))?;
-    let mut bins: HashMap<(i32, i32, i32), Vec<u32>> = HashMap::new();
-
-    for (idx, point) in points.iter().enumerate() {
-        bins.entry(voxel_key(point, tolerance))
-            .or_default()
-            .push(idx as u32);
-    }
-
-    let mut counts = vec![0u32; points.len()];
-    let mut candidates = vec![u32::MAX; total_candidates];
-    for (idx, point) in points.iter().enumerate() {
-        let (vx, vy, vz) = voxel_key(point, tolerance);
-        let base = idx * max_candidates;
-        let mut stored = 0usize;
-
-        for dx in -1..=1 {
-            for dy in -1..=1 {
-                for dz in -1..=1 {
-                    let key = (vx + dx, vy + dy, vz + dz);
-                    let Some(bucket) = bins.get(&key) else {
-                        continue;
-                    };
-
-                    for &candidate in bucket {
-                        if candidate as usize == idx {
-                            continue;
-                        }
-                        if stored == max_candidates {
-                            break;
-                        }
-                        candidates[base + stored] = candidate;
-                        stored += 1;
-                    }
-                }
-            }
-        }
-
-        counts[idx] = stored as u32;
-    }
-
-    Ok((counts, candidates))
-}
-
-fn voxel_key(point: &Point3f, tolerance: f32) -> (i32, i32, i32) {
-    (
-        (point.x / tolerance).floor() as i32,
-        (point.y / tolerance).floor() as i32,
-        (point.z / tolerance).floor() as i32,
-    )
-}
-
 fn generate_ransac_samples(num_points: usize, sample_count: usize) -> Vec<[u32; 4]> {
     let mut state = ((num_points as u64) << 32) ^ sample_count as u64 ^ 0x9E37_79B9_7F4A_7C15;
     let mut samples = Vec::with_capacity(sample_count);
@@ -1008,44 +745,6 @@ fn next_index(state: &mut u64, len: usize) -> usize {
         .wrapping_mul(6_364_136_223_846_793_005)
         .wrapping_add(1_442_695_040_888_963_407);
     ((*state >> 32) as usize) % len
-}
-
-struct DisjointSet {
-    parent: Vec<usize>,
-    rank: Vec<u8>,
-}
-
-impl DisjointSet {
-    fn new(len: usize) -> Self {
-        Self {
-            parent: (0..len).collect(),
-            rank: vec![0; len],
-        }
-    }
-
-    fn find(&mut self, value: usize) -> usize {
-        if self.parent[value] != value {
-            self.parent[value] = self.find(self.parent[value]);
-        }
-        self.parent[value]
-    }
-
-    fn union(&mut self, a: usize, b: usize) {
-        let root_a = self.find(a);
-        let root_b = self.find(b);
-        if root_a == root_b {
-            return;
-        }
-
-        match self.rank[root_a].cmp(&self.rank[root_b]) {
-            std::cmp::Ordering::Less => self.parent[root_a] = root_b,
-            std::cmp::Ordering::Greater => self.parent[root_b] = root_a,
-            std::cmp::Ordering::Equal => {
-                self.parent[root_b] = root_a;
-                self.rank[root_a] += 1;
-            }
-        }
-    }
 }
 
 fn storage_entry(binding: u32, read_only: bool) -> wgpu::BindGroupLayoutEntry {
@@ -1138,6 +837,57 @@ mod tests {
             assert!(result.plane.normal().z.abs() > 0.9);
             assert_eq!(result.model, result.plane);
             assert_eq!(result.iterations, 256);
+        });
+    }
+
+    /// The cases from #217: the old GPU path split two dense blobs into single
+    /// points and separated a pair 0.02 apart, and it ran out of buffer space
+    /// above 65,536 points.
+    #[test]
+    fn test_gpu_clusters_match_cpu_and_handle_large_clouds() {
+        pollster::block_on(async {
+            let Some(gpu) = try_create_gpu_context().await else {
+                return;
+            };
+            let blob = |cx: f32, cy: f32, cz: f32| {
+                (0..600).map(move |i| {
+                    let (a, b, c) = ((i % 10) as f32, ((i / 10) % 10) as f32, (i / 100) as f32);
+                    Point3f::new(cx + a * 0.02, cy + b * 0.02, cz + c * 0.02)
+                })
+            };
+            let mut points: Vec<Point3f> =
+                blob(0.25, 0.5, 0.5).chain(blob(1.05, -0.9, -0.9)).collect();
+            points.push(Point3f::new(1.99, 0.5, 0.5));
+            points.push(Point3f::new(2.01, 0.5, 0.5));
+            let cloud = PointCloud::from_points(points);
+            let config = GpuEuclideanClusterConfig::new(1.0, 1, 10_000);
+            let gpu_result = gpu_extract_euclidean_clusters(&gpu, &cloud, &config)
+                .await
+                .unwrap();
+            let sizes: Vec<usize> = gpu_result.clusters.iter().map(Vec::len).collect();
+            let cpu = threecrate_algorithms::extract_euclidean_clusters(
+                &cloud,
+                &threecrate_algorithms::EuclideanClusterConfig::new(1.0, 1, 10_000),
+            )
+            .unwrap();
+            assert_eq!(gpu_result.clusters, cpu.clusters);
+            assert_eq!(sizes.iter().sum::<usize>(), 1202);
+            assert!(sizes.len() <= 3, "clusters were split: {sizes:?}");
+
+            // 70,000 points in two well-separated sheets.
+            let big = PointCloud::from_points(
+                (0..70_000)
+                    .map(|i| {
+                        let x = (i % 350) as f32 * 0.01 + if i < 35_000 { 0.0 } else { 100.0 };
+                        Point3f::new(x, (i / 350 % 100) as f32 * 0.01, 0.0)
+                    })
+                    .collect(),
+            );
+            let config = GpuEuclideanClusterConfig::new(0.02, 100, 100_000);
+            let result = gpu_extract_euclidean_clusters(&gpu, &big, &config)
+                .await
+                .unwrap();
+            assert_eq!(result.num_clusters(), 2);
         });
     }
 
