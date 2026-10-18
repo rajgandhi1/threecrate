@@ -5,68 +5,16 @@
 
 use crate::MeshSimplifier;
 use nalgebra::{Matrix4, Vector4};
-use threecrate_core::{Error, Point3f, Result, TriangleMesh};
-// use rayon::prelude::*;
-use priority_queue::PriorityQueue;
 use std::cmp::Ordering;
-use std::collections::{HashMap, HashSet};
-
-/// Edge collapse operation
-#[derive(Debug, Clone)]
-struct EdgeCollapse {
-    /// Source vertex index
-    vertex1: usize,
-    /// Target vertex index  
-    vertex2: usize,
-    /// New position after collapse
-    new_position: Point3f,
-    /// Quadric error cost
-    cost: f64,
-}
-
-impl PartialEq for EdgeCollapse {
-    fn eq(&self, other: &Self) -> bool {
-        self.cost.total_cmp(&other.cost) == Ordering::Equal
-    }
-}
-
-impl Eq for EdgeCollapse {}
-
-impl PartialOrd for EdgeCollapse {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for EdgeCollapse {
-    fn cmp(&self, other: &Self) -> Ordering {
-        // Reverse ordering for min-heap (smallest cost first)
-        other.cost.total_cmp(&self.cost)
-    }
-}
-
-/// Face adjacency information
-#[allow(dead_code)]
-#[derive(Debug, Clone)]
-struct FaceInfo {
-    vertices: [usize; 3],
-    plane: Vector4<f64>, // ax + by + cz + d = 0
-}
-
-/// Vertex information including quadric matrix
-#[derive(Debug, Clone)]
-struct VertexInfo {
-    position: Point3f,
-    quadric: Matrix4<f64>,
-    faces: HashSet<usize>,
-    neighbors: HashSet<usize>,
-}
+use std::collections::{BinaryHeap, HashMap, HashSet};
+use threecrate_core::{Error, Point3f, Result, TriangleMesh, Vector3f};
 
 /// Quadric error decimation simplifier
 pub struct QuadricErrorSimplifier {
     /// Configuration parameters
     pub max_edge_length: Option<f32>,
     pub preserve_boundary: bool,
+    /// Not used by the current algorithm; kept for API compatibility.
     pub feature_angle_threshold: f32,
 }
 
@@ -77,6 +25,125 @@ impl Default for QuadricErrorSimplifier {
             preserve_boundary: true,
             feature_angle_threshold: 45.0_f32.to_radians(),
         }
+    }
+}
+
+/// A candidate edge collapse. Ordered by cost, cheapest first in the heap.
+/// `stamps` are the endpoints' versions when the cost was computed; if either
+/// endpoint has changed since, the entry is stale and skipped.
+struct Candidate {
+    cost: f64,
+    keep: usize,
+    remove: usize,
+    position: Point3f,
+    stamps: [u32; 2],
+}
+
+impl PartialEq for Candidate {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other) == Ordering::Equal
+    }
+}
+impl Eq for Candidate {}
+impl PartialOrd for Candidate {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for Candidate {
+    fn cmp(&self, other: &Self) -> Ordering {
+        other.cost.total_cmp(&self.cost) // min-heap
+    }
+}
+
+/// Mesh state while collapsing. `vertex_faces` may list faces that have since
+/// died or no longer use the vertex; `faces_of` filters them.
+struct Working {
+    positions: Vec<Point3f>,
+    quadrics: Vec<Matrix4<f64>>,
+    stamps: Vec<u32>,
+    alive: Vec<bool>,
+    faces: Vec<[usize; 3]>,
+    face_alive: Vec<bool>,
+    vertex_faces: Vec<Vec<usize>>,
+    live_faces: usize,
+}
+
+impl Working {
+    fn faces_of(&self, v: usize) -> impl Iterator<Item = usize> + '_ {
+        self.vertex_faces[v]
+            .iter()
+            .copied()
+            .filter(move |&f| self.face_alive[f] && self.faces[f].contains(&v))
+    }
+
+    fn neighbors(&self, v: usize) -> HashSet<usize> {
+        self.faces_of(v)
+            .flat_map(|f| self.faces[f])
+            .filter(|&u| u != v)
+            .collect()
+    }
+
+    /// Normal of `face`, with any vertex in `moved` placed at `to`.
+    fn normal(&self, face: [usize; 3], moved: &[usize], to: Point3f) -> Vector3f {
+        let p = face.map(|v| {
+            if moved.contains(&v) {
+                to
+            } else {
+                self.positions[v]
+            }
+        });
+        (p[1] - p[0]).cross(&(p[2] - p[0]))
+    }
+
+    /// Whether collapsing `keep`-`remove` into `position` keeps the mesh a
+    /// valid surface: the endpoints share exactly the neighbours of their
+    /// shared faces (link condition), and no surrounding face flips over.
+    fn can_collapse(&self, keep: usize, remove: usize, position: Point3f) -> bool {
+        let shared = self
+            .faces_of(keep)
+            .filter(|&f| self.faces[f].contains(&remove))
+            .count();
+        let common = self
+            .neighbors(keep)
+            .intersection(&self.neighbors(remove))
+            .count();
+        if shared == 0 || common != shared {
+            return false;
+        }
+        let ends = [keep, remove];
+        self.faces_of(keep)
+            .chain(self.faces_of(remove))
+            .filter(|&f| !(self.faces[f].contains(&keep) && self.faces[f].contains(&remove)))
+            .all(|f| {
+                let before = self.normal(self.faces[f], &[], position);
+                let after = self.normal(self.faces[f], &ends, position);
+                // Reject flips, and faces squashed to (almost) no area.
+                let (b, a) = (before.norm(), after.norm());
+                a > 1e-6 * b && before.dot(&after) > 0.01 * b * a
+            })
+    }
+
+    fn collapse(&mut self, keep: usize, remove: usize, position: Point3f) {
+        self.positions[keep] = position;
+        self.quadrics[keep] = self.quadrics[keep] + self.quadrics[remove];
+        let moved_faces: Vec<usize> = self.faces_of(remove).collect();
+        for f in moved_faces {
+            if self.faces[f].contains(&keep) {
+                self.face_alive[f] = false;
+                self.live_faces -= 1;
+            } else {
+                for v in self.faces[f].iter_mut() {
+                    if *v == remove {
+                        *v = keep;
+                    }
+                }
+                self.vertex_faces[keep].push(f);
+            }
+        }
+        self.alive[remove] = false;
+        self.stamps[keep] += 1;
+        self.stamps[remove] += 1;
     }
 }
 
@@ -116,108 +183,17 @@ impl QuadricErrorSimplifier {
 
     /// Compute quadric matrix from plane equation
     fn plane_to_quadric(&self, plane: &Vector4<f64>) -> Matrix4<f64> {
-        let a = plane[0];
-        let b = plane[1];
-        let c = plane[2];
-        let d = plane[3];
-
-        Matrix4::new(
-            a * a,
-            a * b,
-            a * c,
-            a * d,
-            a * b,
-            b * b,
-            b * c,
-            b * d,
-            a * c,
-            b * c,
-            c * c,
-            c * d,
-            a * d,
-            b * d,
-            c * d,
-            d * d,
-        )
-    }
-
-    /// Initialize vertex information including quadrics
-    fn initialize_vertices(&self, mesh: &TriangleMesh) -> Vec<VertexInfo> {
-        let mut vertices: Vec<VertexInfo> = mesh
-            .vertices
-            .iter()
-            .enumerate()
-            .map(|(_i, &pos)| VertexInfo {
-                position: pos,
-                quadric: Matrix4::zeros(),
-                faces: HashSet::new(),
-                neighbors: HashSet::new(),
-            })
-            .collect();
-
-        // Compute face planes and accumulate quadrics
-        for (face_idx, face) in mesh.faces.iter().enumerate() {
-            let v0 = mesh.vertices[face[0]];
-            let v1 = mesh.vertices[face[1]];
-            let v2 = mesh.vertices[face[2]];
-
-            let plane = self.compute_plane(&v0, &v1, &v2);
-            let quadric = self.plane_to_quadric(&plane);
-
-            // Add quadric to each vertex of the face
-            for &vertex_idx in face.iter() {
-                vertices[vertex_idx].quadric += quadric;
-                vertices[vertex_idx].faces.insert(face_idx);
-            }
-
-            // Build adjacency
-            vertices[face[0]].neighbors.insert(face[1]);
-            vertices[face[0]].neighbors.insert(face[2]);
-            vertices[face[1]].neighbors.insert(face[0]);
-            vertices[face[1]].neighbors.insert(face[2]);
-            vertices[face[2]].neighbors.insert(face[0]);
-            vertices[face[2]].neighbors.insert(face[1]);
-        }
-
-        vertices
+        plane * plane.transpose()
     }
 
     /// Find boundary edges in the mesh
     fn find_boundary_edges(&self, mesh: &TriangleMesh) -> HashSet<(usize, usize)> {
         let mut edge_count: HashMap<(usize, usize), usize> = HashMap::new();
         for face in &mesh.faces {
-            let edges = [
-                (face[0].min(face[1]), face[0].max(face[1])),
-                (face[1].min(face[2]), face[1].max(face[2])),
-                (face[2].min(face[0]), face[2].max(face[0])),
-            ];
-            for edge in edges.iter() {
-                *edge_count.entry(*edge).or_insert(0) += 1;
+            for (a, b) in [(face[0], face[1]), (face[1], face[2]), (face[2], face[0])] {
+                *edge_count.entry((a.min(b), a.max(b))).or_insert(0) += 1;
             }
         }
-        edge_count
-            .into_iter()
-            .filter(|(_, count)| *count == 1)
-            .map(|(edge, _)| edge)
-            .collect()
-    }
-
-    /// Find boundary edges from a face list (used during simplification)
-    fn find_boundary_edges_from_faces(&self, faces: &[[usize; 3]]) -> HashSet<(usize, usize)> {
-        let mut edge_count: HashMap<(usize, usize), usize> = HashMap::new();
-
-        for face in faces {
-            let edges = [
-                (face[0].min(face[1]), face[0].max(face[1])),
-                (face[1].min(face[2]), face[1].max(face[2])),
-                (face[2].min(face[0]), face[2].max(face[0])),
-            ];
-
-            for edge in edges.iter() {
-                *edge_count.entry(*edge).or_insert(0) += 1;
-            }
-        }
-
         edge_count
             .into_iter()
             .filter(|(_, count)| *count == 1)
@@ -227,184 +203,56 @@ impl QuadricErrorSimplifier {
 
     /// Get all boundary vertices from boundary edges
     fn get_boundary_vertices(&self, boundary_edges: &HashSet<(usize, usize)>) -> HashSet<usize> {
-        let mut boundary_verts = HashSet::new();
-        for &(v1, v2) in boundary_edges {
-            boundary_verts.insert(v1);
-            boundary_verts.insert(v2);
-        }
-        boundary_verts
+        boundary_edges.iter().flat_map(|&(a, b)| [a, b]).collect()
     }
 
-    /// Compute optimal position and cost for edge collapse
-    fn compute_collapse_cost(
+    /// Cost and best position for collapsing edge `a`-`b`, or `None` when the
+    /// edge may not be collapsed.
+    fn candidate(
         &self,
-        v1_idx: usize,
-        v2_idx: usize,
-        vertices: &[VertexInfo],
-    ) -> Option<EdgeCollapse> {
-        let v1 = &vertices[v1_idx];
-        let v2 = &vertices[v2_idx];
-
-        // Check edge length constraint
-        if let Some(max_len) = self.max_edge_length {
-            let edge_len = (v1.position - v2.position).magnitude();
-            if edge_len > max_len {
-                return None;
-            }
+        w: &Working,
+        a: usize,
+        b: usize,
+        fixed: &HashSet<usize>,
+    ) -> Option<Candidate> {
+        if fixed.contains(&a) || fixed.contains(&b) {
+            return None;
         }
-
-        // Combined quadric
-        let q_combined = v1.quadric + v2.quadric;
-
-        // Try to solve for optimal position: ∇(v^T Q v) = 0
-        // This gives us: 2Qv = 0, or the 3x3 upper-left block of Q
-        let q_3x3 = q_combined.fixed_view::<3, 3>(0, 0);
-        let q_3x1 = q_combined.fixed_view::<3, 1>(0, 3);
-
-        let optimal_pos = if let Some(inv_q) = q_3x3.try_inverse() {
-            let optimal_homogeneous = -inv_q * q_3x1;
-            Point3f::new(
-                optimal_homogeneous[0] as f32,
-                optimal_homogeneous[1] as f32,
-                optimal_homogeneous[2] as f32,
-            )
-        } else {
-            // If not invertible, use midpoint
-            Point3f::from((v1.position.coords + v2.position.coords) * 0.5)
+        let (pa, pb) = (w.positions[a], w.positions[b]);
+        let length = (pa - pb).magnitude();
+        if self.max_edge_length.is_some_and(|max| length > max) {
+            return None;
+        }
+        let q = w.quadrics[a] + w.quadrics[b];
+        let error = |p: &Point3f| {
+            let h = Vector4::new(p.x as f64, p.y as f64, p.z as f64, 1.0);
+            (h.transpose() * q * h)[0]
         };
-
-        // Compute quadric error at optimal position
-        let pos_homogeneous = Vector4::new(
-            optimal_pos.x as f64,
-            optimal_pos.y as f64,
-            optimal_pos.z as f64,
-            1.0,
-        );
-
-        let cost = (pos_homogeneous.transpose() * q_combined * pos_homogeneous)[0];
-
-        Some(EdgeCollapse {
-            vertex1: v1_idx,
-            vertex2: v2_idx,
-            new_position: optimal_pos,
-            cost,
+        // Best point: where the quadric is smallest, when that is well defined
+        // and near the edge; otherwise the cheapest of the ends and midpoint.
+        let solved = q
+            .fixed_view::<3, 3>(0, 0)
+            .into_owned()
+            .try_inverse()
+            .map(|inv| -inv * q.fixed_view::<3, 1>(0, 3))
+            .map(|v| Point3f::new(v[0] as f32, v[1] as f32, v[2] as f32))
+            .filter(|p| {
+                p.coords.iter().all(|c| c.is_finite())
+                    && (p - pa).magnitude() <= 2.0 * length.max(f32::EPSILON)
+            });
+        let position = solved.unwrap_or_else(|| {
+            [pa, pb, Point3f::from((pa.coords + pb.coords) * 0.5)]
+                .into_iter()
+                .min_by(|x, y| error(x).total_cmp(&error(y)))
+                .unwrap()
+        });
+        Some(Candidate {
+            cost: error(&position),
+            keep: a,
+            remove: b,
+            position,
+            stamps: [w.stamps[a], w.stamps[b]],
         })
-    }
-
-    /// Generate all valid edge collapses
-    fn generate_edge_collapses(
-        &self,
-        vertices: &[VertexInfo],
-        boundary_edges: &HashSet<(usize, usize)>,
-    ) -> Vec<EdgeCollapse> {
-        let mut collapses = Vec::new();
-
-        // Get all boundary vertices
-        let boundary_verts = if self.preserve_boundary {
-            self.get_boundary_vertices(boundary_edges)
-        } else {
-            HashSet::new()
-        };
-
-        for (v1_idx, vertex) in vertices.iter().enumerate() {
-            for &v2_idx in &vertex.neighbors {
-                if v1_idx < v2_idx {
-                    // Avoid duplicate edges
-                    // Skip any edge involving a boundary vertex if preservation is enabled
-                    if self.preserve_boundary {
-                        if boundary_verts.contains(&v1_idx) || boundary_verts.contains(&v2_idx) {
-                            continue;
-                        }
-                    }
-                    if let Some(collapse) = self.compute_collapse_cost(v1_idx, v2_idx, vertices) {
-                        collapses.push(collapse);
-                    }
-                }
-            }
-        }
-        collapses
-    }
-
-    /// Apply edge collapse to mesh data structures
-    fn apply_collapse(
-        &self,
-        collapse: &EdgeCollapse,
-        vertices: &mut Vec<VertexInfo>,
-        faces: &mut Vec<[usize; 3]>,
-        vertex_mapping: &mut HashMap<usize, usize>,
-    ) -> Result<()> {
-        let v1_idx = collapse.vertex1;
-        let v2_idx = collapse.vertex2;
-
-        // Update vertex position and combine quadrics
-        let v2_quadric = vertices[v2_idx].quadric.clone();
-        vertices[v1_idx].position = collapse.new_position;
-        vertices[v1_idx].quadric += v2_quadric;
-
-        // Update faces that reference v2 to reference v1
-        for face in faces.iter_mut() {
-            for vertex_ref in face.iter_mut() {
-                if *vertex_ref == v2_idx {
-                    *vertex_ref = v1_idx;
-                }
-            }
-        }
-
-        // Remove degenerate faces (triangles with repeated vertices)
-        faces.retain(|face| face[0] != face[1] && face[1] != face[2] && face[2] != face[0]);
-
-        // Update vertex mapping
-        vertex_mapping.insert(v2_idx, v1_idx);
-
-        // Update adjacency information
-        let v2_neighbors = vertices[v2_idx].neighbors.clone();
-        for &neighbor in &v2_neighbors {
-            if neighbor != v1_idx {
-                vertices[v1_idx].neighbors.insert(neighbor);
-                vertices[neighbor].neighbors.remove(&v2_idx);
-                vertices[neighbor].neighbors.insert(v1_idx);
-            }
-        }
-        vertices[v1_idx].neighbors.remove(&v2_idx);
-
-        // Mark v2 as invalid
-        vertices[v2_idx].neighbors.clear();
-        vertices[v2_idx].faces.clear();
-
-        Ok(())
-    }
-
-    /// Rebuild mesh from simplified vertex and face data
-    fn rebuild_mesh(&self, vertices: &[VertexInfo], faces: &[[usize; 3]]) -> TriangleMesh {
-        // Create mapping from old indices to new indices (compacting)
-        let mut old_to_new: HashMap<usize, usize> = HashMap::new();
-        let mut new_vertices = Vec::new();
-
-        // Collect valid vertices
-        for (old_idx, vertex) in vertices.iter().enumerate() {
-            if !vertex.neighbors.is_empty() || !vertex.faces.is_empty() {
-                old_to_new.insert(old_idx, new_vertices.len());
-                new_vertices.push(vertex.position);
-            }
-        }
-
-        // Update face indices
-        let new_faces: Vec<[usize; 3]> = faces
-            .iter()
-            .filter_map(|face| {
-                if let (Some(&new_v0), Some(&new_v1), Some(&new_v2)) = (
-                    old_to_new.get(&face[0]),
-                    old_to_new.get(&face[1]),
-                    old_to_new.get(&face[2]),
-                ) {
-                    Some([new_v0, new_v1, new_v2])
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        TriangleMesh::from_vertices_and_faces(new_vertices, new_faces)
     }
 }
 
@@ -424,56 +272,88 @@ impl MeshSimplifier for QuadricErrorSimplifier {
         if reduction_ratio == 0.0 {
             return Ok(mesh.clone());
         }
+        mesh.validate_faces()?;
 
         let target_face_count = ((1.0 - reduction_ratio) * mesh.faces.len() as f32) as usize;
+        let n = mesh.vertices.len();
 
-        // Initialize vertex information
-        let mut vertices = self.initialize_vertices(mesh);
-        let mut faces = mesh.faces.clone();
-        let mut vertex_mapping = HashMap::new();
-
-        // Find boundary edges
-        let boundary_edges = self.find_boundary_edges(mesh);
-
-        // Generate initial edge collapses
-        let mut collapse_queue = PriorityQueue::new();
-        let initial_collapses = self.generate_edge_collapses(&vertices, &boundary_edges);
-
-        for (idx, collapse) in initial_collapses.into_iter().enumerate() {
-            collapse_queue.push(idx, collapse);
+        let mut w = Working {
+            positions: mesh.vertices.clone(),
+            quadrics: vec![Matrix4::zeros(); n],
+            stamps: vec![0; n],
+            alive: vec![true; n],
+            faces: mesh.faces.clone(),
+            face_alive: vec![true; mesh.faces.len()],
+            vertex_faces: vec![Vec::new(); n],
+            live_faces: mesh.faces.len(),
+        };
+        for (f, face) in mesh.faces.iter().enumerate() {
+            let [a, b, c] = face.map(|v| mesh.vertices[v]);
+            let quadric = self.plane_to_quadric(&self.compute_plane(&a, &b, &c));
+            for &v in face {
+                w.quadrics[v] += quadric;
+                w.vertex_faces[v].push(f);
+            }
         }
 
-        // Perform edge collapses until target is reached
-        let mut collapse_counter = 0;
-        while faces.len() > target_face_count && !collapse_queue.is_empty() {
-            if let Some((_, collapse)) = collapse_queue.pop() {
-                // Verify collapse is still valid
-                if vertices[collapse.vertex1]
-                    .neighbors
-                    .contains(&collapse.vertex2)
-                {
-                    self.apply_collapse(&collapse, &mut vertices, &mut faces, &mut vertex_mapping)?;
-                    collapse_counter += 1;
-                    // Periodically regenerate collapses to maintain quality
-                    if collapse_counter % 100 == 0 {
-                        collapse_queue.clear();
-                        // Recompute boundary edges based on current face configuration
-                        let current_boundary_edges = self.find_boundary_edges_from_faces(&faces);
-                        let new_collapses =
-                            self.generate_edge_collapses(&vertices, &current_boundary_edges);
-                        for (idx, collapse) in new_collapses.into_iter().enumerate() {
-                            collapse_queue.push(collapse_counter * 1000 + idx, collapse);
-                        }
-                    }
+        // Boundary vertices stay where they are when preserving the boundary.
+        let boundary_edges = self.find_boundary_edges(mesh);
+        let fixed = if self.preserve_boundary {
+            self.get_boundary_vertices(&boundary_edges)
+        } else {
+            HashSet::new()
+        };
+
+        let mut heap = BinaryHeap::new();
+        for face in &mesh.faces {
+            for (a, b) in [(face[0], face[1]), (face[1], face[2]), (face[2], face[0])] {
+                if a < b {
+                    heap.extend(self.candidate(&w, a, b, &fixed));
                 }
             }
         }
 
-        if collapse_counter == 0 && faces.len() > target_face_count {
+        let mut collapses = 0;
+        while w.live_faces > target_face_count {
+            let Some(c) = heap.pop() else { break };
+            let current = c.stamps == [w.stamps[c.keep], w.stamps[c.remove]];
+            if !current || !w.alive[c.keep] || !w.alive[c.remove] {
+                continue;
+            }
+            if !w.can_collapse(c.keep, c.remove, c.position) {
+                continue;
+            }
+            w.collapse(c.keep, c.remove, c.position);
+            collapses += 1;
+            // Only edges at the kept vertex changed cost.
+            for neighbor in w.neighbors(c.keep) {
+                heap.extend(self.candidate(&w, c.keep, neighbor, &fixed));
+            }
+        }
+
+        if collapses == 0 && w.live_faces > target_face_count {
             return Err(self.no_collapse_error(mesh, &boundary_edges));
         }
 
-        Ok(self.rebuild_mesh(&vertices, &faces))
+        // Compact: keep live faces and the vertices they use.
+        let mut new_index = vec![usize::MAX; n];
+        let mut vertices = Vec::new();
+        let faces = w
+            .faces
+            .iter()
+            .zip(&w.face_alive)
+            .filter(|(_, &alive)| alive)
+            .map(|(face, _)| {
+                face.map(|v| {
+                    if new_index[v] == usize::MAX {
+                        new_index[v] = vertices.len();
+                        vertices.push(w.positions[v]);
+                    }
+                    new_index[v]
+                })
+            })
+            .collect();
+        Ok(TriangleMesh::from_vertices_and_faces(vertices, faces))
     }
 }
 
@@ -506,6 +386,132 @@ impl QuadricErrorSimplifier {
 mod tests {
     use super::*;
     use nalgebra::Point3;
+
+    /// An n x n vertex grid on a tilted plane, wound so normals point up.
+    fn tilted_grid(n: usize) -> TriangleMesh {
+        let vertices = (0..n * n)
+            .map(|i| {
+                let (x, y) = (
+                    (i % n) as f32 / (n - 1) as f32,
+                    (i / n) as f32 / (n - 1) as f32,
+                );
+                Point3f::new(x, y, 0.37 * x + 0.21 * y)
+            })
+            .collect();
+        let mut faces = Vec::new();
+        for j in 0..n - 1 {
+            for i in 0..n - 1 {
+                let v = j * n + i;
+                faces.push([v, v + 1, v + n]);
+                faces.push([v + 1, v + n + 1, v + n]);
+            }
+        }
+        TriangleMesh::from_vertices_and_faces(vertices, faces)
+    }
+
+    /// Edges used by more than two faces, and edges used twice in the same
+    /// direction (two faces with opposite winding).
+    fn bad_edges(mesh: &TriangleMesh) -> (usize, usize) {
+        let mut uses: HashMap<(usize, usize), Vec<bool>> = HashMap::new();
+        for f in &mesh.faces {
+            for (a, b) in [(f[0], f[1]), (f[1], f[2]), (f[2], f[0])] {
+                uses.entry((a.min(b), a.max(b))).or_default().push(a < b);
+            }
+        }
+        let non_manifold = uses.values().filter(|u| u.len() > 2).count();
+        let same_direction = uses
+            .values()
+            .filter(|u| u.len() == 2 && u[0] == u[1])
+            .count();
+        (non_manifold, same_direction)
+    }
+
+    #[test]
+    fn test_simplified_tilted_grid_has_no_flipped_faces() {
+        let mesh = tilted_grid(30);
+        let simplifier = QuadricErrorSimplifier::with_params(None, false, 0.5);
+        let out = simplifier.simplify(&mesh, 0.5).unwrap();
+        // One collapse removes two faces, so the count can land one below.
+        assert!((mesh.faces.len() / 2 - 1..=mesh.faces.len() / 2).contains(&out.faces.len()));
+        let flipped = out
+            .faces
+            .iter()
+            .filter(|f| {
+                let [a, b, c] = f.map(|v| out.vertices[v]);
+                (b - a).cross(&(c - a)).z <= 0.0
+            })
+            .count();
+        assert_eq!(flipped, 0, "faces flipped over");
+        assert_eq!(
+            bad_edges(&out),
+            (0, 0),
+            "non-manifold or inconsistent edges"
+        );
+        // The grid is planar, so every kept vertex stays on the plane.
+        assert!(out
+            .vertices
+            .iter()
+            .all(|p| (p.z - 0.37 * p.x - 0.21 * p.y).abs() < 1e-4));
+    }
+
+    #[test]
+    fn test_closed_mesh_stays_closed() {
+        // Octahedron subdivided twice: a closed sphere-like mesh.
+        let mut mesh = TriangleMesh::from_vertices_and_faces(
+            vec![
+                Point3f::new(1.0, 0.0, 0.0),
+                Point3f::new(-1.0, 0.0, 0.0),
+                Point3f::new(0.0, 1.0, 0.0),
+                Point3f::new(0.0, -1.0, 0.0),
+                Point3f::new(0.0, 0.0, 1.0),
+                Point3f::new(0.0, 0.0, -1.0),
+            ],
+            vec![
+                [0, 2, 4],
+                [2, 1, 4],
+                [1, 3, 4],
+                [3, 0, 4],
+                [2, 0, 5],
+                [1, 2, 5],
+                [3, 1, 5],
+                [0, 3, 5],
+            ],
+        );
+        for _ in 0..3 {
+            let mut midpoint: HashMap<(usize, usize), usize> = HashMap::new();
+            let mut faces = Vec::new();
+            for f in mesh.faces.clone() {
+                let mut mid = |a: usize, b: usize| {
+                    *midpoint.entry((a.min(b), a.max(b))).or_insert_with(|| {
+                        let p = Point3f::from(
+                            (mesh.vertices[a].coords + mesh.vertices[b].coords).normalize(),
+                        );
+                        mesh.vertices.push(p);
+                        mesh.vertices.len() - 1
+                    })
+                };
+                let (ab, bc, ca) = (mid(f[0], f[1]), mid(f[1], f[2]), mid(f[2], f[0]));
+                faces.extend([[f[0], ab, ca], [ab, f[1], bc], [ca, bc, f[2]], [ab, bc, ca]]);
+            }
+            mesh.faces = faces;
+        }
+        for ratio in [0.5, 0.9] {
+            let out = QuadricErrorSimplifier::new()
+                .simplify(&mesh, ratio)
+                .unwrap();
+            let mut count: HashMap<(usize, usize), u32> = HashMap::new();
+            for f in &out.faces {
+                for (a, b) in [(f[0], f[1]), (f[1], f[2]), (f[2], f[0])] {
+                    *count.entry((a.min(b), a.max(b))).or_default() += 1;
+                }
+            }
+            assert!(
+                count.values().all(|&c| c == 2),
+                "ratio {ratio}: mesh opened up"
+            );
+            assert_eq!(bad_edges(&out), (0, 0), "ratio {ratio}");
+        }
+    }
 
     #[test]
     fn test_quadric_error_simplifier_creation() {
