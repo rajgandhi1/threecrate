@@ -14,9 +14,8 @@
 //! Optionally, triangles far from every input point can be trimmed, since
 //! Poisson closes open scans into a watertight blob.
 
-use crate::marching_cubes::TRIANGLE_TABLE;
+use crate::marching_cubes::extract_shared;
 use rayon::prelude::*;
-use std::collections::HashMap;
 use threecrate_algorithms::KdTree;
 use threecrate_core::{
     Error, NearestNeighborSearch, NormalPoint3f, Point3f, PointCloud, Result, TriangleMesh,
@@ -368,111 +367,6 @@ fn median_spacing(samples: &Samples) -> f64 {
     distances[mid] as f64
 }
 
-/// Marching cubes over the solved field. Each grid edge gets one vertex, shared
-/// by every cube that touches it, so the mesh has no cracks.
-fn extract_surface(grid: &Grid, x: &[f32], iso: f32) -> TriangleMesh {
-    // Cube corners as (di, dj, dk), and the 12 cube edges as corner pairs, in
-    // the order the lookup table uses.
-    const CORNERS: [[usize; 3]; 8] = [
-        [0, 0, 0],
-        [1, 0, 0],
-        [1, 1, 0],
-        [0, 1, 0],
-        [0, 0, 1],
-        [1, 0, 1],
-        [1, 1, 1],
-        [0, 1, 1],
-    ];
-    const EDGES: [[usize; 2]; 12] = [
-        [0, 1],
-        [1, 2],
-        [2, 3],
-        [3, 0],
-        [4, 5],
-        [5, 6],
-        [6, 7],
-        [7, 4],
-        [0, 4],
-        [1, 5],
-        [2, 6],
-        [3, 7],
-    ];
-    let n = grid.n;
-    let inside = |index: usize| x[index] < iso;
-
-    // Triangles per cube slab, as (grid edge id) triples; a grid edge id is
-    // `node * 3 + axis`, naming the edge from `node` towards +axis.
-    let triangles: Vec<[usize; 3]> = (0..n - 1)
-        .into_par_iter()
-        .flat_map_iter(|i| {
-            let mut out = Vec::new();
-            for j in 0..n - 1 {
-                for k in 0..n - 1 {
-                    let corner = |c: usize| {
-                        let [di, dj, dk] = CORNERS[c];
-                        grid.index(i + di, j + dj, k + dk)
-                    };
-                    let mut case = 0;
-                    for c in 0..8 {
-                        if inside(corner(c)) {
-                            case |= 1 << c;
-                        }
-                    }
-                    if case == 0 || case == 255 {
-                        continue;
-                    }
-                    let edge_id = |e: usize| {
-                        let [a, b] = EDGES[e];
-                        let (lo, hi) = (CORNERS[a], CORNERS[b]);
-                        let axis = (0..3).find(|&d| lo[d] != hi[d]).unwrap();
-                        let start = if lo[axis] < hi[axis] { a } else { b };
-                        corner(start) * 3 + axis
-                    };
-                    for tri in TRIANGLE_TABLE[case].chunks(3) {
-                        if tri[0] < 0 {
-                            break;
-                        }
-                        out.push([
-                            edge_id(tri[0] as usize),
-                            edge_id(tri[1] as usize),
-                            edge_id(tri[2] as usize),
-                        ]);
-                    }
-                }
-            }
-            out
-        })
-        .collect();
-
-    // One vertex per crossed grid edge, interpolated from its lower node.
-    let strides = [n * n, n, 1];
-    let mut vertex_of: HashMap<usize, usize> = HashMap::new();
-    let mut vertices = Vec::new();
-    let faces = triangles
-        .into_iter()
-        .map(|tri| {
-            tri.map(|edge| {
-                *vertex_of.entry(edge).or_insert_with(|| {
-                    let (node, axis) = (edge / 3, edge % 3);
-                    let (v0, v1) = (x[node], x[node + strides[axis]]);
-                    let t = ((iso - v0) / (v1 - v0)).clamp(0.0, 1.0) as f64;
-                    let (i, j, k) = grid.coords(node);
-                    let mut p = [i as f64, j as f64, k as f64];
-                    p[axis] += t;
-                    vertices.push(Point3f::new(
-                        (grid.origin[0] + p[0] * grid.h) as f32,
-                        (grid.origin[1] + p[1] * grid.h) as f32,
-                        (grid.origin[2] + p[2] * grid.h) as f32,
-                    ));
-                    vertices.len() - 1
-                })
-            })
-        })
-        .filter(|f: &[usize; 3]| f[0] != f[1] && f[1] != f[2] && f[0] != f[2])
-        .collect();
-    TriangleMesh::from_vertices_and_faces(vertices, faces)
-}
-
 fn face_normal(mesh: &TriangleMesh, face: &[usize; 3]) -> Vector3f {
     let [a, b, c] = face.map(|i| mesh.vertices[i]);
     (b - a).cross(&(c - a))
@@ -619,7 +513,13 @@ pub fn poisson_reconstruction(
         / samples.positions.len() as f64
         + config.iso_offset as f64;
 
-    let mut mesh = extract_surface(&grid, &x, iso as f32);
+    let mut mesh = extract_shared(
+        [grid.n; 3],
+        [grid.h; 3],
+        grid.origin,
+        |i, j, k| x[grid.index(i, j, k)],
+        iso as f32,
+    );
     orient(&mut mesh, &grid, &x);
 
     if let Some(distance) = config.trim_distance {
@@ -661,6 +561,7 @@ pub fn poisson_reconstruction_legacy(cloud: &PointCloud<Point3f>) -> Result<Tria
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
 
     /// Evenly spread points on a sphere with outward normals.
     fn sphere(n: usize, radius: f32, center: Point3f) -> PointCloud<NormalPoint3f> {
