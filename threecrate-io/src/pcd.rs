@@ -847,8 +847,58 @@ impl RobustPcdWriter {
 /// PCD reader implementing the registry trait
 pub struct PcdReader;
 
+/// Positions straight from an ASCII or binary PCD file, skipping every other
+/// field. `None` means the general reader is needed (compressed data).
+fn read_positions_fast(path: &Path) -> Result<Option<Vec<Point3f>>> {
+    use crate::records::{read_ascii_xyz, read_binary_xyz, BinaryXyz, Scalar};
+    let mut reader = BufReader::new(File::open(path)?);
+    let header = RobustPcdReader::read_header(&mut reader)?;
+    let (mut offset, mut column) = (0, 0);
+    let mut found = [None; 3];
+    for field in &header.fields {
+        let scalar = match field.field_type {
+            PcdFieldType::I8 => Scalar::I8,
+            PcdFieldType::U8 => Scalar::U8,
+            PcdFieldType::I16 => Scalar::I16,
+            PcdFieldType::U16 => Scalar::U16,
+            PcdFieldType::I32 => Scalar::I32,
+            PcdFieldType::U32 => Scalar::U32,
+            PcdFieldType::F32 => Scalar::F32,
+            PcdFieldType::F64 => Scalar::F64,
+        };
+        if let Some(axis) = ["x", "y", "z"].iter().position(|n| *n == field.name) {
+            found[axis] = Some((column, offset, scalar));
+        }
+        let count = field.count.max(1);
+        offset += scalar.size() * count;
+        column += count;
+    }
+    let [Some(x), Some(y), Some(z)] = found else {
+        return Err(Error::InvalidData(
+            "PCD file is missing the x, y or z field".to_string(),
+        ));
+    };
+    let count = header.width * header.height;
+    let points = match header.data_format {
+        PcdDataFormat::Ascii => read_ascii_xyz(&mut reader, [x.0, y.0, z.0], count)?,
+        PcdDataFormat::Binary => {
+            let layout = BinaryXyz {
+                record_size: offset,
+                xyz: [(x.1, x.2), (y.1, y.2), (z.1, z.2)],
+                big_endian: false,
+            };
+            read_binary_xyz(&mut reader, &layout, count)?
+        }
+        PcdDataFormat::BinaryCompressed => return Ok(None),
+    };
+    Ok(Some(points))
+}
+
 impl RegistryPointCloudReader for PcdReader {
     fn read_point_cloud(&self, path: &Path) -> Result<PointCloud<Point3f>> {
+        if let Some(points) = read_positions_fast(path)? {
+            return Ok(PointCloud::from_points(points));
+        }
         let (header, points) = RobustPcdReader::read_pcd_file(path)?;
         RobustPcdReader::pcd_to_point_cloud(&header, &points)
     }

@@ -1221,8 +1221,59 @@ pub struct PlyReader;
 pub struct PlyWriter;
 
 // Implement the new unified traits
+/// Positions straight from the file when the vertex element comes first and
+/// has only scalar properties (the usual layout). `None` means the general
+/// reader is needed.
+fn read_positions_fast(path: &Path) -> Result<Option<Vec<Point3f>>> {
+    use crate::records::{read_ascii_xyz, read_binary_xyz, BinaryXyz, Scalar};
+    let mut reader = BufReader::new(File::open(path)?);
+    let header = RobustPlyReader::read_header(&mut reader)?;
+    let Some(vertex) = header.elements.first().filter(|e| e.name == "vertex") else {
+        return Ok(None);
+    };
+    let mut offset = 0;
+    let mut found = [None; 3];
+    for (column, property) in vertex.properties.iter().enumerate() {
+        let scalar = match property.property_type {
+            PlyPropertyType::Char => Scalar::I8,
+            PlyPropertyType::UChar => Scalar::U8,
+            PlyPropertyType::Short => Scalar::I16,
+            PlyPropertyType::UShort => Scalar::U16,
+            PlyPropertyType::Int => Scalar::I32,
+            PlyPropertyType::UInt => Scalar::U32,
+            PlyPropertyType::Float => Scalar::F32,
+            PlyPropertyType::Double => Scalar::F64,
+            PlyPropertyType::List(..) => return Ok(None),
+        };
+        if let Some(axis) = ["x", "y", "z"].iter().position(|n| *n == property.name) {
+            found[axis] = Some((column, offset, scalar));
+        }
+        offset += scalar.size();
+    }
+    let [Some(x), Some(y), Some(z)] = found else {
+        return Err(Error::InvalidData(
+            "PLY vertex element is missing x, y or z".to_string(),
+        ));
+    };
+    let points = match header.format {
+        PlyFormat::Ascii => read_ascii_xyz(&mut reader, [x.0, y.0, z.0], vertex.count)?,
+        PlyFormat::BinaryLittleEndian | PlyFormat::BinaryBigEndian => {
+            let layout = BinaryXyz {
+                record_size: offset,
+                xyz: [(x.1, x.2), (y.1, y.2), (z.1, z.2)],
+                big_endian: header.format == PlyFormat::BinaryBigEndian,
+            };
+            read_binary_xyz(&mut reader, &layout, vertex.count)?
+        }
+    };
+    Ok(Some(points))
+}
+
 impl crate::registry::PointCloudReader for PlyReader {
     fn read_point_cloud(&self, path: &Path) -> Result<PointCloud<Point3f>> {
+        if let Some(points) = read_positions_fast(path)? {
+            return Ok(PointCloud::from_points(points));
+        }
         // Use the robust reader for better format support
         let ply_data = RobustPlyReader::read_ply_file(path)?;
 
