@@ -1,5 +1,6 @@
 //! GPU-accelerated normal estimation
 
+use crate::device::workgroup_grid;
 use crate::spatial::{vec4, GpuKdTree, KD_TREE_WGSL, MAX_K};
 use crate::GpuContext;
 use bytemuck::{Pod, Zeroable};
@@ -87,11 +88,11 @@ fn smallest_eigenvector(c00: f32, c01: f32, c02: f32, c11: f32, c12: f32, c22: f
 }
 
 @compute @workgroup_size(64)
-fn normals(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn normals(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) nwg: vec3<u32>) {
     // One thread per tree node rather than per input point: nodes are stored
     // in tree order, so neighboring threads search neighboring parts of the
     // cloud, which keeps them in step and their memory reads cached.
-    let node_id = gid.x;
+    let node_id = gid.x + gid.y * nwg.x * 64u;
     if (node_id >= arrayLength(&nodes) || node_id >= params.num_points) {
         return;
     }
@@ -266,7 +267,8 @@ impl GpuContext {
             });
             pass.set_pipeline(pipeline);
             pass.set_bind_group(0, &bind_group, &[]);
-            pass.dispatch_workgroups(tree.node_to_index.len().div_ceil(64) as u32, 1, 1);
+            let (x, y) = workgroup_grid(tree.node_to_index.len().div_ceil(64));
+            pass.dispatch_workgroups(x, y, 1);
         }
         self.queue.submit(std::iter::once(encoder.finish()));
 

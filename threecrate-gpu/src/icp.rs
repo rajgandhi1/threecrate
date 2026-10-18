@@ -6,6 +6,7 @@
 //! sums the values the update needs within each workgroup. Only those small
 //! per-workgroup sums come back to the CPU.
 
+use crate::device::workgroup_grid;
 use crate::spatial::{morton_order, vec4s, GpuKdTree, KD_TREE_WGSL};
 use crate::GpuContext;
 use bytemuck::{Pod, Zeroable};
@@ -80,15 +81,19 @@ fn icp_match(
     @builtin(global_invocation_id) gid: vec3<u32>,
     @builtin(local_invocation_id) lid: vec3<u32>,
     @builtin(workgroup_id) wid: vec3<u32>,
+    @builtin(num_workgroups) nwg: vec3<u32>,
 ) {
+    // Large clouds spread groups over x and y (65,535 per dimension).
+    let group = wid.x + wid.y * nwg.x;
+    let i = group * WG + lid.x;
     const STATS: u32 = 18u;
     var s: array<f32, 18>;
     for (var j = 0u; j < STATS; j++) {
         s[j] = 0.0;
     }
 
-    if (gid.x < params.num_source) {
-        let m = match_point(gid.x);
+    if (i < params.num_source) {
+        let m = match_point(i);
         if (m.found.node != NO_NODE) {
             let q = m.moved;
             let t = nodes[m.found.node].pos;
@@ -125,7 +130,7 @@ fn icp_match(
     }
     if (lid.x == 0u) {
         for (var j = 0u; j < STATS; j++) {
-            partials[wid.x * STATS + j] = scratch_point[j];
+            partials[group * STATS + j] = scratch_point[j];
         }
     }
 }
@@ -137,15 +142,19 @@ fn icp_match_plane(
     @builtin(global_invocation_id) gid: vec3<u32>,
     @builtin(local_invocation_id) lid: vec3<u32>,
     @builtin(workgroup_id) wid: vec3<u32>,
+    @builtin(num_workgroups) nwg: vec3<u32>,
 ) {
+    // Large clouds spread groups over x and y (65,535 per dimension).
+    let group = wid.x + wid.y * nwg.x;
+    let i = group * WG + lid.x;
     const STATS: u32 = 29u;
     var s: array<f32, 29>;
     for (var j = 0u; j < STATS; j++) {
         s[j] = 0.0;
     }
 
-    if (gid.x < params.num_source) {
-        let m = match_point(gid.x);
+    if (i < params.num_source) {
+        let m = match_point(i);
         if (m.found.node != NO_NODE) {
             let node = nodes[m.found.node];
             let n = target_normals[node.index].xyz;
@@ -189,7 +198,7 @@ fn icp_match_plane(
     }
     if (lid.x == 0u) {
         for (var j = 0u; j < STATS; j++) {
-            partials[wid.x * STATS + j] = scratch_plane[j];
+            partials[group * STATS + j] = scratch_plane[j];
         }
     }
 }
@@ -267,8 +276,11 @@ impl<'a> IcpSession<'a> {
         } else {
             STATS_POINT
         };
+        // One slot of sums per workgroup in the (possibly 2-D) grid; groups past
+        // the last point write zeros.
+        let (gx, gy) = workgroup_grid(source.len().div_ceil(WORKGROUP));
         let partials_size =
-            (source.len().div_ceil(WORKGROUP) * stats_len * std::mem::size_of::<f32>()) as u64;
+            (gx as usize * gy as usize * stats_len * std::mem::size_of::<f32>()) as u64;
         let partials = gpu.create_buffer(
             "ICP Partials",
             partials_size,
@@ -383,7 +395,8 @@ impl<'a> IcpSession<'a> {
             });
             pass.set_pipeline(self.pipeline);
             pass.set_bind_group(0, &self.bind_group, &[]);
-            pass.dispatch_workgroups(self.num_source.div_ceil(WORKGROUP) as u32, 1, 1);
+            let (x, y) = workgroup_grid(self.num_source.div_ceil(WORKGROUP));
+            pass.dispatch_workgroups(x, y, 1);
         }
         encoder.copy_buffer_to_buffer(&self.partials, 0, &self.staging, 0, self.partials.size());
         self.gpu.queue.submit(std::iter::once(encoder.finish()));

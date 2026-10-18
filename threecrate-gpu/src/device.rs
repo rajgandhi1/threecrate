@@ -1,6 +1,6 @@
 //! GPU device management
 
-use std::sync::OnceLock;
+use std::sync::{Arc, Mutex, OnceLock};
 use threecrate_core::{Error, Result};
 use wgpu::util::DeviceExt;
 
@@ -23,6 +23,18 @@ pub struct GpuContext {
     pub queue: wgpu::Queue,
     pub adapter: wgpu::Adapter,
     pub(crate) pipelines: PipelineCache,
+    /// First GPU validation error since the last readback (for example a
+    /// buffer past the device's size limit). wgpu's default handler panics;
+    /// ours records it so the next readback returns it as an `Err`.
+    pub(crate) errors: Arc<Mutex<Option<String>>>,
+}
+
+/// Work-group grid for `groups` groups. wgpu allows at most 65,535 per
+/// dimension, so large jobs spill into y; shaders recover the linear group as
+/// `wid.x + wid.y * num_workgroups.x` and must skip indices past the end.
+pub(crate) fn workgroup_grid(groups: usize) -> (u32, u32) {
+    let x = groups.clamp(1, 65_535);
+    (x as u32, groups.div_ceil(x) as u32)
 }
 
 impl GpuContext {
@@ -49,13 +61,30 @@ impl GpuContext {
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("ThreeCrate GPU Device"),
                 required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::default(),
+                // The defaults cap one buffer at 128 MiB (about 4M points);
+                // most cards allow far more.
+                required_limits: adapter.limits(),
                 ..Default::default()
             })
             .await
             .map_err(|e| threecrate_core::Error::Gpu(format!("Failed to create device: {}", e)))?;
 
-        Ok(Self::from_parts(instance, adapter, device, queue))
+        let context = Self::from_parts(instance, adapter, device, queue);
+        let errors = Arc::clone(&context.errors);
+        context.device.on_uncaptured_error(Arc::new(move |error| {
+            let mut slot = errors.lock().unwrap_or_else(|e| e.into_inner());
+            slot.get_or_insert_with(|| error.to_string());
+        }));
+        Ok(context)
+    }
+
+    /// Return (and clear) the first GPU error recorded since the last check.
+    pub(crate) fn take_error(&self) -> Result<()> {
+        let mut slot = self.errors.lock().unwrap_or_else(|e| e.into_inner());
+        match slot.take() {
+            Some(message) => Err(Error::Gpu(message)),
+            None => Ok(()),
+        }
     }
 
     /// Wrap a device the caller already created (for example to share it with
@@ -72,6 +101,7 @@ impl GpuContext {
             queue,
             adapter,
             pipelines: PipelineCache::default(),
+            errors: Arc::default(),
         }
     }
 
@@ -129,6 +159,9 @@ impl GpuContext {
                 timeout: None,
             })
             .map_err(|e| Error::Gpu(format!("GPU poll failed: {e}")))?;
+        // A validation error (such as a buffer too large for the device)
+        // explains a failed or garbage readback, so report it first.
+        self.take_error()?;
         receiver
             .recv()
             .map_err(|_| Error::Gpu("GPU readback was dropped".to_string()))?
@@ -218,5 +251,41 @@ impl GpuContext {
             layout,
             entries,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn workgroup_grid_stays_within_the_dimension_limit() {
+        assert_eq!(workgroup_grid(0), (1, 0));
+        assert_eq!(workgroup_grid(10), (10, 1));
+        assert_eq!(workgroup_grid(65_535), (65_535, 1));
+        assert_eq!(workgroup_grid(65_536), (65_535, 2));
+        // 4.3M points at 64 per group, the case that used to panic.
+        let (x, y) = workgroup_grid(4_300_000usize.div_ceil(64));
+        assert!(x <= 65_535 && x as usize * y as usize * 64 >= 4_300_000);
+    }
+
+    #[test]
+    fn gpu_validation_errors_come_back_as_err() {
+        pollster::block_on(async {
+            let Ok(gpu) = GpuContext::new().await else {
+                return; // no GPU here
+            };
+            // Copying past the end of a buffer is a validation error. wgpu's
+            // default handler panics; the readback must return it instead.
+            let usage = wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST;
+            let small = gpu.create_buffer("small", 16, usage);
+            let big = gpu.create_buffer("big", 64, usage);
+            let mut encoder = gpu.device.create_command_encoder(&Default::default());
+            encoder.copy_buffer_to_buffer(&big, 0, &small, 0, 64);
+            gpu.queue.submit(std::iter::once(encoder.finish()));
+            assert!(gpu.read_buffer::<f32>(&small).is_err());
+            // The error is cleared, so the next readback works again.
+            assert_eq!(gpu.read_buffer::<f32>(&small).unwrap().len(), 4);
+        });
     }
 }

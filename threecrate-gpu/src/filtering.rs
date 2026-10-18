@@ -1,5 +1,6 @@
 //! GPU-accelerated filtering
 
+use crate::device::workgroup_grid;
 use crate::spatial::{GpuKdTree, KD_TREE_WGSL};
 use crate::GpuContext;
 use threecrate_core::{Point3f, PointCloud, Result};
@@ -23,8 +24,8 @@ struct RadiusOutlierParams {
 @group(0) @binding(2) var<uniform> params: RadiusOutlierParams;
 
 @compute @workgroup_size(64)
-fn radius_outlier(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let node_id = gid.x;
+fn radius_outlier(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) nwg: vec3<u32>) {
+    let node_id = gid.x + gid.y * nwg.x * 64u;
     if (node_id >= params.num_nodes) {
         return;
     }
@@ -144,7 +145,8 @@ impl GpuContext {
                 });
                 pass.set_pipeline(pipeline);
                 pass.set_bind_group(0, &bind_group, &[]);
-                pass.dispatch_workgroups(tree.node_to_index.len().div_ceil(64) as u32, 1, 1);
+                let (x, y) = workgroup_grid(tree.node_to_index.len().div_ceil(64));
+                pass.dispatch_workgroups(x, y, 1);
             }
             self.queue.submit(std::iter::once(encoder.finish()));
         }
