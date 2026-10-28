@@ -181,9 +181,7 @@ pub fn read_mesh<P: AsRef<Path>>(path: P) -> Result<TriangleMesh> {
         threecrate_core::Error::UnsupportedFormat("No file extension found".to_string())
     })?;
 
-    let mesh = IO_REGISTRY.read_mesh(path, extension)?;
-    mesh.validate_faces()?;
-    Ok(mesh)
+    IO_REGISTRY.read_mesh(path, extension)
 }
 
 /// Write point cloud with format auto-detection using the unified registry
