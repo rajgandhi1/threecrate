@@ -15,11 +15,11 @@ A high-performance 3D point cloud and mesh processing library for Rust, with Pyt
 
 | Crate | What it does |
 |---|---|
-| `threecrate-core` | Point, PointCloud, TriangleMesh, Transform3D |
+| `threecrate-core` | Point, PointCloud, TriangleMesh, Transform3D, mesh health checks |
 | `threecrate-algorithms` | Filtering, ICP, NDT, global registration, segmentation, normals, FPFH/SHOT, mesh boolean, smoothing |
 | `threecrate-gpu` | GPU filtering, segmentation, ICP, normals, nearest-neighbor, TSDF, real-time rendering (wgpu) |
-| `threecrate-io` | PLY, OBJ, PCD, XYZ/CSV, LAS/LAZ\*, E57\* — streaming and memory-mapped |
-| `threecrate-reconstruction` | Poisson, BPA, alpha shapes, Delaunay, Marching Cubes, MLS, auto-select |
+| `threecrate-io` | PLY, OBJ, STL, PCD, XYZ/CSV, LAS/LAZ\*, E57\* — streaming and memory-mapped; PNG preview renders without a GPU |
+| `threecrate-reconstruction` | Poisson, BPA, alpha shapes, Delaunay, Marching Cubes, MLS, auto-select, repair for 3D printing |
 | `threecrate-simplification` | Quadric error, edge collapse, clustering, progressive mesh |
 | `threecrate-visualization` | Interactive viewer — orbit/pan/zoom, GPU-accelerated |
 
@@ -65,9 +65,21 @@ mesh = tc.poisson_reconstruct(normal_cloud)
 tc.write_mesh(mesh, "output.ply")
 ```
 
+**Make a scan printable**
+
+```python
+scan = tc.read_point_cloud("scan.ply")  # or tc.read_mesh("part.stl")
+mesh, report = tc.repair_for_print(scan, remove_floor=True)
+print(report["steps"], report["after"]["printable"])
+tc.render([scan, mesh], "before_after.png")  # orange shows holes and inside-out faces
+tc.write_mesh(mesh, "part.printable.stl")
+```
+
+Try it on the scans in [samples/](samples/README.md).
+
 ## Use with AI agents
 
-Let Claude Code, Codex, Gemini CLI, OpenCode, Cursor and other agents inspect, clean, align and mesh your scans. The [threecrate skill](skills/threecrate/SKILL.md) teaches the agent to use the Python library.
+Let Claude Code, Codex, Gemini CLI, OpenCode, Cursor and other agents inspect, clean, align and mesh your scans, or just ask "make my scan printable". The [threecrate skill](skills/threecrate/SKILL.md) teaches the agent to use the Python library. See [the demo](samples/DEMO.md) for what a run looks like.
 
 **Claude Code**
 
