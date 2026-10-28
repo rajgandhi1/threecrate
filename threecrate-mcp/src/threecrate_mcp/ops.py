@@ -114,11 +114,30 @@ def _cloud_summary(cloud: "tc.PointCloud") -> dict:
 
 
 def _mesh_summary(mesh: "tc.TriangleMesh") -> dict:
+    health = tc.analyze_mesh(mesh)
     return {
         "vertices": mesh.vertex_count,
         "faces": mesh.face_count,
         **{k: v for k, v in _bounds(mesh.vertices()).items() if k != "finite_points"},
+        # Enough for the agent to tell whether a step helped; inspect_mesh has the rest.
+        "watertight": health["watertight"],
+        "holes": len(health["holes"]),
+        "printable": health["printable"],
     }
+
+
+def _health_report(mesh: "tc.TriangleMesh") -> dict:
+    """analyze_mesh with floats rounded and long lists cut short for the agent."""
+    r = tc.analyze_mesh(mesh)
+    for key in ("min", "max", "size"):
+        r[key] = [round(float(v), 6) for v in r[key]]
+    r["surface_area"] = round(r["surface_area"], 6)
+    if r["volume"] is not None:
+        r["volume"] = round(r["volume"], 6)
+    for key in ("holes", "components"):
+        r[key + "_count"] = len(r[key])
+        r[key] = r[key][:10]  # the largest; the count says how many there are
+    return r
 
 
 def _write_cloud(cloud: "tc.PointCloud", path: Path) -> None:
@@ -190,7 +209,7 @@ def inspect_point_cloud(ws: Workspace, path: str) -> dict:
 
 def inspect_mesh(ws: Workspace, path: str) -> dict:
     resolved, mesh = _read_mesh(ws, path)
-    return {"path": ws.relative(resolved), "file_bytes": resolved.stat().st_size, **_mesh_summary(mesh)}
+    return {"path": ws.relative(resolved), "file_bytes": resolved.stat().st_size, **_health_report(mesh)}
 
 
 def convert(

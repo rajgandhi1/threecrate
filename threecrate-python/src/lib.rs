@@ -5,6 +5,7 @@ use numpy::{
 };
 use pyo3::exceptions::{PyIndexError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
+use pyo3::types::PyDict;
 use threecrate_algorithms::{
     colorize_point_cloud as tc_colorize_point_cloud, estimate_normals as tc_estimate_normals,
     extract_euclidean_clusters,
@@ -1411,6 +1412,46 @@ fn mesh_difference(mesh_a: &PyTriangleMesh, mesh_b: &PyTriangleMesh) -> PyResult
 }
 
 // ---------------------------------------------------------------------------
+// Mesh health
+// ---------------------------------------------------------------------------
+
+/// Check a mesh's health and measure it.
+///
+/// Returns a dict with: ``vertices``, ``faces``, ``unused_vertices``,
+/// ``degenerate_faces``, ``invalid_faces``, ``edges``, ``boundary_edges``,
+/// ``non_manifold_edges``, ``inconsistent_edges``, ``holes`` (edges around
+/// each hole, largest first), ``components`` (faces in each separate piece,
+/// largest first), ``watertight``, ``min``, ``max``, ``size``,
+/// ``surface_area``, ``volume`` (None unless watertight and consistently
+/// wound), ``printable`` and ``problems`` (plain-language reasons it is not
+/// printable).
+#[pyfunction]
+fn analyze_mesh<'py>(py: Python<'py>, mesh: &PyTriangleMesh) -> PyResult<Bound<'py, PyDict>> {
+    let r = threecrate_core::analyze_mesh(&mesh.inner);
+    let d = PyDict::new_bound(py);
+    d.set_item("vertices", r.vertices)?;
+    d.set_item("faces", r.faces)?;
+    d.set_item("unused_vertices", r.unused_vertices)?;
+    d.set_item("degenerate_faces", r.degenerate_faces)?;
+    d.set_item("invalid_faces", r.invalid_faces)?;
+    d.set_item("edges", r.edges)?;
+    d.set_item("boundary_edges", r.boundary_edges)?;
+    d.set_item("non_manifold_edges", r.non_manifold_edges)?;
+    d.set_item("inconsistent_edges", r.inconsistent_edges)?;
+    d.set_item("holes", r.holes)?;
+    d.set_item("components", r.components)?;
+    d.set_item("watertight", r.watertight)?;
+    d.set_item("min", [r.min.x, r.min.y, r.min.z])?;
+    d.set_item("max", [r.max.x, r.max.y, r.max.z])?;
+    d.set_item("size", r.size)?;
+    d.set_item("surface_area", r.surface_area)?;
+    d.set_item("volume", r.volume)?;
+    d.set_item("printable", r.printable)?;
+    d.set_item("problems", r.problems)?;
+    Ok(d)
+}
+
+// ---------------------------------------------------------------------------
 // Mesh simplification
 // ---------------------------------------------------------------------------
 
@@ -2627,6 +2668,7 @@ fn threecrate(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(mesh_difference, m)?)?;
 
     // Simplification
+    m.add_function(wrap_pyfunction!(analyze_mesh, m)?)?;
     m.add_function(wrap_pyfunction!(simplify_mesh, m)?)?;
 
     // Smoothing

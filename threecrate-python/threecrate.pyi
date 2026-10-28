@@ -464,6 +464,17 @@ def mesh_difference(mesh_a: TriangleMesh, mesh_b: TriangleMesh) -> TriangleMesh:
 # Simplification
 # ---------------------------------------------------------------------------
 
+def analyze_mesh(mesh: TriangleMesh) -> dict:
+    """Check a mesh's health and measure it.
+
+    Keys: vertices, faces, unused_vertices, degenerate_faces, invalid_faces,
+    edges, boundary_edges, non_manifold_edges, inconsistent_edges, holes
+    (edges around each hole, largest first), components (faces per separate
+    piece, largest first), watertight, min, max, size, surface_area, volume
+    (None unless watertight and consistently wound), printable, problems
+    (plain-language reasons it is not printable)."""
+    ...
+
 def simplify_mesh(
     mesh: TriangleMesh,
     reduction_ratio: float = 0.5,
