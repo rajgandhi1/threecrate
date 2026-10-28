@@ -250,7 +250,7 @@ pub fn read_point_cloud_iter<P: AsRef<Path>>(
         threecrate_core::Error::UnsupportedFormat("No file extension found".to_string())
     })?;
 
-    match extension {
+    match extension.to_ascii_lowercase().as_str() {
         "ply" => {
             let iter = ply::PlyStreamingReader::new(path, chunk_size.unwrap_or(1000))?;
             Ok(Box::new(iter))
@@ -309,7 +309,7 @@ pub fn read_mesh_iter<P: AsRef<Path>>(
         threecrate_core::Error::UnsupportedFormat("No file extension found".to_string())
     })?;
 
-    match extension {
+    match extension.to_ascii_lowercase().as_str() {
         "ply" => {
             let iter = ply::PlyMeshStreamingReader::new(path, chunk_size.unwrap_or(1000))?;
             Ok(Box::new(iter))
