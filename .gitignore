@@ -48,3 +48,6 @@ CLAUDE.md
 # Python bytecode
 __pycache__/
 *.pyc
+
+# Plugin eval results
+skills/evals/results/
