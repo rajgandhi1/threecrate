@@ -1,0 +1,2 @@
+# Eval fixtures run under bash, which breaks on CRLF.
+*.sh text eol=lf
