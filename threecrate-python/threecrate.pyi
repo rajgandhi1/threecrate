@@ -464,6 +464,20 @@ def mesh_difference(mesh_a: TriangleMesh, mesh_b: TriangleMesh) -> TriangleMesh:
 # Simplification
 # ---------------------------------------------------------------------------
 
+def render(
+    items: PointCloud | NormalPointCloud | TriangleMesh | list,
+    path: Optional[str] = None,
+    views: Optional[list[str]] = None,
+    size: int = 384,
+    up: str = "z",
+    point_size: int = 2,
+) -> Optional[bytes]:
+    """Render to a PNG preview on the CPU: one row per item, one column per
+    view (default: angled, front, right, top, bottom), same scale for
+    all. Mesh back faces are orange, so holes and flipped faces stand out.
+    Writes to `path`, or returns the PNG bytes when `path` is omitted."""
+    ...
+
 def analyze_mesh(mesh: TriangleMesh) -> dict:
     """Check a mesh's health and measure it.
 

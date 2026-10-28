@@ -12,7 +12,7 @@ from threecrate_mcp import server
 EXPECTED_TOOLS = {
     "inspect_point_cloud", "inspect_mesh", "convert", "downsample", "remove_outliers",
     "estimate_normals", "register", "transform", "segment_plane", "extract_clusters",
-    "reconstruct", "simplify_mesh", "smooth_mesh",
+    "reconstruct", "simplify_mesh", "smooth_mesh", "render",
 }
 
 
@@ -84,3 +84,19 @@ def test_non_exception_failures_reach_the_agent(monkeypatch):
     monkeypatch.setattr(server.ops, "inspect_mesh", boom)
     with pytest.raises(ToolError, match="rust panicked"):
         asyncio.run(server.mcp.call_tool("inspect_mesh", {"path": "x.ply"}))
+
+
+def test_render_returns_the_picture_to_the_agent(ws, monkeypatch):
+    monkeypatch.setenv("THREECRATE_MCP_ROOT", str(ws.root))
+    server._ws.cache_clear()
+    try:
+        result = asyncio.run(server.mcp.call_tool(
+            "render", {"paths": ["sphere.ply"], "views": ["front", "top"], "size": 128}
+        ))
+    finally:
+        server._ws.cache_clear()
+    assert not result.is_error
+    kinds = [block.type for block in result.content]
+    assert kinds == ["text", "image"]
+    assert json.loads(result.content[0].text)["rows"][0]["kind"] == "point_cloud"
+    assert result.content[1].mime_type == "image/png"

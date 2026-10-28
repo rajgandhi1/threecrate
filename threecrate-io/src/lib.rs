@@ -19,6 +19,7 @@ pub mod pcd;
 pub mod ply;
 mod records;
 pub mod registry;
+pub mod render;
 #[cfg(feature = "ros2")]
 pub mod ros2;
 #[cfg(feature = "rosbag")]
