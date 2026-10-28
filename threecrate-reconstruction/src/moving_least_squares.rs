@@ -6,7 +6,10 @@
 use crate::parallel;
 use nalgebra::{DMatrix, DVector, Vector3};
 use std::collections::HashMap;
-use threecrate_core::{Error, NormalPoint3f, Point3f, PointCloud, Result, TriangleMesh};
+use threecrate_algorithms::KdTree;
+use threecrate_core::{
+    Error, NearestNeighborSearch, NormalPoint3f, Point3f, PointCloud, Result, TriangleMesh,
+};
 
 /// Weight function types for MLS reconstruction
 #[derive(Debug, Clone, PartialEq)]
@@ -76,6 +79,8 @@ pub struct MLSSurface {
     points: Vec<Point3f>,
     normals: Option<Vec<Vector3<f32>>>,
     spatial_index: Option<SpatialIndex>,
+    /// Nearest-point lookup for samples outside every point's support.
+    tree: KdTree,
 }
 
 /// Simple spatial index for efficient neighbor queries
@@ -167,21 +172,16 @@ impl SpatialIndex {
 }
 
 impl MLSSurface {
-    /// Create new MLS surface from point cloud
+    /// Create new MLS surface from point cloud. The implicit surface needs
+    /// normals (without them every sample is 0 and no surface can be found),
+    /// so they are estimated and oriented consistently first.
     pub fn new(cloud: &PointCloud<Point3f>, config: MLSConfig) -> Result<Self> {
         if cloud.is_empty() {
             return Err(Error::InvalidData("Point cloud is empty".to_string()));
         }
-
-        let points = cloud.points.clone();
-        let spatial_index = Some(SpatialIndex::build(&points, config.support_radius));
-
-        Ok(Self {
-            config,
-            points,
-            normals: None,
-            spatial_index,
-        })
+        let mut with_normals = threecrate_algorithms::estimate_normals(cloud, 10)?;
+        threecrate_algorithms::orient_normals_consistent(&mut with_normals, 10)?;
+        Self::from_normals(&with_normals, config)
     }
 
     /// Create MLS surface from point cloud with normals
@@ -193,12 +193,14 @@ impl MLSSurface {
         let points: Vec<Point3f> = cloud.points.iter().map(|p| p.position).collect();
         let normals: Vec<Vector3<f32>> = cloud.points.iter().map(|p| p.normal).collect();
         let spatial_index = Some(SpatialIndex::build(&points, config.support_radius));
+        let tree = KdTree::new(&points)?;
 
         Ok(Self {
             config,
             points,
             normals: Some(normals),
             spatial_index,
+            tree,
         })
     }
 
@@ -207,7 +209,10 @@ impl MLSSurface {
         // Find neighbors
         let neighbors = self.find_neighbors(query_point)?;
         if neighbors.is_empty() {
-            return Ok(0.0);
+            // Outside every point's support: use the signed distance to the
+            // nearest point's tangent plane. Returning 0 here used to create a
+            // second, fake surface where the support ran out.
+            return Ok(self.nearest_signed_distance(query_point));
         }
 
         // Compute weights
@@ -223,6 +228,15 @@ impl MLSSurface {
         // Evaluate polynomial at query point
         let basis_values = self.evaluate_basis(query_point, query_point);
         Ok(basis_values.dot(&coefficients))
+    }
+
+    /// Signed distance from `query` to the tangent plane of the nearest input
+    /// point: positive outside (on the side the normal points to).
+    fn nearest_signed_distance(&self, query: &Point3f) -> f32 {
+        match (self.tree.find_k_nearest(query, 1).first(), &self.normals) {
+            (Some(&(i, _)), Some(normals)) => (query - self.points[i]).dot(&normals[i]),
+            _ => f32::MAX,
+        }
     }
 
     /// Evaluate MLS surface gradient (normal) at a point
@@ -452,9 +466,10 @@ impl MLSSurface {
             // For implicit surface, we want f(p) = 0 at surface points
             // If we have normals, we can set up orientation constraints
             if let Some(ref normals) = self.normals {
-                // Use signed distance: positive outside, negative inside
+                // Signed distance of the query from this point's tangent
+                // plane: positive outside, negative inside.
                 let normal = &normals[neighbor_idx];
-                let offset = (point - query_point).dot(normal);
+                let offset = (query_point - point).dot(normal);
                 values[i] = offset * weight;
             } else {
                 // Without normals, assume points are on surface (f = 0)
@@ -552,10 +567,10 @@ impl MLSSurface {
     }
 }
 
-/// Convenience function for basic MLS reconstruction
+/// Convenience function for basic MLS reconstruction. The support radius is
+/// sized from the point spacing (a fixed default only suits one scale).
 pub fn moving_least_squares(cloud: &PointCloud<Point3f>) -> Result<TriangleMesh> {
-    let mls = MLSSurface::new(cloud, MLSConfig::default())?;
-    mls.extract_mesh()
+    moving_least_squares_auto(cloud)
 }
 
 /// MLS reconstruction with custom configuration
@@ -571,7 +586,12 @@ pub fn moving_least_squares_with_config(
 pub fn moving_least_squares_from_normals(
     cloud: &PointCloud<NormalPoint3f>,
 ) -> Result<TriangleMesh> {
-    let mls = MLSSurface::from_normals(cloud, MLSConfig::default())?;
+    let positions = PointCloud::from_points(cloud.points.iter().map(|p| p.position).collect());
+    let config = MLSConfig {
+        support_radius: estimate_optimal_support_radius(&positions)?,
+        ..Default::default()
+    };
+    let mls = MLSSurface::from_normals(cloud, config)?;
     mls.extract_mesh()
 }
 
@@ -633,6 +653,73 @@ pub fn estimate_optimal_support_radius(cloud: &PointCloud<Point3f>) -> Result<f3
 mod tests {
     use super::*;
     use nalgebra::Point3;
+
+    /// Number of edges not shared by exactly two faces (0 for a closed mesh),
+    /// and faces whose normal points towards the origin.
+    fn open_edges_and_inward_faces(mesh: &TriangleMesh) -> (usize, usize) {
+        let mut count: std::collections::HashMap<(usize, usize), u32> = Default::default();
+        for f in &mesh.faces {
+            for (a, b) in [(f[0], f[1]), (f[1], f[2]), (f[2], f[0])] {
+                *count.entry((a.min(b), a.max(b))).or_default() += 1;
+            }
+        }
+        let inward = mesh
+            .faces
+            .iter()
+            .filter(|f| {
+                let [a, b, c] = f.map(|v| mesh.vertices[v]);
+                (b - a)
+                    .cross(&(c - a))
+                    .dot(&(a.coords + b.coords + c.coords))
+                    < 0.0
+            })
+            .count();
+        (count.values().filter(|&&c| c != 2).count(), inward)
+    }
+
+    fn unit_sphere(n: usize) -> Vec<Point3f> {
+        let golden = std::f32::consts::PI * (1.0 + 5f32.sqrt());
+        (0..n)
+            .map(|i| {
+                let t = i as f32 + 0.5;
+                let phi = (1.0 - 2.0 * t / n as f32).acos();
+                let theta = golden * t;
+                Point3f::new(theta.cos() * phi.sin(), theta.sin() * phi.sin(), phi.cos())
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_mls_without_normals_builds_the_sphere() {
+        // Used to fail with "No isosurface found": without normals the field
+        // was 0 everywhere.
+        let cloud = PointCloud::from_points(unit_sphere(2000));
+        let mesh = moving_least_squares(&cloud).unwrap();
+        assert_eq!(open_edges_and_inward_faces(&mesh), (0, 0));
+        assert!(mesh
+            .vertices
+            .iter()
+            .all(|v| (v.coords.norm() - 1.0).abs() < 0.05));
+    }
+
+    #[test]
+    fn test_mls_with_normals_has_no_fake_outer_shell() {
+        let cloud = PointCloud::from_points(
+            unit_sphere(3000)
+                .into_iter()
+                .map(|p| NormalPoint3f {
+                    position: p,
+                    normal: p.coords,
+                })
+                .collect(),
+        );
+        let mesh = moving_least_squares_from_normals(&cloud).unwrap();
+        assert_eq!(open_edges_and_inward_faces(&mesh), (0, 0));
+        assert!(mesh
+            .vertices
+            .iter()
+            .all(|v| (v.coords.norm() - 1.0).abs() < 0.05));
+    }
 
     #[test]
     fn test_mls_config_default() {

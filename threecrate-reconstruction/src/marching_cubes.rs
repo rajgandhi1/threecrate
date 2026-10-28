@@ -5,6 +5,8 @@
 
 use crate::parallel;
 use nalgebra::Vector3;
+use rayon::prelude::*;
+use std::collections::HashMap;
 use threecrate_core::{Error, Point3f, PointCloud, Result, TriangleMesh};
 
 /// 3D volumetric grid containing scalar values
@@ -72,6 +74,11 @@ impl VolumetricGrid {
     ) -> Result<Self> {
         if cloud.is_empty() {
             return Err(Error::InvalidData("Point cloud is empty".to_string()));
+        }
+        if grid_resolution.iter().any(|&r| r < 2) {
+            return Err(Error::InvalidData(format!(
+                "grid resolution must be at least 2 in every axis, got {grid_resolution:?}"
+            )));
         }
 
         // Compute bounding box
@@ -159,40 +166,6 @@ impl Default for MarchingCubesConfig {
         }
     }
 }
-
-/// Vertex information for marching cubes
-#[derive(Debug, Clone)]
-struct MCVertex {
-    position: Point3f,
-    normal: Vector3<f32>,
-}
-
-/// Edge table: indicates which edges are intersected for each cube configuration (256 cases)
-/// Each entry is a 12-bit value where bit i indicates if edge i is intersected
-/// Note: This table is available for future optimizations (pre-checking which edges to interpolate)
-#[allow(dead_code)]
-const EDGE_TABLE: [u16; 256] = [
-    0x0, 0x109, 0x203, 0x30a, 0x406, 0x50f, 0x605, 0x70c, 0x80c, 0x905, 0xa0f, 0xb06, 0xc0a, 0xd03,
-    0xe09, 0xf00, 0x190, 0x99, 0x393, 0x29a, 0x596, 0x49f, 0x795, 0x69c, 0x99c, 0x895, 0xb9f,
-    0xa96, 0xd9a, 0xc93, 0xf99, 0xe90, 0x230, 0x339, 0x33, 0x13a, 0x636, 0x73f, 0x435, 0x53c,
-    0xa3c, 0xb35, 0x83f, 0x936, 0xe3a, 0xf33, 0xc39, 0xd30, 0x3a0, 0x2a9, 0x1a3, 0xaa, 0x7a6,
-    0x6af, 0x5a5, 0x4ac, 0xbac, 0xaa5, 0x9af, 0x8a6, 0xfaa, 0xea3, 0xda9, 0xca0, 0x460, 0x569,
-    0x663, 0x76a, 0x66, 0x16f, 0x265, 0x36c, 0xc6c, 0xd65, 0xe6f, 0xf66, 0x86a, 0x963, 0xa69,
-    0xb60, 0x5f0, 0x4f9, 0x7f3, 0x6fa, 0x1f6, 0xff, 0x3f5, 0x2fc, 0xdfc, 0xcf5, 0xfff, 0xef6,
-    0x9fa, 0x8f3, 0xbf9, 0xaf0, 0x650, 0x759, 0x453, 0x55a, 0x256, 0x35f, 0x55, 0x15c, 0xe5c,
-    0xf55, 0xc5f, 0xd56, 0xa5a, 0xb53, 0x859, 0x950, 0x7c0, 0x6c9, 0x5c3, 0x4ca, 0x3c6, 0x2cf,
-    0x1c5, 0xcc, 0xfcc, 0xec5, 0xdcf, 0xcc6, 0xbca, 0xac3, 0x9c9, 0x8c0, 0x8c0, 0x9c9, 0xac3,
-    0xbca, 0xcc6, 0xdcf, 0xec5, 0xfcc, 0xcc, 0x1c5, 0x2cf, 0x3c6, 0x4ca, 0x5c3, 0x6c9, 0x7c0,
-    0x950, 0x859, 0xb53, 0xa5a, 0xd56, 0xc5f, 0xf55, 0xe5c, 0x15c, 0x55, 0x35f, 0x256, 0x55a,
-    0x453, 0x759, 0x650, 0xaf0, 0xbf9, 0x8f3, 0x9fa, 0xef6, 0xfff, 0xcf5, 0xdfc, 0x2fc, 0x3f5,
-    0xff, 0x1f6, 0x6fa, 0x7f3, 0x4f9, 0x5f0, 0xb60, 0xa69, 0x963, 0x86a, 0xf66, 0xe6f, 0xd65,
-    0xc6c, 0x36c, 0x265, 0x16f, 0x66, 0x76a, 0x663, 0x569, 0x460, 0xca0, 0xda9, 0xea3, 0xfaa,
-    0x8a6, 0x9af, 0xaa5, 0xbac, 0x4ac, 0x5a5, 0x6af, 0x7a6, 0xaa, 0x1a3, 0x2a9, 0x3a0, 0xd30,
-    0xc39, 0xf33, 0xe3a, 0x936, 0x83f, 0xb35, 0xa3c, 0x53c, 0x435, 0x73f, 0x636, 0x13a, 0x33,
-    0x339, 0x230, 0xe90, 0xf99, 0xc93, 0xd9a, 0xa96, 0xb9f, 0x895, 0x99c, 0x69c, 0x795, 0x49f,
-    0x596, 0x29a, 0x393, 0x99, 0x190, 0xf00, 0xe09, 0xd03, 0xc0a, 0xb06, 0xa0f, 0x905, 0x80c,
-    0x70c, 0x605, 0x50f, 0x406, 0x30a, 0x203, 0x109, 0x0,
-];
 
 /// Triangle table: defines triangles for each cube configuration
 /// Each row contains up to 5 triangles (15 indices), terminated by -1
@@ -459,6 +432,132 @@ pub(crate) const TRIANGLE_TABLE: [[i8; 16]; 256] = [
     ],
 ];
 
+/// Crack-free marching cubes over a grid of `dims` nodes at `origin +
+/// (i, j, k) * spacing`, reading node values through `value`. Each grid edge
+/// gets one vertex shared by every cube that touches it, and faces point
+/// towards larger values (outward for a signed distance field).
+pub(crate) fn extract_shared<F>(
+    dims: [usize; 3],
+    spacing: [f64; 3],
+    origin: [f64; 3],
+    value: F,
+    iso: f32,
+) -> TriangleMesh
+where
+    F: Fn(usize, usize, usize) -> f32 + Sync,
+{
+    // Cube corners as (di, dj, dk), and the 12 cube edges as corner pairs, in
+    // the order the lookup table uses.
+    const CORNERS: [[usize; 3]; 8] = [
+        [0, 0, 0],
+        [1, 0, 0],
+        [1, 1, 0],
+        [0, 1, 0],
+        [0, 0, 1],
+        [1, 0, 1],
+        [1, 1, 1],
+        [0, 1, 1],
+    ];
+    const EDGES: [[usize; 2]; 12] = [
+        [0, 1],
+        [1, 2],
+        [2, 3],
+        [3, 0],
+        [4, 5],
+        [5, 6],
+        [6, 7],
+        [7, 4],
+        [0, 4],
+        [1, 5],
+        [2, 6],
+        [3, 7],
+    ];
+    if dims.iter().any(|&d| d < 2) {
+        return TriangleMesh::new();
+    }
+    let [nx, ny, nz] = dims;
+    let node = |i: usize, j: usize, k: usize| (i * ny + j) * nz + k;
+
+    // Triangles per x slab, as (grid edge id) triples; a grid edge id is
+    // `node * 3 + axis`, naming the edge from `node` towards +axis.
+    let triangles: Vec<[usize; 3]> = (0..nx - 1)
+        .into_par_iter()
+        .flat_map_iter(|i| {
+            let mut out = Vec::new();
+            for j in 0..ny - 1 {
+                for k in 0..nz - 1 {
+                    let at = |c: usize| {
+                        let [di, dj, dk] = CORNERS[c];
+                        (i + di, j + dj, k + dk)
+                    };
+                    let mut case = 0;
+                    for c in 0..8 {
+                        let (a, b, d) = at(c);
+                        if value(a, b, d) < iso {
+                            case |= 1 << c;
+                        }
+                    }
+                    if case == 0 || case == 255 {
+                        continue;
+                    }
+                    let edge_id = |e: usize| {
+                        let [a, b] = EDGES[e];
+                        let (lo, hi) = (CORNERS[a], CORNERS[b]);
+                        let axis = (0..3).find(|&d| lo[d] != hi[d]).unwrap();
+                        let (x, y, z) = at(if lo[axis] < hi[axis] { a } else { b });
+                        node(x, y, z) * 3 + axis
+                    };
+                    for tri in TRIANGLE_TABLE[case].chunks(3) {
+                        if tri[0] < 0 {
+                            break;
+                        }
+                        // The table winds faces towards smaller values;
+                        // swapping two corners makes them face larger ones.
+                        out.push([
+                            edge_id(tri[0] as usize),
+                            edge_id(tri[2] as usize),
+                            edge_id(tri[1] as usize),
+                        ]);
+                    }
+                }
+            }
+            out
+        })
+        .collect();
+
+    // One vertex per crossed grid edge, interpolated from its lower node.
+    let mut vertex_of: HashMap<usize, usize> = HashMap::new();
+    let mut vertices = Vec::new();
+    let faces = triangles
+        .into_iter()
+        .map(|tri| {
+            tri.map(|edge| {
+                *vertex_of.entry(edge).or_insert_with(|| {
+                    let (n, axis) = (edge / 3, edge % 3);
+                    let ijk = [n / (ny * nz), (n / nz) % ny, n % nz];
+                    let mut next = ijk;
+                    next[axis] += 1;
+                    let (v0, v1) = (
+                        value(ijk[0], ijk[1], ijk[2]),
+                        value(next[0], next[1], next[2]),
+                    );
+                    let t = ((iso - v0) / (v1 - v0)).clamp(0.0, 1.0) as f64;
+                    let mut p = ijk.map(|c| c as f64);
+                    p[axis] += t;
+                    vertices.push(Point3f::new(
+                        (origin[0] + p[0] * spacing[0]) as f32,
+                        (origin[1] + p[1] * spacing[1]) as f32,
+                        (origin[2] + p[2] * spacing[2]) as f32,
+                    ));
+                    vertices.len() - 1
+                })
+            })
+        })
+        .filter(|f: &[usize; 3]| f[0] != f[1] && f[1] != f[2] && f[0] != f[2])
+        .collect();
+    TriangleMesh::from_vertices_and_faces(vertices, faces)
+}
+
 /// Marching Cubes implementation
 pub struct MarchingCubes {
     config: MarchingCubesConfig,
@@ -470,203 +569,35 @@ impl MarchingCubes {
         Self { config }
     }
 
-    /// Extract isosurface from volumetric grid with parallel processing
+    /// Extract the isosurface at `config.iso_level`. Faces point towards
+    /// larger values, so for a signed distance field they point outward.
     pub fn extract_isosurface(&self, grid: &VolumetricGrid) -> Result<TriangleMesh> {
-        // Generate all cube coordinates
-        let mut cube_coords = Vec::new();
-        for x in 0..grid.dimensions[0].saturating_sub(1) {
-            for y in 0..grid.dimensions[1].saturating_sub(1) {
-                for z in 0..grid.dimensions[2].saturating_sub(1) {
-                    cube_coords.push((x, y, z));
-                }
-            }
-        }
-
-        // Process cubes in parallel
-        let cube_results: Vec<(Vec<MCVertex>, Vec<[usize; 3]>)> =
-            parallel::parallel_map(&cube_coords, |(x, y, z)| {
-                let mut vertices = Vec::new();
-                let mut triangles = Vec::new();
-
-                // Process a single cube - ignore errors for parallel processing simplicity
-                if let Ok(()) = self.process_cube(grid, *x, *y, *z, &mut vertices, &mut triangles) {
-                    (vertices, triangles)
-                } else {
-                    (Vec::new(), Vec::new())
-                }
-            });
-
-        // Merge results from parallel processing
-        let mut all_vertices = Vec::new();
-        let mut all_triangles = Vec::new();
-        let mut vertex_offset = 0;
-
-        for (vertices, triangles) in cube_results {
-            // Add triangles with adjusted indices
-            for triangle in triangles {
-                all_triangles.push([
-                    triangle[0] + vertex_offset,
-                    triangle[1] + vertex_offset,
-                    triangle[2] + vertex_offset,
-                ]);
-            }
-
-            // Add vertices
-            all_vertices.extend(vertices);
-            vertex_offset = all_vertices.len();
-        }
-
-        if all_vertices.is_empty() {
+        let mut mesh = extract_shared(
+            grid.dimensions,
+            grid.voxel_size.map(|v| v as f64),
+            [
+                grid.origin.x as f64,
+                grid.origin.y as f64,
+                grid.origin.z as f64,
+            ],
+            |i, j, k| grid.values[i][j][k],
+            self.config.iso_level,
+        );
+        if mesh.faces.is_empty() {
             return Err(Error::Algorithm(
                 "No isosurface found at specified level".to_string(),
             ));
         }
-
-        // Convert MCVertex to Point3f for mesh creation using parallel processing
-        let vertex_positions: Vec<Point3f> = parallel::parallel_map(&all_vertices, |v| v.position);
-        let mut mesh = TriangleMesh::from_vertices_and_faces(vertex_positions, all_triangles);
-
-        // Set normals if computed using parallel processing
         if self.config.compute_normals {
-            let normals: Vec<Vector3<f32>> = parallel::parallel_map(&all_vertices, |v| v.normal);
+            let normals = parallel::parallel_map(&mesh.vertices, |v| {
+                self.compute_gradient_at_position(v, grid)
+            });
             mesh.set_normals(normals);
         }
-
-        // Apply smoothing if requested
         if self.config.smooth_mesh {
             self.smooth_mesh(&mut mesh)?;
         }
-
         Ok(mesh)
-    }
-
-    /// Process a single cube for marching cubes
-    fn process_cube(
-        &self,
-        grid: &VolumetricGrid,
-        x: usize,
-        y: usize,
-        z: usize,
-        vertices: &mut Vec<MCVertex>,
-        triangles: &mut Vec<[usize; 3]>,
-    ) -> Result<()> {
-        // Get the 8 corner values of the cube
-        let corner_values = [
-            grid.get_value(x, y, z).unwrap_or(0.0),
-            grid.get_value(x + 1, y, z).unwrap_or(0.0),
-            grid.get_value(x + 1, y + 1, z).unwrap_or(0.0),
-            grid.get_value(x, y + 1, z).unwrap_or(0.0),
-            grid.get_value(x, y, z + 1).unwrap_or(0.0),
-            grid.get_value(x + 1, y, z + 1).unwrap_or(0.0),
-            grid.get_value(x + 1, y + 1, z + 1).unwrap_or(0.0),
-            grid.get_value(x, y + 1, z + 1).unwrap_or(0.0),
-        ];
-
-        // Compute cube configuration index
-        let mut cube_index = 0;
-        for i in 0..8 {
-            if corner_values[i] < self.config.iso_level {
-                cube_index |= 1 << i;
-            }
-        }
-
-        // Skip if cube is entirely inside or outside
-        if cube_index == 0 || cube_index == 255 {
-            return Ok(());
-        }
-
-        // Get cube corner positions
-        let corner_positions = [
-            grid.grid_to_world(x, y, z),
-            grid.grid_to_world(x + 1, y, z),
-            grid.grid_to_world(x + 1, y + 1, z),
-            grid.grid_to_world(x, y + 1, z),
-            grid.grid_to_world(x, y, z + 1),
-            grid.grid_to_world(x + 1, y, z + 1),
-            grid.grid_to_world(x + 1, y + 1, z + 1),
-            grid.grid_to_world(x, y + 1, z + 1),
-        ];
-
-        // Interpolate vertices on edges where surface crosses
-        let mut edge_vertices = [None; 12];
-        let edge_connections = [
-            [0, 1],
-            [1, 2],
-            [2, 3],
-            [3, 0], // bottom face edges
-            [4, 5],
-            [5, 6],
-            [6, 7],
-            [7, 4], // top face edges
-            [0, 4],
-            [1, 5],
-            [2, 6],
-            [3, 7], // vertical edges
-        ];
-
-        for (edge_idx, &[v1, v2]) in edge_connections.iter().enumerate() {
-            if self.edge_intersects_surface(corner_values[v1], corner_values[v2]) {
-                let vertex = self.interpolate_vertex(
-                    corner_positions[v1],
-                    corner_positions[v2],
-                    corner_values[v1],
-                    corner_values[v2],
-                    grid,
-                    x,
-                    y,
-                    z,
-                )?;
-
-                let vertex_index = vertices.len();
-                vertices.push(vertex);
-                edge_vertices[edge_idx] = Some(vertex_index);
-            }
-        }
-
-        // Generate triangles using lookup table (simplified version)
-        self.generate_triangles_for_cube(cube_index, &edge_vertices, triangles)?;
-
-        Ok(())
-    }
-
-    /// Check if edge intersects the isosurface
-    fn edge_intersects_surface(&self, value1: f32, value2: f32) -> bool {
-        (value1 < self.config.iso_level) != (value2 < self.config.iso_level)
-    }
-
-    /// Interpolate vertex position on edge where surface crosses
-    fn interpolate_vertex(
-        &self,
-        pos1: Point3f,
-        pos2: Point3f,
-        val1: f32,
-        val2: f32,
-        grid: &VolumetricGrid,
-        _x: usize,
-        _y: usize,
-        _z: usize,
-    ) -> Result<MCVertex> {
-        // Linear interpolation to find exact crossing point
-        let t = if (val2 - val1).abs() < 1e-6 {
-            0.5
-        } else {
-            (self.config.iso_level - val1) / (val2 - val1)
-        };
-
-        let position = Point3f::new(
-            pos1.x + t * (pos2.x - pos1.x),
-            pos1.y + t * (pos2.y - pos1.y),
-            pos1.z + t * (pos2.z - pos1.z),
-        );
-
-        // Compute normal using gradient (simplified finite difference)
-        let normal = if self.config.compute_normals {
-            self.compute_gradient_at_position(&position, grid)
-        } else {
-            Vector3::new(0.0, 0.0, 1.0)
-        };
-
-        Ok(MCVertex { position, normal })
     }
 
     /// Compute gradient (normal) at a position using finite differences
@@ -768,41 +699,6 @@ impl MarchingCubes {
         let v1 = v01 * (1.0 - fy) + v11 * fy;
 
         v0 * (1.0 - fz) + v1 * fz
-    }
-
-    /// Generate triangles for a cube configuration using lookup tables
-    fn generate_triangles_for_cube(
-        &self,
-        cube_index: usize,
-        edge_vertices: &[Option<usize>; 12],
-        triangles: &mut Vec<[usize; 3]>,
-    ) -> Result<()> {
-        // Get the triangle configuration for this cube from the lookup table
-        let tri_config = TRIANGLE_TABLE[cube_index];
-
-        // Iterate through the triangle indices (terminated by -1)
-        let mut i = 0;
-        while i < tri_config.len() && tri_config[i] != -1 {
-            // Each triangle consists of 3 edge indices
-            if i + 2 < tri_config.len() {
-                let edge_idx_0 = tri_config[i] as usize;
-                let edge_idx_1 = tri_config[i + 1] as usize;
-                let edge_idx_2 = tri_config[i + 2] as usize;
-
-                // Get the actual vertex indices from the edge vertices
-                if let (Some(v0), Some(v1), Some(v2)) = (
-                    edge_vertices[edge_idx_0],
-                    edge_vertices[edge_idx_1],
-                    edge_vertices[edge_idx_2],
-                ) {
-                    triangles.push([v0, v1, v2]);
-                }
-            }
-
-            i += 3; // Move to the next triangle
-        }
-
-        Ok(())
     }
 
     /// Apply smoothing to the mesh
@@ -971,6 +867,49 @@ pub fn create_cube_volume(
 mod tests {
     use super::*;
     use nalgebra::Point3;
+
+    /// Number of edges not shared by exactly two faces (0 for a closed mesh),
+    /// and faces whose normal points towards the origin.
+    fn open_edges_and_inward_faces(mesh: &TriangleMesh) -> (usize, usize) {
+        let mut count: std::collections::HashMap<(usize, usize), u32> = Default::default();
+        for f in &mesh.faces {
+            for (a, b) in [(f[0], f[1]), (f[1], f[2]), (f[2], f[0])] {
+                *count.entry((a.min(b), a.max(b))).or_default() += 1;
+            }
+        }
+        let inward = mesh
+            .faces
+            .iter()
+            .filter(|f| {
+                let [a, b, c] = f.map(|v| mesh.vertices[v]);
+                (b - a)
+                    .cross(&(c - a))
+                    .dot(&(a.coords + b.coords + c.coords))
+                    < 0.0
+            })
+            .count();
+        (count.values().filter(|&&c| c != 2).count(), inward)
+    }
+
+    #[test]
+    fn test_marching_cubes_sphere_is_closed_and_outward() {
+        let grid = create_sphere_volume(Point3f::origin(), 1.0, [40, 40, 40], [3.0, 3.0, 3.0]);
+        let mesh = marching_cubes(&grid, 0.0).unwrap();
+        assert_eq!(open_edges_and_inward_faces(&mesh), (0, 0));
+        let off = mesh
+            .vertices
+            .iter()
+            .map(|v| (v.coords.norm() - 1.0).abs())
+            .fold(0.0, f32::max);
+        assert!(off < 0.02, "vertices {off} off the sphere");
+    }
+
+    #[test]
+    fn test_from_point_cloud_rejects_tiny_resolution() {
+        let cloud = PointCloud::from_points(vec![Point3f::origin(), Point3f::new(1.0, 1.0, 1.0)]);
+        assert!(VolumetricGrid::from_point_cloud(&cloud, [1, 5, 5], 0.1).is_err());
+        assert!(VolumetricGrid::from_point_cloud(&cloud, [0, 5, 5], 0.1).is_err());
+    }
 
     #[test]
     fn test_volumetric_grid_creation() {
