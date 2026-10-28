@@ -17,7 +17,7 @@ MAX_POINTS_ENV = "THREECRATE_MCP_MAX_POINTS"
 DEFAULT_MAX_POINTS = 50_000_000
 
 POINT_CLOUD_WRITE_FORMATS = {".ply", ".pcd", ".xyz", ".csv"}
-MESH_FORMATS = {".ply", ".obj"}
+MESH_FORMATS = {".ply", ".obj", ".stl"}
 
 
 class WorkspaceError(ValueError):

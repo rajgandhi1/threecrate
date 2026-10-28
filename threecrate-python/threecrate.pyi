@@ -464,6 +464,19 @@ def mesh_difference(mesh_a: TriangleMesh, mesh_b: TriangleMesh) -> TriangleMesh:
 # Simplification
 # ---------------------------------------------------------------------------
 
+def repair_for_print(
+    item: PointCloud | NormalPointCloud | TriangleMesh,
+    remove_floor: bool = False,
+    min_piece_fraction: float = 0.05,
+    max_hole_edges: int = 200,
+    depth: int = 7,
+    target_faces: Optional[int] = None,
+) -> tuple[TriangleMesh, dict]:
+    """Make a scan printable (watertight, manifold, facing outward, no loose
+    junk, manageable size). Returns (mesh, report) where report has "steps",
+    "before" (None for a point cloud) and "after" health reports."""
+    ...
+
 def render(
     items: PointCloud | NormalPointCloud | TriangleMesh | list,
     path: Optional[str] = None,

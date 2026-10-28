@@ -12,7 +12,7 @@ from threecrate_mcp import server
 EXPECTED_TOOLS = {
     "inspect_point_cloud", "inspect_mesh", "convert", "downsample", "remove_outliers",
     "estimate_normals", "register", "transform", "segment_plane", "extract_clusters",
-    "reconstruct", "simplify_mesh", "smooth_mesh", "render",
+    "reconstruct", "simplify_mesh", "smooth_mesh", "render", "repair_for_print",
 }
 
 

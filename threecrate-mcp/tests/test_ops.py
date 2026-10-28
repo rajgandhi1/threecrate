@@ -5,7 +5,7 @@ import threecrate as tc
 from threecrate_mcp import ops
 from threecrate_mcp.workspace import Workspace, WorkspaceError
 
-from .conftest import surface_points
+from .conftest import sphere_points, surface_points
 
 
 def test_inspect_point_cloud(ws: Workspace):
@@ -269,3 +269,29 @@ def test_render_draws_meshes_and_clouds_and_can_save(ws: Workspace):
         ops.render(ws, ["mesh.ply"], output="compare.png")
     with pytest.raises(Exception, match="unknown view"):
         ops.render(ws, ["mesh.ply"], views=["sideways"])
+
+
+def test_repair_for_print_makes_an_open_scan_printable(ws: Workspace):
+    # Open-bottomed dome on a floor, plus stray points: a typical table-top scan.
+    dome = sphere_points()
+    dome = dome[dome[:, 2] > -0.4] + [0, 0, 1.4]
+    g = np.stack(np.meshgrid(np.linspace(-2, 2, 50), np.linspace(-2, 2, 50)), -1).reshape(-1, 2)
+    floor = np.c_[g, np.zeros(len(g))]
+    tc.write_point_cloud(tc.PointCloud(np.vstack([dome, floor]).astype(np.float32)), str(ws.root / "scan.xyz"))
+
+    summary, png = ops.repair_for_print(ws, "scan.xyz", remove_floor=True, depth=6, target_faces=5000)
+    assert summary["output"] == "scan.printable.stl"
+    assert summary["before"] is None and summary["after"]["printable"], summary
+    assert summary["after"]["faces"] <= 5000
+    assert any(step.startswith("removed the floor") for step in summary["steps"])
+    assert png[1:4] == b"PNG"
+    mesh = tc.read_mesh(str(ws.root / "scan.printable.stl"))
+    assert tc.analyze_mesh(mesh)["watertight"]
+
+
+def test_repair_for_print_fixes_a_mesh_full_of_holes(ws: Workspace):
+    ops.reconstruct(ws, "sphere.ply", method="ball_pivoting", output="holey.ply")
+    assert not ops.inspect_mesh(ws, "holey.ply")["printable"]
+    summary, _ = ops.repair_for_print(ws, "holey.ply", depth=6, output="fixed.ply")
+    assert summary["before"]["holes"] > 0
+    assert summary["after"]["printable"], summary

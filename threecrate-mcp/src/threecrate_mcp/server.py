@@ -328,6 +328,28 @@ def render(
     return [TextContent(type="text", text=json.dumps(summary)), Image(data=png, format="png")]
 
 
+@tool
+def repair_for_print(
+    path: Path_,
+    remove_floor: Annotated[
+        bool, Field(description="Remove a floor or turntable under the object (point clouds only). Check render first")
+    ] = False,
+    target_faces: Annotated[
+        Optional[int], Field(ge=4, description="Reduce to about this many triangles (default: keep up to 250,000)")
+    ] = None,
+    depth: Annotated[int, Field(ge=3, le=8, description="Detail when the surface is rebuilt; 7 takes about a second")] = 7,
+    up: Annotated[Literal["z", "y"], Field(description="Which axis points up, for the picture")] = "z",
+    output: Annotated[Optional[str], Field(description="Output mesh (.stl by default, or .ply/.obj)")] = None,
+    overwrite: Overwrite = False,
+) -> list[TextContent | Image]:
+    """Make a scan or mesh 3D-printable: removes stray points and loose bits,
+    optionally the floor, closes holes (including a missing base), fixes face
+    direction and reduces the size. Writes an STL and returns what it did, the
+    health before and after, and a before/after picture to check."""
+    summary, png = ops.repair_for_print(_ws(), path, remove_floor, target_faces, depth, up, output, overwrite)
+    return [TextContent(type="text", text=json.dumps(summary)), Image(data=png, format="png")]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="threecrate MCP server (stdio)")
     parser.add_argument("--root", help=f"Workspace folder (default: current folder, or ${ROOT_ENV})")
