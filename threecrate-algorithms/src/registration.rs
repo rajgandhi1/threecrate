@@ -521,16 +521,17 @@ fn correspondence_pairs(matches: &[Option<(usize, f32)>]) -> Vec<(usize, usize)>
 ///
 /// # Returns
 /// * `Isometry3<f32>` - Final transformation that aligns source to target
+///
+/// # Errors
+/// Fails on empty clouds or when no correspondences are found, instead of
+/// returning `init` as if it had converged.
 pub fn icp(
     source: &PointCloud<Point3f>,
     target: &PointCloud<Point3f>,
     init: Isometry3<f32>,
     max_iters: usize,
-) -> Isometry3<f32> {
-    match icp_detailed(source, target, init, max_iters, None, 1e-6) {
-        Ok(result) => result.transformation,
-        Err(_) => init, // Return initial transformation on error
-    }
+) -> Result<Isometry3<f32>> {
+    Ok(icp_detailed(source, target, init, max_iters, None, 1e-6)?.transformation)
 }
 
 /// Detailed ICP registration with comprehensive options and result
@@ -1241,10 +1242,13 @@ mod tests {
         }
 
         let init = Isometry3::identity();
-        let transform = icp(&source, &target, init, 20);
+        let transform = icp(&source, &target, init, 20).unwrap();
 
         // Should return a valid transformation (not panic)
         assert!(transform.translation.vector.magnitude() > 0.5);
+
+        let empty = PointCloud::new();
+        assert!(icp(&empty, &target, init, 20).is_err());
     }
 
     #[test]

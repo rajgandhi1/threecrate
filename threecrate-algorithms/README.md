@@ -48,8 +48,8 @@ let cloud = statistical_outlier_removal(&cloud, 10, 2.0)?;
 let normals = estimate_normals(&cloud, 10)?;
 
 // ICP registration
-let result = icp(&source, &target, Default::default())?;
-println!("Registration converged: {}", result.converged);
+let transform = icp(&source, &target, Isometry3::identity(), 50)?;
+println!("Translation: {}", transform.translation.vector);
 
 // RANSAC plane segmentation
 let plane_result = segment_plane_ransac(&cloud, 1000, 0.01)?;
