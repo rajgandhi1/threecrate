@@ -2,7 +2,7 @@
 //! big is it.
 
 use crate::{Point3f, TriangleMesh};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
 /// Health and measurement report for a triangle mesh, from [`analyze_mesh`].
 #[derive(Debug, Clone, PartialEq)]
@@ -129,7 +129,8 @@ pub fn analyze_mesh(mesh: &TriangleMesh) -> MeshReport {
     }
     holes.sort_unstable_by(|a, b| b.cmp(a));
 
-    let components = face_components(&valid, n);
+    let mut components: Vec<usize> = mesh_pieces(&valid).iter().map(Vec::len).collect();
+    components.sort_unstable_by(|a, b| b.cmp(a));
 
     let (min, max) = bounds(mesh, &used);
     let size = [max.x - min.x, max.y - min.y, max.z - min.z];
@@ -191,31 +192,41 @@ pub fn analyze_mesh(mesh: &TriangleMesh) -> MeshReport {
     }
 }
 
-/// Face count of each set of faces connected through shared vertices,
-/// largest first.
-fn face_components(faces: &[[usize; 3]], n: usize) -> Vec<usize> {
-    let mut parent: Vec<usize> = (0..n).collect();
-    fn root(parent: &mut [usize], mut v: usize) -> usize {
-        while parent[v] != v {
-            parent[v] = parent[parent[v]];
-            v = parent[v];
-        }
-        v
-    }
-    for f in faces {
-        let a = root(&mut parent, f[0]);
-        for &v in &f[1..] {
-            let b = root(&mut parent, v);
-            parent[b] = a;
+/// Faces grouped into pieces connected through shared edges, as face indices.
+/// Faces must index real vertices. `analyze_mesh` and `repair_for_print` use
+/// this one definition of a piece, so their counts agree.
+pub fn mesh_pieces(faces: &[[usize; 3]]) -> Vec<Vec<usize>> {
+    let mut by_edge: HashMap<(usize, usize), Vec<usize>> = HashMap::new();
+    for (i, f) in faces.iter().enumerate() {
+        for (a, b) in [(f[0], f[1]), (f[1], f[2]), (f[2], f[0])] {
+            by_edge.entry((a.min(b), a.max(b))).or_default().push(i);
         }
     }
-    let mut counts: HashMap<usize, usize> = HashMap::new();
-    for f in faces {
-        *counts.entry(root(&mut parent, f[0])).or_default() += 1;
+    let mut piece_of = vec![usize::MAX; faces.len()];
+    let mut out: Vec<Vec<usize>> = Vec::new();
+    for start in 0..faces.len() {
+        if piece_of[start] != usize::MAX {
+            continue;
+        }
+        let id = out.len();
+        let mut members = vec![start];
+        piece_of[start] = id;
+        let mut queue = VecDeque::from([start]);
+        while let Some(f) = queue.pop_front() {
+            let face = faces[f];
+            for (a, b) in [(face[0], face[1]), (face[1], face[2]), (face[2], face[0])] {
+                for &g in &by_edge[&(a.min(b), a.max(b))] {
+                    if piece_of[g] == usize::MAX {
+                        piece_of[g] = id;
+                        members.push(g);
+                        queue.push_back(g);
+                    }
+                }
+            }
+        }
+        out.push(members);
     }
-    let mut sizes: Vec<usize> = counts.into_values().collect();
-    sizes.sort_unstable_by(|a, b| b.cmp(a));
-    sizes
+    out
 }
 
 /// Bounding box of the vertices faces use (all zero when there are none).
@@ -340,5 +351,20 @@ mod tests {
         assert!(!r.printable && !r.watertight);
         assert_eq!(r.volume, None);
         assert_eq!(r.size, [0.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn faces_touching_at_one_corner_are_separate_pieces() {
+        // Two triangles share only vertex 0: two pieces, the same as repair sees.
+        let v = vec![
+            Point3f::new(0.0, 0.0, 0.0),
+            Point3f::new(1.0, 0.0, 0.0),
+            Point3f::new(0.0, 1.0, 0.0),
+            Point3f::new(-1.0, 0.0, 0.0),
+            Point3f::new(0.0, -1.0, 0.0),
+        ];
+        let mesh = TriangleMesh::from_vertices_and_faces(v, vec![[0, 1, 2], [0, 3, 4]]);
+        assert_eq!(analyze_mesh(&mesh).components, vec![1, 1]);
+        assert_eq!(mesh_pieces(&mesh.faces), vec![vec![0], vec![1]]);
     }
 }
