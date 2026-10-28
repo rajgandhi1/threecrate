@@ -1019,51 +1019,58 @@ impl RobustPlyReader {
             let mut element_data = Vec::with_capacity(crate::capacity_hint(element_def.count));
 
             for _ in 0..element_def.count {
-                let mut instance = HashMap::new();
-
-                match header.format {
-                    PlyFormat::Ascii => {
-                        let mut line = String::new();
-                        reader.read_line(&mut line)?;
-                        let values = line.trim().split_whitespace().collect::<Vec<_>>();
-                        let mut value_idx = 0;
-
-                        for property in &element_def.properties {
-                            let value = Self::read_ascii_property_value(
-                                &values,
-                                &mut value_idx,
-                                &property.property_type,
-                            )?;
-                            instance.insert(property.name.clone(), value);
-                        }
-                    }
-                    PlyFormat::BinaryLittleEndian => {
-                        for property in &element_def.properties {
-                            let value = Self::read_binary_property_value::<LittleEndian, _>(
-                                reader,
-                                &property.property_type,
-                            )?;
-                            instance.insert(property.name.clone(), value);
-                        }
-                    }
-                    PlyFormat::BinaryBigEndian => {
-                        for property in &element_def.properties {
-                            let value = Self::read_binary_property_value::<BigEndian, _>(
-                                reader,
-                                &property.property_type,
-                            )?;
-                            instance.insert(property.name.clone(), value);
-                        }
-                    }
-                }
-
-                element_data.push(instance);
+                element_data.push(Self::read_record(reader, header.format, element_def)?);
             }
 
             elements.insert(element_def.name.clone(), element_data);
         }
 
         Ok(elements)
+    }
+
+    /// Read one record of `element`.
+    fn read_record<R: BufRead>(
+        reader: &mut R,
+        format: PlyFormat,
+        element: &PlyElement,
+    ) -> Result<HashMap<String, PlyValue>> {
+        let mut instance = HashMap::new();
+        match format {
+            PlyFormat::Ascii => {
+                let mut line = String::new();
+                reader.read_line(&mut line)?;
+                let values = line.trim().split_whitespace().collect::<Vec<_>>();
+                let mut value_idx = 0;
+
+                for property in &element.properties {
+                    let value = Self::read_ascii_property_value(
+                        &values,
+                        &mut value_idx,
+                        &property.property_type,
+                    )?;
+                    instance.insert(property.name.clone(), value);
+                }
+            }
+            PlyFormat::BinaryLittleEndian => {
+                for property in &element.properties {
+                    let value = Self::read_binary_property_value::<LittleEndian, _>(
+                        reader,
+                        &property.property_type,
+                    )?;
+                    instance.insert(property.name.clone(), value);
+                }
+            }
+            PlyFormat::BinaryBigEndian => {
+                for property in &element.properties {
+                    let value = Self::read_binary_property_value::<BigEndian, _>(
+                        reader,
+                        &property.property_type,
+                    )?;
+                    instance.insert(property.name.clone(), value);
+                }
+            }
+        }
+        Ok(instance)
     }
 
     /// Read ASCII property value
@@ -1610,37 +1617,45 @@ impl MeshWriter for PlyWriter {
     }
 }
 
+/// Open a PLY file and skip to the first record of `element`, using the same
+/// record decoder as the full reader so any property layout works.
+fn open_at_element<P: AsRef<Path>>(
+    path: P,
+    element: &str,
+) -> Result<(BufReader<File>, PlyHeader, usize)> {
+    let mut reader = BufReader::new(File::open(path)?);
+    let header = RobustPlyReader::read_header(&mut reader)?;
+    let index = header
+        .elements
+        .iter()
+        .position(|e| e.name == element)
+        .ok_or_else(|| Error::InvalidData(format!("No {element} element found in PLY file")))?;
+    for skipped in &header.elements[..index] {
+        for _ in 0..skipped.count {
+            RobustPlyReader::read_record(&mut reader, header.format, skipped)?;
+        }
+    }
+    Ok((reader, header, index))
+}
+
 /// Streaming PLY reader for point clouds
 pub struct PlyStreamingReader {
     reader: BufReader<File>,
-    current_count: usize,
-    current_index: usize,
-    chunk_size: usize,
-    buffer: Vec<u8>,
     format: PlyFormat,
+    vertex: PlyElement,
+    current_index: usize,
 }
 
 impl PlyStreamingReader {
-    /// Create a new streaming PLY reader
-    pub fn new<P: AsRef<Path>>(path: P, chunk_size: usize) -> Result<Self> {
-        let file = File::open(path)?;
-        let mut reader = BufReader::new(file);
-        let header = RobustPlyReader::read_header(&mut reader)?;
-
-        // Find vertex element
-        let vertex_element = header
-            .elements
-            .iter()
-            .find(|e| e.name == "vertex")
-            .ok_or_else(|| Error::InvalidData("No vertex element found in PLY file".to_string()))?;
-
+    /// Create a new streaming PLY reader. `_chunk_size` is kept for
+    /// compatibility; reads are already buffered.
+    pub fn new<P: AsRef<Path>>(path: P, _chunk_size: usize) -> Result<Self> {
+        let (reader, header, index) = open_at_element(path, "vertex")?;
         Ok(Self {
             reader,
-            current_count: vertex_element.count,
-            current_index: 0,
-            chunk_size,
-            buffer: Vec::with_capacity(chunk_size * 12), // Estimate 12 bytes per vertex
             format: header.format,
+            vertex: header.elements[index].clone(),
+            current_index: 0,
         })
     }
 }
@@ -1649,216 +1664,53 @@ impl Iterator for PlyStreamingReader {
     type Item = Result<Point3f>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.current_index >= self.current_count {
+        if self.current_index >= self.vertex.count {
             return None;
         }
-
-        // Read a chunk if buffer is empty
-        if self.buffer.is_empty() {
-            let remaining = self.current_count - self.current_index;
-            let to_read = std::cmp::min(remaining, self.chunk_size);
-
-            match self.format {
-                PlyFormat::Ascii => {
-                    // For ASCII, we need to read line by line
-                    let mut line = String::new();
-                    if let Err(e) = self.reader.read_line(&mut line) {
-                        return Some(Err(Error::Io(e)));
-                    }
-
-                    let values: Vec<&str> = line.trim().split_whitespace().collect();
-                    if values.len() < 3 {
-                        return Some(Err(Error::InvalidData(
-                            "Not enough coordinates in vertex line".to_string(),
-                        )));
-                    }
-
-                    let x = match values[0].parse::<f32>() {
-                        Ok(v) => v,
-                        Err(_) => {
-                            return Some(Err(Error::InvalidData(
-                                "Invalid x coordinate".to_string(),
-                            )))
-                        }
-                    };
-                    let y = match values[1].parse::<f32>() {
-                        Ok(v) => v,
-                        Err(_) => {
-                            return Some(Err(Error::InvalidData(
-                                "Invalid y coordinate".to_string(),
-                            )))
-                        }
-                    };
-                    let z = match values[2].parse::<f32>() {
-                        Ok(v) => v,
-                        Err(_) => {
-                            return Some(Err(Error::InvalidData(
-                                "Invalid z coordinate".to_string(),
-                            )))
-                        }
-                    };
-
-                    self.current_index += 1;
-                    return Some(Ok(Point3f::new(x, y, z)));
-                }
-                PlyFormat::BinaryLittleEndian => {
-                    // For binary, read the chunk
-                    let bytes_per_vertex = 12; // 3 * f32
-                    let chunk_bytes = to_read * bytes_per_vertex;
-                    self.buffer.resize(chunk_bytes, 0);
-
-                    if let Err(e) = self.reader.read_exact(&mut self.buffer[..chunk_bytes]) {
-                        return Some(Err(Error::Io(e)));
-                    }
-                }
-                PlyFormat::BinaryBigEndian => {
-                    // For binary, read the chunk
-                    let bytes_per_vertex = 12; // 3 * f32
-                    let chunk_bytes = to_read * bytes_per_vertex;
-                    self.buffer.resize(chunk_bytes, 0);
-
-                    if let Err(e) = self.reader.read_exact(&mut self.buffer[..chunk_bytes]) {
-                        return Some(Err(Error::Io(e)));
-                    }
-                }
-            }
+        self.current_index += 1;
+        let point = RobustPlyReader::read_record(&mut self.reader, self.format, &self.vertex)
+            .and_then(|record| {
+                let coord = |name: &str| {
+                    record
+                        .get(name)
+                        .ok_or_else(|| Error::InvalidData(format!("Missing {name} coordinate")))?
+                        .as_f32()
+                };
+                Ok(Point3f::new(coord("x")?, coord("y")?, coord("z")?))
+            });
+        if point.is_err() {
+            self.current_index = self.vertex.count; // stop after the first error
         }
-
-        // Extract point from buffer
-        match self.format {
-            PlyFormat::Ascii => {
-                // Already handled above
-                unreachable!()
-            }
-            PlyFormat::BinaryLittleEndian => {
-                if self.buffer.len() < 12 {
-                    return Some(Err(Error::InvalidData(
-                        "Insufficient data in buffer".to_string(),
-                    )));
-                }
-
-                let x = f32::from_le_bytes([
-                    self.buffer[0],
-                    self.buffer[1],
-                    self.buffer[2],
-                    self.buffer[3],
-                ]);
-                let y = f32::from_le_bytes([
-                    self.buffer[4],
-                    self.buffer[5],
-                    self.buffer[6],
-                    self.buffer[7],
-                ]);
-                let z = f32::from_le_bytes([
-                    self.buffer[8],
-                    self.buffer[9],
-                    self.buffer[10],
-                    self.buffer[11],
-                ]);
-
-                // Remove processed data from buffer
-                self.buffer.drain(0..12);
-                self.current_index += 1;
-
-                Some(Ok(Point3f::new(x, y, z)))
-            }
-            PlyFormat::BinaryBigEndian => {
-                if self.buffer.len() < 12 {
-                    return Some(Err(Error::InvalidData(
-                        "Insufficient data in buffer".to_string(),
-                    )));
-                }
-
-                let x = f32::from_be_bytes([
-                    self.buffer[0],
-                    self.buffer[1],
-                    self.buffer[2],
-                    self.buffer[3],
-                ]);
-                let y = f32::from_be_bytes([
-                    self.buffer[4],
-                    self.buffer[5],
-                    self.buffer[6],
-                    self.buffer[7],
-                ]);
-                let z = f32::from_be_bytes([
-                    self.buffer[8],
-                    self.buffer[9],
-                    self.buffer[10],
-                    self.buffer[11],
-                ]);
-
-                // Remove processed data from buffer
-                self.buffer.drain(0..12);
-                self.current_index += 1;
-
-                Some(Ok(Point3f::new(x, y, z)))
-            }
-        }
+        Some(point)
     }
 }
 
 /// Streaming PLY reader for mesh faces
 pub struct PlyMeshStreamingReader {
     reader: BufReader<File>,
-    current_count: usize,
-    current_index: usize,
-    chunk_size: usize,
-    buffer: Vec<u8>,
     format: PlyFormat,
-    vertices: Vec<Point3f>, // We need to store vertices to convert face indices
+    face: PlyElement,
+    vertex_count: usize,
+    current_index: usize,
 }
 
 impl PlyMeshStreamingReader {
-    /// Create a new streaming PLY mesh reader
-    pub fn new<P: AsRef<Path>>(path: P, chunk_size: usize) -> Result<Self> {
-        let file = File::open(path)?;
-        let mut reader = BufReader::new(file);
-        let header = RobustPlyReader::read_header(&mut reader)?;
-
-        // Find face element
-        let face_element = header
-            .elements
-            .iter()
-            .find(|e| e.name == "face")
-            .ok_or_else(|| Error::InvalidData("No face element found in PLY file".to_string()))?;
-
-        // First, we need to read all vertices to convert face indices
-        let vertex_element = header
+    /// Create a new streaming PLY mesh reader. `_chunk_size` is kept for
+    /// compatibility; reads are already buffered.
+    pub fn new<P: AsRef<Path>>(path: P, _chunk_size: usize) -> Result<Self> {
+        let (reader, header, index) = open_at_element(path, "face")?;
+        let vertex_count = header
             .elements
             .iter()
             .find(|e| e.name == "vertex")
-            .ok_or_else(|| Error::InvalidData("No vertex element found in PLY file".to_string()))?;
-
-        let mut vertices = Vec::with_capacity(crate::capacity_hint(vertex_element.count));
-
-        // Read vertices first
-        for _ in 0..vertex_element.count {
-            let mut line = String::new();
-            reader.read_line(&mut line)?;
-            let values: Vec<&str> = line.trim().split_whitespace().collect();
-            if values.len() >= 3 {
-                let x = values[0]
-                    .parse::<f32>()
-                    .map_err(|_| Error::InvalidData("Invalid x coordinate".to_string()))?;
-                let y = values[1]
-                    .parse::<f32>()
-                    .map_err(|_| Error::InvalidData("Invalid y coordinate".to_string()))?;
-                let z = values[2]
-                    .parse::<f32>()
-                    .map_err(|_| Error::InvalidData("Invalid z coordinate".to_string()))?;
-                vertices.push(Point3f::new(x, y, z));
-            }
-        }
-
+            .ok_or_else(|| Error::InvalidData("No vertex element found in PLY file".to_string()))?
+            .count;
         Ok(Self {
             reader,
-            current_count: face_element.count,
-            current_index: 0,
-            chunk_size,
-            buffer: Vec::with_capacity(chunk_size * 16), // Estimate 16 bytes per face
             format: header.format,
-            vertices,
+            face: header.elements[index].clone(),
+            vertex_count,
+            current_index: 0,
         })
     }
 }
@@ -1867,193 +1719,102 @@ impl Iterator for PlyMeshStreamingReader {
     type Item = Result<[usize; 3]>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.current_index >= self.current_count {
+        if self.current_index >= self.face.count {
             return None;
         }
-
-        // Read a chunk if buffer is empty
-        if self.buffer.is_empty() {
-            let remaining = self.current_count - self.current_index;
-            let to_read = std::cmp::min(remaining, self.chunk_size);
-
-            match self.format {
-                PlyFormat::Ascii => {
-                    // For ASCII, we need to read line by line
-                    let mut line = String::new();
-                    if let Err(e) = self.reader.read_line(&mut line) {
-                        return Some(Err(Error::Io(e)));
-                    }
-
-                    let values: Vec<&str> = line.trim().split_whitespace().collect();
-                    if values.len() < 4 {
-                        // count + 3 indices
-                        return Some(Err(Error::InvalidData(
-                            "Not enough values in face line".to_string(),
-                        )));
-                    }
-
-                    let count = match values[0].parse::<usize>() {
-                        Ok(v) => v,
-                        Err(_) => {
-                            return Some(Err(Error::InvalidData("Invalid face count".to_string())))
-                        }
-                    };
-
-                    if count != 3 {
-                        return Some(Err(Error::InvalidData(
-                            "Only triangular faces supported".to_string(),
-                        )));
-                    }
-
-                    let i1 = match values[1].parse::<usize>() {
-                        Ok(v) => v,
-                        Err(_) => {
-                            return Some(Err(Error::InvalidData("Invalid face index".to_string())))
-                        }
-                    };
-                    let i2 = match values[2].parse::<usize>() {
-                        Ok(v) => v,
-                        Err(_) => {
-                            return Some(Err(Error::InvalidData("Invalid face index".to_string())))
-                        }
-                    };
-                    let i3 = match values[3].parse::<usize>() {
-                        Ok(v) => v,
-                        Err(_) => {
-                            return Some(Err(Error::InvalidData("Invalid face index".to_string())))
-                        }
-                    };
-
-                    // Validate indices
-                    if i1 >= self.vertices.len()
-                        || i2 >= self.vertices.len()
-                        || i3 >= self.vertices.len()
-                    {
-                        return Some(Err(Error::InvalidData(
-                            "Face index out of range".to_string(),
-                        )));
-                    }
-
-                    self.current_index += 1;
-                    return Some(Ok([i1, i2, i3]));
-                }
-                PlyFormat::BinaryLittleEndian | PlyFormat::BinaryBigEndian => {
-                    // For binary, read the chunk
-                    let bytes_per_face = 16; // 1 uchar count + 3 * u32 indices
-                    let chunk_bytes = to_read * bytes_per_face;
-                    self.buffer.resize(chunk_bytes, 0);
-
-                    if let Err(e) = self.reader.read_exact(&mut self.buffer[..chunk_bytes]) {
-                        return Some(Err(Error::Io(e)));
-                    }
-                }
-            }
-        }
-
-        // Extract face from buffer
-        match self.format {
-            PlyFormat::Ascii => {
-                // Already handled above
-                unreachable!()
-            }
-            PlyFormat::BinaryLittleEndian => {
-                if self.buffer.len() < 16 {
-                    return Some(Err(Error::InvalidData(
-                        "Insufficient data in buffer".to_string(),
-                    )));
-                }
-
-                let count = self.buffer[0] as usize;
-                if count != 3 {
-                    return Some(Err(Error::InvalidData(
+        self.current_index += 1;
+        let face = RobustPlyReader::read_record(&mut self.reader, self.format, &self.face)
+            .and_then(|record| {
+                let indices = record
+                    .get("vertex_indices")
+                    .or_else(|| record.get("vertex_index"))
+                    .ok_or_else(|| Error::InvalidData("Face has no vertex indices".to_string()))?
+                    .as_usize_list()?;
+                let [a, b, c] = indices[..] else {
+                    return Err(Error::InvalidData(
                         "Only triangular faces supported".to_string(),
-                    )));
+                    ));
+                };
+                if a.max(b).max(c) >= self.vertex_count {
+                    return Err(Error::InvalidData("Face index out of range".to_string()));
                 }
-
-                let i1 = u32::from_le_bytes([
-                    self.buffer[1],
-                    self.buffer[2],
-                    self.buffer[3],
-                    self.buffer[4],
-                ]) as usize;
-                let i2 = u32::from_le_bytes([
-                    self.buffer[5],
-                    self.buffer[6],
-                    self.buffer[7],
-                    self.buffer[8],
-                ]) as usize;
-                let i3 = u32::from_le_bytes([
-                    self.buffer[9],
-                    self.buffer[10],
-                    self.buffer[11],
-                    self.buffer[12],
-                ]) as usize;
-
-                // Validate indices
-                if i1 >= self.vertices.len()
-                    || i2 >= self.vertices.len()
-                    || i3 >= self.vertices.len()
-                {
-                    return Some(Err(Error::InvalidData(
-                        "Face index out of range".to_string(),
-                    )));
-                }
-
-                // Remove processed data from buffer
-                self.buffer.drain(0..16);
-                self.current_index += 1;
-
-                Some(Ok([i1, i2, i3]))
-            }
-            PlyFormat::BinaryBigEndian => {
-                if self.buffer.len() < 16 {
-                    return Some(Err(Error::InvalidData(
-                        "Insufficient data in buffer".to_string(),
-                    )));
-                }
-
-                let count = self.buffer[0] as usize;
-                if count != 3 {
-                    return Some(Err(Error::InvalidData(
-                        "Only triangular faces supported".to_string(),
-                    )));
-                }
-
-                let i1 = u32::from_be_bytes([
-                    self.buffer[1],
-                    self.buffer[2],
-                    self.buffer[3],
-                    self.buffer[4],
-                ]) as usize;
-                let i2 = u32::from_be_bytes([
-                    self.buffer[5],
-                    self.buffer[6],
-                    self.buffer[7],
-                    self.buffer[8],
-                ]) as usize;
-                let i3 = u32::from_be_bytes([
-                    self.buffer[9],
-                    self.buffer[10],
-                    self.buffer[11],
-                    self.buffer[12],
-                ]) as usize;
-
-                // Validate indices
-                if i1 >= self.vertices.len()
-                    || i2 >= self.vertices.len()
-                    || i3 >= self.vertices.len()
-                {
-                    return Some(Err(Error::InvalidData(
-                        "Face index out of range".to_string(),
-                    )));
-                }
-
-                // Remove processed data from buffer
-                self.buffer.drain(0..16);
-                self.current_index += 1;
-
-                Some(Ok([i1, i2, i3]))
-            }
+                Ok([a, b, c])
+            });
+        if face.is_err() {
+            self.current_index = self.face.count; // stop after the first error
         }
+        Some(face)
+    }
+}
+
+#[cfg(test)]
+mod streaming_tests {
+    use super::*;
+
+    fn write_temp(name: &str, bytes: &[u8]) -> std::path::PathBuf {
+        let path =
+            std::env::temp_dir().join(format!("threecrate_{name}_{}.ply", std::process::id()));
+        std::fs::write(&path, bytes).unwrap();
+        path
+    }
+
+    #[test]
+    fn streams_binary_ply_with_extra_properties() {
+        // Normals, colours and a double: the old reader assumed 12 bytes per vertex.
+        let mut bytes = b"ply\nformat binary_little_endian 1.0\nelement vertex 2\n\
+property double x\nproperty double y\nproperty double z\n\
+property float nx\nproperty float ny\nproperty float nz\n\
+property uchar red\nproperty uchar green\nproperty uchar blue\n\
+element face 1\nproperty list uchar int vertex_indices\nend_header\n"
+            .to_vec();
+        for (p, n) in [([1.0f64, 2.0, 3.0], 0.0f32), ([4.0, 5.0, 6.0], 1.0)] {
+            p.iter().for_each(|v| bytes.extend(v.to_le_bytes()));
+            [n, n, n].iter().for_each(|v| bytes.extend(v.to_le_bytes()));
+            bytes.extend([10u8, 20, 30]);
+        }
+        bytes.push(3);
+        [0i32, 1, 1]
+            .iter()
+            .for_each(|v| bytes.extend(v.to_le_bytes()));
+        let path = write_temp("stream_bin", &bytes);
+
+        let points: Vec<Point3f> = PlyStreamingReader::new(&path, 1)
+            .unwrap()
+            .collect::<Result<_>>()
+            .unwrap();
+        assert_eq!(
+            points,
+            vec![Point3f::new(1.0, 2.0, 3.0), Point3f::new(4.0, 5.0, 6.0)]
+        );
+
+        let faces: Vec<[usize; 3]> = PlyMeshStreamingReader::new(&path, 1)
+            .unwrap()
+            .collect::<Result<_>>()
+            .unwrap();
+        assert_eq!(faces, vec![[0, 1, 1]]);
+        std::fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn streams_ascii_with_reordered_properties_and_rejects_bad_faces() {
+        let text = "ply\nformat ascii 1.0\nelement vertex 2\nproperty float z\nproperty float x\n\
+property float y\nelement face 1\nproperty list uchar int vertex_indices\nend_header\n\
+3 1 2\n6 4 5\n3 0 1 7\n";
+        let path = write_temp("stream_ascii", text.as_bytes());
+
+        let points: Vec<Point3f> = PlyStreamingReader::new(&path, 8)
+            .unwrap()
+            .collect::<Result<_>>()
+            .unwrap();
+        assert_eq!(
+            points,
+            vec![Point3f::new(1.0, 2.0, 3.0), Point3f::new(4.0, 5.0, 6.0)]
+        );
+
+        let faces: Vec<Result<[usize; 3]>> =
+            PlyMeshStreamingReader::new(&path, 8).unwrap().collect();
+        assert_eq!(faces.len(), 1);
+        assert!(faces[0].is_err(), "index 7 is out of range");
+        std::fs::remove_file(path).ok();
     }
 }
