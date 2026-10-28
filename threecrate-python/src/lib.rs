@@ -499,10 +499,10 @@ impl PyTriangleMesh {
         self.inner.face_count()
     }
 
-    /// True when the mesh contains no vertices.
+    /// True when the mesh has no triangles (no vertices or no faces), as in Rust.
     #[getter]
     fn is_empty(&self) -> bool {
-        self.inner.vertex_count() == 0
+        self.inner.is_empty()
     }
 
     /// Return vertices as a numpy array of shape (N, 3) float32.
@@ -1409,6 +1409,102 @@ fn mesh_difference(mesh_a: &PyTriangleMesh, mesh_b: &PyTriangleMesh) -> PyResult
     tc_mesh_difference(&mesh_a.inner, &mesh_b.inner)
         .map(|m| PyTriangleMesh { inner: m })
         .map_err(to_py_err)
+}
+
+// ---------------------------------------------------------------------------
+// Preview images
+// ---------------------------------------------------------------------------
+
+/// Render point clouds and meshes to a PNG preview, drawn on the CPU.
+///
+/// Each item becomes one row and each view one column, all at the same scale,
+/// so ``render([before, after], "compare.png")`` compares two steps directly.
+/// Mesh faces seen from the front are blue-grey and faces seen from behind
+/// are orange, so holes and flipped faces stand out.
+///
+/// Args:
+///     items: A PointCloud, NormalPointCloud or TriangleMesh, or a list of them.
+///     path: Where to write the PNG. If omitted, the PNG bytes are returned.
+///     views: Any of "front", "back", "left", "right" (or "side"), "top",
+///         "bottom", "angled" (default: angled, front, right, top, bottom).
+///     size: Size of each view in pixels (default 384).
+///     up: Which axis points up in the data, "z" (default) or "y".
+///     point_size: Side of each drawn point in pixels (default 2).
+#[pyfunction]
+#[pyo3(signature = (items, path = None, views = None, size = 384, up = "z", point_size = 2))]
+fn render<'py>(
+    py: Python<'py>,
+    items: &Bound<'py, PyAny>,
+    path: Option<String>,
+    views: Option<Vec<String>>,
+    size: u32,
+    up: &str,
+    point_size: u32,
+) -> PyResult<Option<Bound<'py, pyo3::types::PyBytes>>> {
+    use threecrate_io::render::{render_grid, Drawable, RenderOptions, UpAxis, View};
+    enum Owned {
+        Points(Vec<Point3f>),
+        Mesh(TriangleMesh),
+    }
+    let to_owned = |item: &Bound<'py, PyAny>| -> PyResult<Owned> {
+        if let Ok(c) = item.extract::<PyRef<PyPointCloud>>() {
+            Ok(Owned::Points(c.inner.points.clone()))
+        } else if let Ok(c) = item.extract::<PyRef<PyNormalPointCloud>>() {
+            Ok(Owned::Points(
+                c.inner.points.iter().map(|p| p.position).collect(),
+            ))
+        } else if let Ok(m) = item.extract::<PyRef<PyTriangleMesh>>() {
+            Ok(Owned::Mesh(m.inner.clone()))
+        } else {
+            Err(PyValueError::new_err(
+                "render takes a PointCloud, NormalPointCloud or TriangleMesh, or a list of them",
+            ))
+        }
+    };
+    let owned: Vec<Owned> = if let Ok(list) = items.downcast::<pyo3::types::PyList>() {
+        list.iter().map(|i| to_owned(&i)).collect::<PyResult<_>>()?
+    } else {
+        vec![to_owned(items)?]
+    };
+    let mut options = RenderOptions {
+        tile_size: size,
+        point_size,
+        up: match up {
+            "z" | "Z" => UpAxis::Z,
+            "y" | "Y" => UpAxis::Y,
+            _ => return Err(PyValueError::new_err("up must be \"z\" or \"y\"")),
+        },
+        ..Default::default()
+    };
+    if let Some(names) = views {
+        options.views = names
+            .iter()
+            .map(|n| View::parse(n))
+            .collect::<threecrate_core::Result<_>>()
+            .map_err(to_py_err)?;
+    }
+    let image = py
+        .allow_threads(|| {
+            let drawables: Vec<Drawable> = owned
+                .iter()
+                .map(|o| match o {
+                    Owned::Points(p) => Drawable::Points(p),
+                    Owned::Mesh(m) => Drawable::Mesh(m),
+                })
+                .collect();
+            render_grid(&drawables, &options)
+        })
+        .map_err(to_py_err)?;
+    match path {
+        Some(path) => {
+            threecrate_io::render::write_png(&image, &path).map_err(to_py_err)?;
+            Ok(None)
+        }
+        None => {
+            let bytes = threecrate_io::render::png_bytes(&image).map_err(to_py_err)?;
+            Ok(Some(pyo3::types::PyBytes::new_bound(py, &bytes)))
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2669,6 +2765,7 @@ fn threecrate(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Simplification
     m.add_function(wrap_pyfunction!(analyze_mesh, m)?)?;
+    m.add_function(wrap_pyfunction!(render, m)?)?;
     m.add_function(wrap_pyfunction!(simplify_mesh, m)?)?;
 
     // Smoothing

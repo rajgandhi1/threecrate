@@ -11,12 +11,14 @@ from __future__ import annotations
 
 import argparse
 import functools
+import json
 import os
 from functools import lru_cache
 from typing import Annotated, Any, Callable, Literal, Optional, TypeVar
 
-from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver import Image, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
+from mcp_types import TextContent
 from pydantic import Field
 
 from . import ops
@@ -302,6 +304,28 @@ def smooth_mesh(
     """Smooth a noisy or bumpy mesh, for example after reconstruct. Taubin keeps
     the overall size; Laplacian smooths harder but shrinks the mesh."""
     return ops.smooth_mesh(_ws(), path, method, iterations, output, overwrite)
+
+
+@tool
+def render(
+    paths: Annotated[
+        list[str],
+        Field(min_length=1, description="Files to draw, one row each (point clouds or meshes); e.g. [before, after]"),
+    ],
+    views: Annotated[
+        Optional[list[Literal["front", "back", "left", "right", "top", "bottom", "angled"]]],
+        Field(description="Columns of the image. Default: angled, front, right, top, bottom"),
+    ] = None,
+    size: Annotated[int, Field(ge=64, le=1024, description="Pixels per view")] = 384,
+    up: Annotated[Literal["z", "y"], Field(description="Which axis points up in the data (phone scans are often y)")] = "z",
+    output: Annotated[Optional[str], Field(description="Also save the PNG here")] = None,
+    overwrite: Overwrite = False,
+) -> list[TextContent | Image]:
+    """Draw point clouds or meshes and return the picture, so you can check a
+    result yourself: holes or flipped faces show as orange, a missing base shows
+    in the bottom view. Pass two files to compare before and after."""
+    summary, png = ops.render(_ws(), paths, views, size, up, output, overwrite)
+    return [TextContent(type="text", text=json.dumps(summary)), Image(data=png, format="png")]
 
 
 def main() -> None:

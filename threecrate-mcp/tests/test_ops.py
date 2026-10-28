@@ -257,3 +257,15 @@ def test_inspect_mesh_reports_health_and_measurements(ws: Workspace):
     assert not report["printable"] and report["volume"] is None
     assert report["holes_count"] > 0 and len(report["holes"]) <= 10
     assert any("hole" in p for p in report["problems"])
+
+
+def test_render_draws_meshes_and_clouds_and_can_save(ws: Workspace):
+    ops.reconstruct(ws, "sphere.ply", method="poisson", depth=5, output="mesh.ply")
+    summary, png = ops.render(ws, ["sphere.ply", "mesh.ply"], size=96, output="compare.png")
+    assert png[1:4] == b"PNG"
+    assert [row["kind"] for row in summary["rows"]] == ["point_cloud", "mesh"]
+    assert (ws.root / "compare.png").read_bytes() == png
+    with pytest.raises(WorkspaceError, match="already exists"):
+        ops.render(ws, ["mesh.ply"], output="compare.png")
+    with pytest.raises(Exception, match="unknown view"):
+        ops.render(ws, ["mesh.ply"], views=["sideways"])

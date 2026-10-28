@@ -580,3 +580,47 @@ def smooth_mesh(
         raise WorkspaceError(f"unknown method {method!r}")
     tc.write_mesh(result, str(out))
     return {"output": ws.relative(out), "method": method, "iterations": iterations, **_mesh_summary(result)}
+
+
+def _read_any(ws: Workspace, path: str) -> tuple[Path, object, str]:
+    """A file as a mesh when it has faces, otherwise as a point cloud."""
+    resolved = ws.input_path(path)
+    if resolved.suffix.lower() not in {".xyz", ".csv", ".pcd", ".las", ".laz"}:
+        try:
+            mesh = tc.read_mesh(str(resolved))
+            if not mesh.is_empty:
+                return resolved, mesh, "mesh"
+        except Exception:  # noqa: BLE001 - not a mesh; try it as a point cloud
+            pass
+    resolved, cloud = _read_cloud(ws, path)
+    return resolved, cloud, "point_cloud"
+
+
+def render(
+    ws: Workspace,
+    paths: Sequence[str],
+    views: Optional[Sequence[str]] = None,
+    size: int = 384,
+    up: Literal["z", "y"] = "z",
+    output: Optional[str] = None,
+    overwrite: bool = False,
+) -> tuple[dict, bytes]:
+    """Render one or more files (one row each) to a PNG; returns a summary and the PNG bytes."""
+    if not paths:
+        raise WorkspaceError("give at least one file to render")
+    if not 64 <= size <= 1024:
+        raise WorkspaceError("size must be between 64 and 1024 pixels per view")
+    loaded = [_read_any(ws, p) for p in paths]
+    png = tc.render([item for _, item, _ in loaded], views=list(views) if views else None, size=size, up=up)
+    summary = {
+        "rows": [{"path": ws.relative(r), "kind": kind} for r, _, kind in loaded],
+        "views": list(views) if views else ["angled", "front", "right", "top", "bottom"],
+        "legend": "mesh faces seen from the front are blue-grey; orange means you see the "
+                  "inside (a hole or flipped faces); points are shaded darker when closer",
+    }
+    if output is not None:
+        out = ws.output_path(output, inputs=[r for r, _, _ in loaded], default_suffix="render",
+                             allowed={".png"}, default_extension=".png", overwrite=overwrite)
+        out.write_bytes(png)
+        summary["output"] = ws.relative(out)
+    return summary, png

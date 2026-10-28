@@ -82,6 +82,7 @@ as the command.
 | `reconstruct` | Point cloud to mesh: auto, Poisson, ball pivoting, alpha shape, Delaunay |
 | `simplify_mesh` | Reduce triangle count |
 | `smooth_mesh` | Taubin, Laplacian or HC smoothing |
+| `render` | Picture of one or more files (before and after) from several angles, returned to the agent; holes show in orange |
 
 Readable point cloud formats: PLY, PCD, XYZ, CSV (and others threecrate
 supports). Writable: PLY, PCD, XYZ, CSV.
