@@ -1411,6 +1411,75 @@ fn mesh_difference(mesh_a: &PyTriangleMesh, mesh_b: &PyTriangleMesh) -> PyResult
         .map_err(to_py_err)
 }
 
+/// Make a scan printable: watertight, manifold, facing outward, without loose
+/// junk, and at a manageable size.
+///
+/// Takes a point cloud or a mesh. Meshes get local fixes first (merge
+/// duplicate vertices, drop loose pieces, fix face direction, close holes);
+/// point clouds, and meshes the local fixes cannot close, are rebuilt with
+/// Poisson, which always closes the surface (including a missing base).
+///
+/// Args:
+///     item: A PointCloud, NormalPointCloud or TriangleMesh.
+///     remove_floor: Remove the largest flat plane (floor or turntable) from a
+///         point cloud first (default False). Ignored for meshes.
+///     min_piece_fraction: Drop loose pieces smaller than this share of the
+///         largest piece (default 0.05).
+///     max_hole_edges: Close holes up to this many edges in place; larger
+///         openings trigger a rebuild (default 200).
+///     depth: Poisson detail when rebuilding, 3 to 8 (default 7).
+///     target_faces: Reduce to about this many triangles (default: keep up to
+///         250,000).
+///
+/// Returns:
+///     (mesh, report): report has "steps" (what was done, in plain words),
+///     "before" (health of the input mesh, or None for a point cloud) and
+///     "after" (health of the result); see `analyze_mesh`.
+#[pyfunction]
+#[pyo3(signature = (item, remove_floor = false, min_piece_fraction = 0.05, max_hole_edges = 200, depth = 7, target_faces = None))]
+fn repair_for_print<'py>(
+    py: Python<'py>,
+    item: &Bound<'py, PyAny>,
+    remove_floor: bool,
+    min_piece_fraction: f32,
+    max_hole_edges: usize,
+    depth: u32,
+    target_faces: Option<usize>,
+) -> PyResult<(PyTriangleMesh, Bound<'py, PyDict>)> {
+    use threecrate_reconstruction::{repair_for_print as repair, RepairInput, RepairOptions};
+    let options = RepairOptions {
+        remove_floor,
+        min_piece_fraction,
+        max_hole_edges,
+        depth,
+        target_faces,
+    };
+    let (mesh, report) = if let Ok(m) = item.extract::<PyRef<PyTriangleMesh>>() {
+        let mesh = m.inner.clone();
+        py.allow_threads(|| repair(RepairInput::Mesh(&mesh), &options))
+    } else {
+        let cloud = if let Ok(c) = item.extract::<PyRef<PyPointCloud>>() {
+            c.inner.clone()
+        } else if let Ok(c) = item.extract::<PyRef<PyNormalPointCloud>>() {
+            PointCloud::from_points(c.inner.points.iter().map(|p| p.position).collect())
+        } else {
+            return Err(PyValueError::new_err(
+                "repair_for_print takes a PointCloud, NormalPointCloud or TriangleMesh",
+            ));
+        };
+        py.allow_threads(|| repair(RepairInput::Points(&cloud), &options))
+    }
+    .map_err(to_py_err)?;
+    let d = PyDict::new_bound(py);
+    d.set_item("steps", report.steps)?;
+    match &report.before {
+        Some(before) => d.set_item("before", report_dict(py, before)?)?,
+        None => d.set_item("before", py.None())?,
+    }
+    d.set_item("after", report_dict(py, &report.after)?)?;
+    Ok((PyTriangleMesh { inner: mesh }, d))
+}
+
 // ---------------------------------------------------------------------------
 // Preview images
 // ---------------------------------------------------------------------------
@@ -1523,7 +1592,15 @@ fn render<'py>(
 /// printable).
 #[pyfunction]
 fn analyze_mesh<'py>(py: Python<'py>, mesh: &PyTriangleMesh) -> PyResult<Bound<'py, PyDict>> {
-    let r = threecrate_core::analyze_mesh(&mesh.inner);
+    report_dict(py, &threecrate_core::analyze_mesh(&mesh.inner))
+}
+
+/// A mesh health report as a Python dict (see `analyze_mesh`).
+fn report_dict<'py>(
+    py: Python<'py>,
+    r: &threecrate_core::MeshReport,
+) -> PyResult<Bound<'py, PyDict>> {
+    let r = r.clone();
     let d = PyDict::new_bound(py);
     d.set_item("vertices", r.vertices)?;
     d.set_item("faces", r.faces)?;
@@ -2766,6 +2843,7 @@ fn threecrate(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Simplification
     m.add_function(wrap_pyfunction!(analyze_mesh, m)?)?;
     m.add_function(wrap_pyfunction!(render, m)?)?;
+    m.add_function(wrap_pyfunction!(repair_for_print, m)?)?;
     m.add_function(wrap_pyfunction!(simplify_mesh, m)?)?;
 
     // Smoothing

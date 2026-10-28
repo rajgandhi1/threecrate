@@ -83,6 +83,7 @@ as the command.
 | `simplify_mesh` | Reduce triangle count |
 | `smooth_mesh` | Taubin, Laplacian or HC smoothing |
 | `render` | Picture of one or more files (before and after) from several angles, returned to the agent; holes show in orange |
+| `repair_for_print` | Make a scan or mesh printable (junk, floor, holes, missing base, face direction, size); writes STL and returns a before/after picture |
 
 Readable point cloud formats: PLY, PCD, XYZ, CSV (and others threecrate
 supports). Writable: PLY, PCD, XYZ, CSV.

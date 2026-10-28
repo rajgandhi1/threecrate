@@ -624,3 +624,53 @@ def render(
         out.write_bytes(png)
         summary["output"] = ws.relative(out)
     return summary, png
+
+
+def _health_brief(report: Optional[dict]) -> Optional[dict]:
+    """The parts of a health report an agent needs to judge a repair."""
+    if report is None:
+        return None
+    volume = report["volume"]
+    return {
+        "printable": report["printable"],
+        "problems": report["problems"],
+        "faces": report["faces"],
+        "holes": len(report["holes"]),
+        "pieces": len(report["components"]),
+        "size": [round(float(v), 6) for v in report["size"]],
+        "volume": None if volume is None else round(volume, 6),
+    }
+
+
+def repair_for_print(
+    ws: Workspace,
+    path: str,
+    remove_floor: bool = False,
+    target_faces: Optional[int] = None,
+    depth: int = 7,
+    up: Literal["z", "y"] = "z",
+    output: Optional[str] = None,
+    overwrite: bool = False,
+) -> tuple[dict, bytes]:
+    """Repair a scan for printing; returns a summary and a before/after PNG."""
+    if not 3 <= depth <= 8:
+        raise WorkspaceError("depth must be between 3 and 8 (7 takes about a second)")
+    if target_faces is not None and target_faces < 4:
+        raise WorkspaceError("target_faces must be at least 4")
+    resolved, item, kind = _read_any(ws, path)
+    out = ws.output_path(output, inputs=[resolved], default_suffix="printable",
+                         allowed=MESH_FORMATS, default_extension=".stl", overwrite=overwrite)
+    mesh, report = tc.repair_for_print(item, remove_floor=remove_floor, depth=depth,
+                                       target_faces=target_faces)
+    tc.write_mesh(mesh, str(out))
+    picture = tc.render([item, mesh], size=256, up=up)
+    summary = {
+        "output": ws.relative(out),
+        "input_kind": kind,
+        "steps": report["steps"],
+        "before": _health_brief(report["before"]),
+        "after": _health_brief(report["after"]),
+        "picture": "top row is the input, bottom row the result; orange means a hole "
+                   "or flipped faces (the bottom view shows a missing base)",
+    }
+    return summary, picture

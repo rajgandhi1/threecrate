@@ -13,6 +13,7 @@ pub mod moving_least_squares;
 pub mod parallel;
 pub mod pipeline;
 pub mod poisson;
+pub mod repair;
 
 // Re-export commonly used items
 pub use alpha_shape::*;
@@ -23,3 +24,4 @@ pub use moving_least_squares::*;
 pub use parallel::*;
 pub use pipeline::*;
 pub use poisson::*;
+pub use repair::*;
