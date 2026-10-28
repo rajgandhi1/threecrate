@@ -95,7 +95,9 @@ def inspect_point_cloud(path: Path_) -> dict:
 
 @tool
 def inspect_mesh(path: Path_) -> dict:
-    """Summarize a mesh file: vertex and face counts, bounds and centroid."""
+    """Check a mesh's health and measure it: holes, separate pieces,
+    non-manifold or flipped faces, watertight, size, surface area, volume, and
+    whether it can be 3D printed as is (with the reasons if not)."""
     return ops.inspect_mesh(_ws(), path)
 
 

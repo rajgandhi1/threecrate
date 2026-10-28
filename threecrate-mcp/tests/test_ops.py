@@ -241,3 +241,19 @@ def test_estimate_normals_orientation(ws: Workspace):
 def test_transform_rejects_non_rigid_or_non_finite(ws: Workspace, bad):
     with pytest.raises(ValueError, match="NaN or infinite|must be rigid"):
         ops.transform(ws, "sphere.ply", bad)
+
+
+def test_inspect_mesh_reports_health_and_measurements(ws: Workspace):
+    closed = ops.reconstruct(ws, "sphere.ply", method="poisson", depth=6, output="closed.ply")
+    assert closed["watertight"] and closed["printable"] and closed["holes"] == 0
+    report = ops.inspect_mesh(ws, "closed.ply")
+    assert report["printable"] and report["problems"] == []
+    assert report["volume"] == pytest.approx(4 / 3 * np.pi, rel=0.02)  # unit sphere
+    assert report["surface_area"] == pytest.approx(4 * np.pi, rel=0.02)
+    assert report["size"] == pytest.approx([2, 2, 2], rel=0.02)
+
+    ops.reconstruct(ws, "sphere.ply", method="ball_pivoting", output="open.ply")
+    report = ops.inspect_mesh(ws, "open.ply")
+    assert not report["printable"] and report["volume"] is None
+    assert report["holes_count"] > 0 and len(report["holes"]) <= 10
+    assert any("hole" in p for p in report["problems"])

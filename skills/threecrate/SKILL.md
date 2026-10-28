@@ -20,7 +20,7 @@ python -m venv .venv
 
 Then run scripts with `.venv/bin/python`. On Windows the folder is `Scripts`, not `bin`: use `.venv/Scripts/pip` and `.venv/Scripts/python` in Git Bash or PowerShell, or `.venv\Scripts\python` in cmd.
 
-`orient_normals` and the `poisson_reconstruct` options below need threecrate 0.10.0 or newer. Check with `pip show threecrate`.
+`orient_normals` and the `poisson_reconstruct` options below need threecrate 0.10.0 or newer, and `analyze_mesh` needs 0.12.0 or newer. Check with `pip show threecrate`.
 
 ## Workflow
 
@@ -100,6 +100,10 @@ mesh = tc.poisson_reconstruct(normals, depth=7)               # smooth, watertig
 mesh = tc.simplify_mesh(mesh, reduction_ratio=0.5)            # fails on meshes full of holes
 mesh = tc.smooth_mesh_taubin(mesh, iterations=10)
 print(mesh.vertex_count, mesh.face_count)
+
+# Health and measuring: holes, pieces, watertight, size, area, volume, printable
+report = tc.analyze_mesh(mesh)
+print(report["printable"], report["problems"], report["volume"], report["size"])
 
 tc.write_point_cloud(cloud, "scan.clean.ply")
 tc.write_mesh(mesh, "scan.mesh.ply")                 # PLY or OBJ

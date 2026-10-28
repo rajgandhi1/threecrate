@@ -70,7 +70,7 @@ as the command.
 | Tool | What it does |
 | --- | --- |
 | `inspect_point_cloud` | Point count, bounds, spacing, and suggested voxel sizes and radii |
-| `inspect_mesh` | Vertex and face counts, bounds |
+| `inspect_mesh` | Mesh health and size: holes, pieces, watertight, area, volume, printable or not (and why) |
 | `convert` | Change format (PLY, PCD, XYZ, CSV; meshes PLY, OBJ) |
 | `downsample` | Voxel grid downsampling |
 | `remove_outliers` | Statistical or radius outlier removal |

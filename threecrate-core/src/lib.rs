@@ -5,6 +5,7 @@
 
 pub mod error;
 pub mod mesh;
+pub mod mesh_analysis;
 pub mod organized_point_cloud;
 pub mod point;
 pub mod point_cloud;
@@ -16,6 +17,7 @@ pub mod bevy_interop;
 
 pub use error::*;
 pub use mesh::*;
+pub use mesh_analysis::{analyze_mesh, MeshReport};
 pub use organized_point_cloud::*;
 pub use point::*;
 pub use point_cloud::*;
