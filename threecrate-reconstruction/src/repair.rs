@@ -8,7 +8,9 @@
 
 use crate::poisson::{poisson_reconstruction_with_normals, PoissonConfig};
 use std::collections::{HashMap, HashSet, VecDeque};
-use threecrate_core::{analyze_mesh, Error, MeshReport, Point3f, PointCloud, Result, TriangleMesh};
+use threecrate_core::{
+    analyze_mesh, mesh_pieces, Error, MeshReport, Point3f, PointCloud, Result, TriangleMesh,
+};
 use threecrate_simplification::{MeshSimplifier, QuadricErrorSimplifier};
 
 /// What to repair.
@@ -187,44 +189,9 @@ fn compact(vertices: Vec<Point3f>, faces: Vec<[usize; 3]>) -> TriangleMesh {
     TriangleMesh::from_vertices_and_faces(kept, faces)
 }
 
-/// Faces grouped into pieces connected through shared edges.
-fn pieces(faces: &[[usize; 3]]) -> Vec<Vec<usize>> {
-    let mut by_edge: HashMap<(usize, usize), Vec<usize>> = HashMap::new();
-    for (i, f) in faces.iter().enumerate() {
-        for (a, b) in [(f[0], f[1]), (f[1], f[2]), (f[2], f[0])] {
-            by_edge.entry((a.min(b), a.max(b))).or_default().push(i);
-        }
-    }
-    let mut piece_of = vec![usize::MAX; faces.len()];
-    let mut out: Vec<Vec<usize>> = Vec::new();
-    for start in 0..faces.len() {
-        if piece_of[start] != usize::MAX {
-            continue;
-        }
-        let id = out.len();
-        let mut members = vec![start];
-        piece_of[start] = id;
-        let mut queue = VecDeque::from([start]);
-        while let Some(f) = queue.pop_front() {
-            let face = faces[f];
-            for (a, b) in [(face[0], face[1]), (face[1], face[2]), (face[2], face[0])] {
-                for &g in &by_edge[&(a.min(b), a.max(b))] {
-                    if piece_of[g] == usize::MAX {
-                        piece_of[g] = id;
-                        members.push(g);
-                        queue.push_back(g);
-                    }
-                }
-            }
-        }
-        out.push(members);
-    }
-    out
-}
-
 /// Drop pieces smaller than `fraction` of the largest one (floating junk).
 fn keep_large_pieces(mesh: TriangleMesh, fraction: f32, steps: &mut Vec<String>) -> TriangleMesh {
-    let groups = pieces(&mesh.faces);
+    let groups = mesh_pieces(&mesh.faces);
     let largest = groups.iter().map(Vec::len).max().unwrap_or(0);
     let min = ((largest as f32 * fraction).ceil() as usize).max(1);
     let keep: Vec<&Vec<usize>> = groups.iter().filter(|g| g.len() >= min).collect();
@@ -252,7 +219,7 @@ fn orient(mesh: &mut TriangleMesh, steps: &mut Vec<String>) {
         |f: &[usize; 3], a: usize, b: usize| (0..3).any(|k| f[k] == a && f[(k + 1) % 3] == b);
     let mut flipped = 0;
     let mut done = vec![false; mesh.faces.len()];
-    for group in pieces(&mesh.faces) {
+    for group in mesh_pieces(&mesh.faces) {
         let start = group[0];
         done[start] = true;
         let mut queue = VecDeque::from([start]);
