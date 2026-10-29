@@ -79,7 +79,7 @@ Try it on the scans in [samples/](samples/README.md).
 
 ## Use with AI agents
 
-Let Claude Code, Codex, Gemini CLI, OpenCode, Cursor and other agents inspect, clean, align and mesh your scans, or just ask "make my scan printable". The [threecrate skill](skills/threecrate/SKILL.md) teaches the agent to use the Python library. See [the demo](samples/DEMO.md) for what a run looks like.
+Let Claude Code, Codex, Gemini CLI, OpenCode, Cursor and other agents work on your scans in plain words: "make my scan printable", "clean up this scan", "align these two scans", "how tall is the pole?". The [threecrate skill](skills/threecrate/SKILL.md) teaches the agent the Python library, with a guide for each task: [clean](skills/threecrate/guides/clean-scan.md), [align](skills/threecrate/guides/align-scans.md), [make printable](skills/threecrate/guides/make-printable.md) and [measure](skills/threecrate/guides/measure.md). The agent checks its own work by rendering a before and after picture. See [the demo](samples/DEMO.md) for what a run looks like.
 
 **Claude Code**
 
@@ -99,7 +99,7 @@ codex plugin add threecrate@threecrate
 
 **Gemini CLI, OpenCode, Cursor and others:** see [INSTALL.md](INSTALL.md).
 
-Prefer MCP tools? [threecrate-mcp](threecrate-mcp/README.md) works in any MCP client: `claude mcp add threecrate -- uvx threecrate-mcp`.
+Prefer MCP tools? [threecrate-mcp](threecrate-mcp/README.md) works in any MCP client, with tools such as `inspect_mesh`, `repair_for_print` and `render` that hand the agent a picture: `claude mcp add threecrate -- uvx threecrate-mcp`.
 
 ## Comparison
 

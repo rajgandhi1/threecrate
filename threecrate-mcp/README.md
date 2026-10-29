@@ -71,7 +71,7 @@ as the command.
 | --- | --- |
 | `inspect_point_cloud` | Point count, bounds, spacing, and suggested voxel sizes and radii |
 | `inspect_mesh` | Mesh health and size: holes, pieces, watertight, area, volume, printable or not (and why) |
-| `convert` | Change format (PLY, PCD, XYZ, CSV; meshes PLY, OBJ) |
+| `convert` | Change format (PLY, PCD, XYZ, CSV; meshes PLY, OBJ, STL) |
 | `downsample` | Voxel grid downsampling |
 | `remove_outliers` | Statistical or radius outlier removal |
 | `estimate_normals` | Save per-point normals to a PLY |
