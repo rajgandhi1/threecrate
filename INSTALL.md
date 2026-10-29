@@ -72,7 +72,7 @@ Type `/` in Agent chat and search for `threecrate` to check it loaded.
 
 ## Any other agent
 
-Most agents that support skills read the shared `~/.agents/skills/` folder. Copy the whole `skills/threecrate` folder there (not just `SKILL.md`; it includes a helper script):
+Most agents that support skills read the shared `~/.agents/skills/` folder. Copy the whole `skills/threecrate` folder there (not just `SKILL.md`; it includes task guides and a helper script):
 
 ```bash
 git clone --depth 1 https://github.com/rajgandhi1/threecrate.git
