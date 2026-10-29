@@ -6,6 +6,7 @@
 
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::Arc;
 use threecrate_core::{Point3f, PointCloud, Result, TriangleMesh};
 
 /// Trait for reading point clouds from files
@@ -67,8 +68,6 @@ pub struct IoRegistry {
     point_cloud_writers: HashMap<String, Box<dyn PointCloudWriter>>,
     mesh_readers: HashMap<String, Box<dyn MeshReader>>,
     mesh_writers: HashMap<String, Box<dyn MeshWriter>>,
-    #[allow(dead_code)] // Reserved for future use
-    format_handlers: HashMap<String, Box<dyn FormatHandler>>,
 }
 
 impl IoRegistry {
@@ -79,7 +78,6 @@ impl IoRegistry {
             point_cloud_writers: HashMap::new(),
             mesh_readers: HashMap::new(),
             mesh_writers: HashMap::new(),
-            format_handlers: HashMap::new(),
         }
     }
 
@@ -113,12 +111,16 @@ impl IoRegistry {
         self.mesh_writers.insert(format.to_lowercase(), handler);
     }
 
-    /// Register a complete format handler
+    /// Register a handler as the reader and writer of points and meshes for
+    /// each of its `supported_extensions`.
     pub fn register_format_handler(&mut self, handler: Box<dyn FormatHandler>) {
-        // For now, we'll skip the automatic registration of format handlers
-        // since cloning trait objects is complex. Users can register each
-        // capability separately using the specific register_* methods.
-        let _handler = handler; // Suppress unused variable warning
+        let shared: Arc<dyn FormatHandler> = Arc::from(handler);
+        for ext in shared.supported_extensions() {
+            self.register_point_cloud_handler(ext, Box::new(Shared(shared.clone())));
+            self.register_point_cloud_writer(ext, Box::new(Shared(shared.clone())));
+            self.register_mesh_handler(ext, Box::new(Shared(shared.clone())));
+            self.register_mesh_writer(ext, Box::new(Shared(shared.clone())));
+        }
     }
 
     /// Read a point cloud, auto-detecting the format
@@ -148,8 +150,15 @@ impl IoRegistry {
         )))
     }
 
-    /// Read a mesh, auto-detecting the format
+    /// Read a mesh, auto-detecting the format. Faces that point at missing
+    /// vertices are an error, whichever reader ran.
     pub fn read_mesh(&self, path: &Path, format_hint: &str) -> Result<TriangleMesh> {
+        let mesh = self.read_mesh_unchecked(path, format_hint)?;
+        mesh.validate_faces()?;
+        Ok(mesh)
+    }
+
+    fn read_mesh_unchecked(&self, path: &Path, format_hint: &str) -> Result<TriangleMesh> {
         // First try the format hint
         if let Some(reader) = self.mesh_readers.get(&format_hint.to_lowercase()) {
             if reader.can_read(path) {
@@ -283,8 +292,50 @@ impl Default for IoRegistry {
     }
 }
 
-// Note: FormatHandler cloning has been removed for simplicity.
-// Users should register format handlers using the specific register_* methods.
+/// One registered `FormatHandler` shared by its four capability slots.
+struct Shared(Arc<dyn FormatHandler>);
+
+impl PointCloudReader for Shared {
+    fn read_point_cloud(&self, path: &Path) -> Result<PointCloud<Point3f>> {
+        self.0.read_point_cloud(path)
+    }
+    fn can_read(&self, path: &Path) -> bool {
+        PointCloudReader::can_read(&*self.0, path)
+    }
+    fn format_name(&self) -> &'static str {
+        PointCloudReader::format_name(&*self.0)
+    }
+}
+
+impl PointCloudWriter for Shared {
+    fn write_point_cloud(&self, cloud: &PointCloud<Point3f>, path: &Path) -> Result<()> {
+        self.0.write_point_cloud(cloud, path)
+    }
+    fn format_name(&self) -> &'static str {
+        PointCloudWriter::format_name(&*self.0)
+    }
+}
+
+impl MeshReader for Shared {
+    fn read_mesh(&self, path: &Path) -> Result<TriangleMesh> {
+        self.0.read_mesh(path)
+    }
+    fn can_read(&self, path: &Path) -> bool {
+        MeshReader::can_read(&*self.0, path)
+    }
+    fn format_name(&self) -> &'static str {
+        MeshReader::format_name(&*self.0)
+    }
+}
+
+impl MeshWriter for Shared {
+    fn write_mesh(&self, mesh: &TriangleMesh, path: &Path) -> Result<()> {
+        self.0.write_mesh(mesh, path)
+    }
+    fn format_name(&self) -> &'static str {
+        MeshWriter::format_name(&*self.0)
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -405,6 +456,40 @@ mod tests {
         assert_eq!(mesh.vertex_count(), 1);
 
         // Cleanup
+        let _ = fs::remove_file(temp_file);
+    }
+
+    #[test]
+    fn format_handler_registers_every_capability() {
+        let mut registry = IoRegistry::new();
+        registry.register_format_handler(Box::new(MockPlyHandler));
+        assert!(registry.supports_point_cloud_reading("PLY"));
+        assert!(registry.supports_point_cloud_writing("ply"));
+        assert!(registry.supports_mesh_reading("ply"));
+        assert!(registry.supports_mesh_writing("ply"));
+    }
+
+    #[test]
+    fn read_mesh_rejects_faces_past_the_vertices() {
+        let temp_file = std::env::temp_dir().join("threecrate_registry_bad_face.ply");
+        let ply = "ply
+format ascii 1.0
+element vertex 3
+property float x
+property float y
+property float z
+element face 1
+property list uchar int vertex_indices
+end_header
+0 0 0
+1 0 0
+0 1 0
+3 0 1 9
+";
+        fs::write(&temp_file, ply).unwrap();
+        let mut registry = IoRegistry::new();
+        registry.register_mesh_handler("ply", Box::new(crate::ply::PlyReader));
+        assert!(registry.read_mesh(&temp_file, "ply").is_err());
         let _ = fs::remove_file(temp_file);
     }
 
