@@ -145,6 +145,23 @@ verts = mesh.vertices()  # (N, 3) float32
 faces = mesh.faces()     # (M, 3) uint32
 ```
 
+### Mesh Health, Previews and 3D Printing
+
+```python
+# Holes, pieces, flipped faces, watertight, size, area, volume, printable
+report = tc.analyze_mesh(mesh)
+print(report["printable"], report["problems"], report["size"], report["volume"])
+
+# PNG from five views, no GPU needed. Orange = holes or inside-out faces.
+tc.render([cloud, mesh], "check.png")
+png = tc.render([mesh])                  # no path: returns the PNG bytes
+
+# Point cloud or mesh in, watertight mesh out
+printable, report = tc.repair_for_print(cloud, remove_floor=True, target_faces=200_000)
+print(report["steps"], report["after"]["printable"])
+tc.write_mesh(printable, "scan.printable.stl")
+```
+
 ### I/O
 
 ```python
@@ -152,7 +169,7 @@ faces = mesh.faces()     # (M, 3) uint32
 cloud = tc.read_point_cloud("scan.ply")
 tc.write_point_cloud(cloud, "output.pcd")
 
-# Meshes — PLY, OBJ
+# Meshes — PLY, OBJ, STL
 mesh = tc.read_mesh("model.obj")
 tc.write_mesh(mesh, "output.ply")
 ```

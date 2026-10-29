@@ -20,7 +20,7 @@ compression = ["dep:spatial_codec_draco"]
 
 [dependencies]
 png = "0.17"
-threecrate-core = { path = "../threecrate-core", version = "0.11.0" }
+threecrate-core = { path = "../threecrate-core", version = "0.12.0" }
 ply-rs = { workspace = true }
 obj = { workspace = true }
 pasture-core = { workspace = true, optional = true }
