@@ -5,7 +5,7 @@ and check the result against its known answers. One checks the skill stays out o
 unrelated requests.
 
 Run from `skills/` on Linux or WSL2 (Bash runs in a sandbox that native Windows lacks),
-with `threecrate` 0.12.0 or newer installed:
+with `threecrate` 0.12.1 or newer installed:
 
 ```bash
 claude plugin eval . --scaffold --allow-tools Bash Write

@@ -20,7 +20,7 @@ python -m venv .venv
 
 Then run scripts with `.venv/bin/python`. On Windows the folder is `Scripts`, not `bin`: use `.venv/Scripts/pip` and `.venv/Scripts/python` in Git Bash or PowerShell, or `.venv\Scripts\python` in cmd.
 
-`analyze_mesh`, `render` and `repair_for_print` need threecrate 0.12.0 or newer. Check with `pip show threecrate`.
+`analyze_mesh`, `render` and `repair_for_print` need threecrate 0.12.1 or newer (0.12.1 writes printable meshes in millimetres). Check with `pip show threecrate`.
 
 ## Workflow
 
