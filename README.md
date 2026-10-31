@@ -133,7 +133,7 @@ All functions: [Python API reference](threecrate-python/README.md).
 
 ```toml
 [dependencies]
-threecrate = "0.12.0"
+threecrate = "0.12.1"
 ```
 
 ```rust
