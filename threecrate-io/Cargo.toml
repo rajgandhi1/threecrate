@@ -19,7 +19,7 @@ rosbag = ["ros2", "dep:mcap", "dep:rusqlite", "dep:memchr"]
 compression = ["dep:spatial_codec_draco"]
 
 [dependencies]
-png = "0.17"
+png = "0.18"
 threecrate-core = { path = "../threecrate-core", version = "0.12.1" }
 ply-rs = { workspace = true }
 obj = { workspace = true }
