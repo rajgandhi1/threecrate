@@ -1430,13 +1430,17 @@ fn mesh_difference(mesh_a: &PyTriangleMesh, mesh_b: &PyTriangleMesh) -> PyResult
 ///     depth: Poisson detail when rebuilding, 3 to 8 (default 7).
 ///     target_faces: Reduce to about this many triangles (default: keep up to
 ///         250,000).
+///     units: Units of the input: "auto" (default), "mm", "cm", "m" or "in".
+///         The result is always in millimetres, as slicers expect. "auto"
+///         reads a result under 2 units long as metres.
 ///
 /// Returns:
 ///     (mesh, report): report has "steps" (what was done, in plain words),
-///     "before" (health of the input mesh, or None for a point cloud) and
-///     "after" (health of the result); see `analyze_mesh`.
+///     "before" (health of the input, in its own units, or None for a point
+///     cloud), "after" (health of the result, in mm; see `analyze_mesh`) and
+///     "scale" (what the input was multiplied by to reach mm).
 #[pyfunction]
-#[pyo3(signature = (item, remove_floor = false, min_piece_fraction = 0.05, max_hole_edges = 200, depth = 7, target_faces = None))]
+#[pyo3(signature = (item, remove_floor = false, min_piece_fraction = 0.05, max_hole_edges = 200, depth = 7, target_faces = None, units = "auto"))]
 fn repair_for_print<'py>(
     py: Python<'py>,
     item: &Bound<'py, PyAny>,
@@ -1445,14 +1449,23 @@ fn repair_for_print<'py>(
     max_hole_edges: usize,
     depth: u32,
     target_faces: Option<usize>,
+    units: &str,
 ) -> PyResult<(PyTriangleMesh, Bound<'py, PyDict>)> {
-    use threecrate_reconstruction::{repair_for_print as repair, RepairInput, RepairOptions};
+    use threecrate_reconstruction::{
+        repair_for_print as repair, RepairInput, RepairOptions, Units,
+    };
+    let units = Units::parse(units).ok_or_else(|| {
+        PyValueError::new_err(format!(
+            "units must be \"auto\", \"mm\", \"cm\", \"m\" or \"in\", got {units:?}"
+        ))
+    })?;
     let options = RepairOptions {
         remove_floor,
         min_piece_fraction,
         max_hole_edges,
         depth,
         target_faces,
+        units,
     };
     let (mesh, report) = if let Ok(m) = item.extract::<PyRef<PyTriangleMesh>>() {
         let mesh = m.inner.clone();
@@ -1477,6 +1490,7 @@ fn repair_for_print<'py>(
         None => d.set_item("before", py.None())?,
     }
     d.set_item("after", report_dict(py, &report.after)?)?;
+    d.set_item("scale", report.scale)?;
     Ok((PyTriangleMesh { inner: mesh }, d))
 }
 

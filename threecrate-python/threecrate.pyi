@@ -6,7 +6,7 @@ These stubs enable IDE autocompletion and static type checking with mypy / pyrig
 
 from __future__ import annotations
 
-from typing import Optional, Sequence
+from typing import Literal, Optional, Sequence
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
@@ -471,10 +471,12 @@ def repair_for_print(
     max_hole_edges: int = 200,
     depth: int = 7,
     target_faces: Optional[int] = None,
+    units: Literal["auto", "mm", "cm", "m", "in"] = "auto",
 ) -> tuple[TriangleMesh, dict]:
     """Make a scan printable (watertight, manifold, facing outward, no loose
-    junk, manageable size). Returns (mesh, report) where report has "steps",
-    "before" (None for a point cloud) and "after" health reports."""
+    junk, manageable size), in millimetres. Returns (mesh, report) where report
+    has "steps", "before" (None for a point cloud), "after" and "scale" (what
+    the input was multiplied by to reach mm; "auto" reads under 2 units as m)."""
     ...
 
 def render(

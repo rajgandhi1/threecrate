@@ -295,3 +295,16 @@ def test_repair_for_print_fixes_a_mesh_full_of_holes(ws: Workspace):
     summary, _ = ops.repair_for_print(ws, "holey.ply", depth=6, output="fixed.ply")
     assert summary["before"]["holes"] > 0
     assert summary["after"]["printable"], summary
+
+
+def test_repair_for_print_writes_millimetres(ws: Workspace):
+    # A 12 cm dome in metres, as phone scan apps export it.
+    dome = sphere_points()
+    dome = dome[dome[:, 2] > -0.4] * 0.06
+    tc.write_point_cloud(tc.PointCloud(dome.astype(np.float32)), str(ws.root / "vase.xyz"))
+    summary, png = ops.repair_for_print(ws, "vase.xyz", depth=6)
+    assert 100 < max(summary["after"]["size"]) < 130, summary
+    assert "x1000" in summary["units"]
+    assert png[1:4] == b"PNG"
+    summary, _ = ops.repair_for_print(ws, "vase.xyz", depth=6, units="mm", output="tiny.stl")
+    assert max(summary["after"]["size"]) < 1

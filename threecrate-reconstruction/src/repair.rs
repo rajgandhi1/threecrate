@@ -37,6 +37,36 @@ pub struct RepairOptions {
     /// Reduce the result to about this many triangles. `None` keeps up to
     /// 250,000 and reduces anything larger to that.
     pub target_faces: Option<usize>,
+    /// Units of the input. The result is always in millimetres, the unit
+    /// slicers assume for STL (default [`Units::Auto`]).
+    pub units: Units,
+}
+
+/// Units of the input to [`repair_for_print`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Units {
+    /// Metres when the result's longest side is under 2 (a phone or LiDAR
+    /// scan of an object), otherwise millimetres.
+    #[default]
+    Auto,
+    Millimetres,
+    Centimetres,
+    Metres,
+    Inches,
+}
+
+impl Units {
+    /// Parse `"auto"`, `"mm"`, `"cm"`, `"m"` or `"in"`.
+    pub fn parse(text: &str) -> Option<Self> {
+        Some(match text.to_ascii_lowercase().as_str() {
+            "auto" => Self::Auto,
+            "mm" => Self::Millimetres,
+            "cm" => Self::Centimetres,
+            "m" => Self::Metres,
+            "in" => Self::Inches,
+            _ => return None,
+        })
+    }
 }
 
 impl Default for RepairOptions {
@@ -47,6 +77,7 @@ impl Default for RepairOptions {
             max_hole_edges: 200,
             depth: 7,
             target_faces: None,
+            units: Units::Auto,
         }
     }
 }
@@ -60,6 +91,9 @@ pub struct RepairReport {
     pub after: MeshReport,
     /// Each step taken, in plain words.
     pub steps: Vec<String>,
+    /// What the input was multiplied by to reach millimetres (1 when it
+    /// already was). `before` is in the input's units, `after` in mm.
+    pub scale: f32,
 }
 
 const DEFAULT_MAX_FACES: usize = 250_000;
@@ -94,6 +128,7 @@ pub fn repair_for_print(
         }
     };
     let mesh = decimate(mesh, options, &mut steps)?;
+    let (mesh, scale) = to_millimetres(mesh, options.units, &mut steps);
     let after = analyze_mesh(&mesh);
     Ok((
         mesh,
@@ -101,8 +136,40 @@ pub fn repair_for_print(
             before,
             after,
             steps,
+            scale,
         },
     ))
+}
+
+/// Scale `mesh` to millimetres; returns it and the factor used.
+fn to_millimetres(
+    mut mesh: TriangleMesh,
+    units: Units,
+    steps: &mut Vec<String>,
+) -> (TriangleMesh, f32) {
+    let (factor, name) = match units {
+        Units::Millimetres => (1.0, "millimetres"),
+        Units::Centimetres => (10.0, "centimetres"),
+        Units::Metres => (1000.0, "metres"),
+        Units::Inches => (25.4, "inches"),
+        Units::Auto => {
+            let longest = analyze_mesh(&mesh).size.into_iter().fold(0.0, f32::max);
+            if longest > 0.0 && longest < 2.0 {
+                (1000.0, "metres (the longest side was under 2)")
+            } else {
+                (1.0, "millimetres")
+            }
+        }
+    };
+    if factor != 1.0 {
+        for v in &mut mesh.vertices {
+            *v = Point3f::from(v.coords * factor);
+        }
+        steps.push(format!(
+            "read the input as {name} and scaled it to millimetres (x{factor})"
+        ));
+    }
+    (mesh, factor)
 }
 
 /// Weld, drop junk, fix winding and close small holes, without moving the
@@ -444,6 +511,16 @@ fn median_spacing(points: &[Point3f]) -> f32 {
 mod tests {
     use super::*;
 
+    /// Test shapes are a few units across: read them as millimetres.
+    const MM: RepairOptions = RepairOptions {
+        remove_floor: false,
+        min_piece_fraction: 0.05,
+        max_hole_edges: 200,
+        depth: 7,
+        target_faces: None,
+        units: Units::Millimetres,
+    };
+
     fn sphere_points(n: usize, z_min: f32) -> Vec<Point3f> {
         let golden = std::f32::consts::PI * (1.0 + 5f32.sqrt());
         (0..n)
@@ -481,8 +558,7 @@ mod tests {
 
     #[test]
     fn a_good_mesh_comes_back_unchanged() {
-        let (mesh, report) =
-            repair_for_print(RepairInput::Mesh(&cube()), &RepairOptions::default()).unwrap();
+        let (mesh, report) = repair_for_print(RepairInput::Mesh(&cube()), &MM).unwrap();
         assert!(report.after.printable);
         assert!(report.steps.is_empty(), "{:?}", report.steps);
         assert_eq!(mesh.faces.len(), 12);
@@ -521,7 +597,7 @@ mod tests {
         // scans have thousands of faces and the 5% default fits them.
         let options = RepairOptions {
             min_piece_fraction: 0.2,
-            ..Default::default()
+            ..MM
         };
         let (_, report) = repair_for_print(RepairInput::Mesh(&broken), &options).unwrap();
         assert!(
@@ -543,10 +619,7 @@ mod tests {
     fn open_scan_points_become_a_closed_printable_mesh() {
         // A dome missing its bottom, like a scan of an object on a table.
         let cloud = PointCloud::from_points(sphere_points(3000, -0.4));
-        let options = RepairOptions {
-            depth: 6,
-            ..Default::default()
-        };
+        let options = RepairOptions { depth: 6, ..MM };
         let (mesh, report) = repair_for_print(RepairInput::Points(&cloud), &options).unwrap();
         assert!(report.before.is_none());
         assert!(report.after.printable, "{:?}", report.after.problems);
@@ -571,7 +644,7 @@ mod tests {
             remove_floor: true,
             depth: 6,
             target_faces: Some(2000),
-            ..Default::default()
+            ..MM
         };
         let (mesh, report) = repair_for_print(RepairInput::Points(&cloud), &options).unwrap();
         assert!(
@@ -589,6 +662,34 @@ mod tests {
             .vertices
             .iter()
             .all(|p| p.x.abs() < 1.2 && p.y.abs() < 1.2));
+    }
+
+    #[test]
+    fn small_scans_are_read_as_metres_and_written_in_millimetres() {
+        // A 12 cm dome, as a phone scan app exports it.
+        let points = sphere_points(3000, -0.4)
+            .into_iter()
+            .map(|p| Point3f::from(p.coords * 0.06))
+            .collect();
+        let cloud = PointCloud::from_points(points);
+        let options = RepairOptions {
+            depth: 6,
+            ..Default::default()
+        };
+        let (_, report) = repair_for_print(RepairInput::Points(&cloud), &options).unwrap();
+        assert_eq!(report.scale, 1000.0);
+        let longest = report.after.size.into_iter().fold(0.0, f32::max);
+        assert!((100.0..130.0).contains(&longest), "{longest}");
+        assert!(report.steps.iter().any(|s| s.contains("metres")));
+
+        let inches = RepairOptions {
+            units: Units::Inches,
+            ..MM
+        };
+        let (_, report) = repair_for_print(RepairInput::Mesh(&cube()), &inches).unwrap();
+        assert_eq!(report.after.size, [25.4, 25.4, 25.4]);
+        assert_eq!(Units::parse("CM"), Some(Units::Centimetres));
+        assert_eq!(Units::parse("feet"), None);
     }
 
     #[test]

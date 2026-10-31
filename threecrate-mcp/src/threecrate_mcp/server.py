@@ -339,14 +339,19 @@ def repair_for_print(
     ] = None,
     depth: Annotated[int, Field(ge=3, le=8, description="Detail when the surface is rebuilt; 7 takes about a second")] = 7,
     up: Annotated[Literal["z", "y"], Field(description="Which axis points up, for the picture")] = "z",
+    units: Annotated[
+        Literal["auto", "mm", "cm", "m", "in"],
+        Field(description="Units of the input; the result is always in mm. auto reads under 2 units long as metres"),
+    ] = "auto",
     output: Annotated[Optional[str], Field(description="Output mesh (.stl by default, or .ply/.obj)")] = None,
     overwrite: Overwrite = False,
 ) -> list[TextContent | Image]:
     """Make a scan or mesh 3D-printable: removes stray points and loose bits,
     optionally the floor, closes holes (including a missing base), fixes face
-    direction and reduces the size. Writes an STL and returns what it did, the
-    health before and after, and a before/after picture to check."""
-    summary, png = ops.repair_for_print(_ws(), path, remove_floor, target_faces, depth, up, output, overwrite)
+    direction, reduces the size and converts to millimetres. Writes an STL and
+    returns what it did, the health before and after, and a before/after
+    picture to check."""
+    summary, png = ops.repair_for_print(_ws(), path, remove_floor, target_faces, depth, up, output, overwrite, units)
     return [TextContent(type="text", text=json.dumps(summary)), Image(data=png, format="png")]
 
 
