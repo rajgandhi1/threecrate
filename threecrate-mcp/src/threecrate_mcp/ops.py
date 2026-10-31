@@ -651,6 +651,7 @@ def repair_for_print(
     up: Literal["z", "y"] = "z",
     output: Optional[str] = None,
     overwrite: bool = False,
+    units: Literal["auto", "mm", "cm", "m", "in"] = "auto",
 ) -> tuple[dict, bytes]:
     """Repair a scan for printing; returns a summary and a before/after PNG."""
     if not 3 <= depth <= 8:
@@ -661,7 +662,7 @@ def repair_for_print(
     out = ws.output_path(output, inputs=[resolved], default_suffix="printable",
                          allowed=MESH_FORMATS, default_extension=".stl", overwrite=overwrite)
     mesh, report = tc.repair_for_print(item, remove_floor=remove_floor, depth=depth,
-                                       target_faces=target_faces)
+                                       target_faces=target_faces, units=units)
     tc.write_mesh(mesh, str(out))
     picture = tc.render([item, mesh], size=256, up=up)
     summary = {
@@ -670,6 +671,8 @@ def repair_for_print(
         "steps": report["steps"],
         "before": _health_brief(report["before"]),
         "after": _health_brief(report["after"]),
+        "units": "before is in the input's units; after and the file are in mm "
+                 f"(input x{report['scale']:g})",
         "picture": "top row is the input, bottom row the result; orange means a hole "
                    "or flipped faces (the bottom view shows a missing base)",
     }

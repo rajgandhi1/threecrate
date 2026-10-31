@@ -27,6 +27,7 @@ tc.write_mesh(printable, "part.printable.stl")
 - `remove_floor=True` when the scan includes the table or ground the object stood on. Leave it off for a mesh, or a scan with nothing under the object.
 - `target_faces`: 100,000 to 300,000 suits most printers. Results are capped at 250,000 faces unless you pass a number.
 - `depth` (3 to 8, default 7) sets how fine the rebuilt surface is when a scan has to be rebuilt. Each step up is about 8x slower.
+- `units`: the result is always in millimetres, which slicers assume for STL. The default `"auto"` reads anything under 2 units long as metres (phone and LiDAR scans) and says so in `report["steps"]`. Pass `"mm"`, `"cm"`, `"m"` or `"in"` when you know better.
 - `report["after"]["printable"]` still `False`: read `report["after"]["problems"]`, then rebuild from points with a higher `depth`.
 
 ## Building a mesh by hand
@@ -52,4 +53,4 @@ print(mesh.vertex_count, mesh.face_count)
 
 - Poisson always closes the surface. On a scan that only sees one side, set `trim_distance`, or the result is a closed blob.
 - `simplify_mesh` raises an error when the mesh is mostly holes (common after ball pivoting). Pass `preserve_boundary=False`, or build with Poisson.
-- STL has no units. Check the size: a part that reads 0.04 across was probably exported in metres, and a slicer will treat it as 0.04 mm.
+- STL has no units. A mesh you build by hand stays in the scan's units: multiply the vertices by 1000 before saving a metre-scale scan.

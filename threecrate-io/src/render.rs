@@ -121,7 +121,33 @@ pub fn render_grid(items: &[Drawable], options: &RenderOptions) -> Result<Image>
         return Err(Error::InvalidData("nothing to render".to_string()));
     }
     let tile = options.tile_size.clamp(32, 4096);
-    let (center, radius) = frame(items, options.up)?;
+    // Each view is framed on what it actually shows; every row of a column
+    // shares that framing, so before/after stay at the same scale. Items in
+    // different units (a scan in metres, its print in millimetres) would
+    // shrink one to a dot, so then each row is framed on its own.
+    let framing = |group: &[Drawable]| -> Result<(Vector3f, f32, Vec<f32>)> {
+        let (center, radius) = frame(group, options.up)?;
+        let reach = options
+            .views
+            .iter()
+            .map(|v| view_reach(group, *v, center, options.up))
+            .collect();
+        Ok((center, radius, reach))
+    };
+    let radii = items
+        .iter()
+        .map(|item| frame(std::slice::from_ref(item), options.up).map(|(_, r)| r))
+        .collect::<Result<Vec<f32>>>()?;
+    let spread = radii.iter().cloned().fold(0.0, f32::max)
+        / radii.iter().cloned().fold(f32::INFINITY, f32::min);
+    let frames = if spread > 50.0 {
+        items
+            .iter()
+            .map(|item| framing(std::slice::from_ref(item)))
+            .collect::<Result<Vec<_>>>()?
+    } else {
+        vec![framing(items)?; items.len()]
+    };
 
     let (cols, rows) = (options.views.len() as u32, items.len() as u32);
     let mut grid = Image {
@@ -129,16 +155,10 @@ pub fn render_grid(items: &[Drawable], options: &RenderOptions) -> Result<Image>
         height: rows * tile,
         pixels: vec![255; (cols * tile * rows * tile * 3) as usize],
     };
-    // Each view is framed on what it actually shows; every row of a column
-    // shares that framing, so before/after stay at the same scale.
-    let reach: Vec<f32> = options
-        .views
-        .iter()
-        .map(|v| view_reach(items, *v, center, options.up))
-        .collect();
     for (r, item) in items.iter().enumerate() {
+        let (center, radius, reach) = &frames[r];
         for (c, view) in options.views.iter().enumerate() {
-            let image = render_tile(*item, *view, center, radius, reach[c], tile, options);
+            let image = render_tile(*item, *view, *center, *radius, reach[c], tile, options);
             for y in 0..tile {
                 let from = (y * tile * 3) as usize;
                 let to = (((r as u32 * tile + y) * grid.width + c as u32 * tile) * 3) as usize;
@@ -457,6 +477,23 @@ mod tests {
                 let c = coverage(&image, col, row, 128);
                 assert!(c > 0.02, "tile row {row} col {col} is nearly empty ({c})");
             }
+        }
+    }
+
+    #[test]
+    fn items_in_different_units_each_fill_their_row() {
+        // The same cube in metres and in millimetres: neither may shrink to a dot.
+        let metres = cube();
+        let mut mm = cube();
+        mm.vertices.iter_mut().for_each(|v| *v *= 1000.0);
+        let options = RenderOptions {
+            tile_size: 128,
+            ..Default::default()
+        };
+        let image = render_grid(&[Drawable::Mesh(&metres), Drawable::Mesh(&mm)], &options).unwrap();
+        for row in 0..2 {
+            let c = coverage(&image, 0, row, 128);
+            assert!(c > 0.1, "row {row} is nearly empty ({c})");
         }
     }
 
