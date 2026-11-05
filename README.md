@@ -14,6 +14,10 @@ Fast 3D point cloud and mesh processing in Rust and Python, with an agent skill 
 
 Ask your agent to "make my scan printable" and it cleans the scan, closes the holes, adds a base, checks the result with a picture and saves an STL. No Blender, no MeshLab, no guessing at parameters.
 
+<img width="640" height="360" alt="An agent turns a phone scan of a vase into a printable STL" src="https://github.com/user-attachments/assets/d19ebf30-ea90-4963-9de8-ce87a4fd74fc" />
+
+<sub>A real, unedited Claude Code run with the threecrate skill, replayed. [More in the demo](samples/DEMO.md).</sub>
+
 ## Installation (30-second setup)
 
 ### 1. Get the skill
