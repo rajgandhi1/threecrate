@@ -1,0 +1,19 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.rajgandhi1/threecrate-mcp",
+  "description": "Clean, align, measure and repair 3D scans and meshes; make scans printable as STL.",
+  "repository": {
+    "url": "https://github.com/rajgandhi1/threecrate",
+    "source": "github",
+    "subfolder": "threecrate-mcp"
+  },
+  "version": "0.2.2",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "identifier": "threecrate-mcp",
+      "version": "0.2.2",
+      "transport": { "type": "stdio" }
+    }
+  ]
+}
