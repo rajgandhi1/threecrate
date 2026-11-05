@@ -1,3 +1,5 @@
+<!-- mcp-name: io.github.rajgandhi1/threecrate-mcp -->
+
 # threecrate-mcp
 
 An [MCP](https://modelcontextprotocol.io) server that lets AI agents work with 3D
