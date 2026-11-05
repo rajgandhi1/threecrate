@@ -74,7 +74,8 @@ foreach ($doc in $docs) {
 # 5. Agent plugin manifests that carry the release version.
 $pluginManifests = @(
     'gemini-extension.json',
-    'skills\.codex-plugin\plugin.json'
+    'skills\.codex-plugin\plugin.json',
+    'skills\.claude-plugin\plugin.json'
 )
 foreach ($manifest in $pluginManifests) {
     Update-File (Join-Path $root $manifest) "(`"version`"\s*:\s*`")$oldRe(`")" "`${1}$Version`${2}"
