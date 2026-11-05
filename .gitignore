@@ -51,3 +51,6 @@ __pycache__/
 
 # Plugin eval results
 skills/evals/results/
+
+# Demo recordings (hosted on GitHub, not in git)
+demo-videos/
