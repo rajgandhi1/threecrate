@@ -54,7 +54,7 @@ spade = "2.13"   # Delaunay triangulation and Voronoi diagrams
 
 
 # GPU computing
-wgpu = { version = "29.0.0", default-features = false, features = ["wgsl", "vulkan", "metal"] }
+wgpu = { version = "30.0.1", default-features = false, features = ["wgsl", "vulkan", "metal"] }
 pollster = "0.4"
 
 # I/O
